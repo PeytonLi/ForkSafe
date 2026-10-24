@@ -14,12 +14,17 @@ describe("Forge manifest", () => {
       await readFile(resolve(appRoot, "manifest.yml"), "utf8"),
     ) as {
       modules: Record<string, Array<Record<string, unknown>>>;
-      function: Array<{ key: string; handler: string }>;
       resources: Array<{ key: string; path: string }>;
       remotes: Array<{ key: string; operations: string[] }>;
       permissions: { scopes: string[] };
       app: { runtime: { name: string } };
     };
+    expect(manifest).not.toHaveProperty("function");
+    const functionModules = (manifest.modules.function ?? []) as Array<{
+      key: string;
+      handler: string;
+    }>;
+    expect(functionModules.length).toBeGreaterThan(0);
     const modules = [
       ...(manifest.modules["jira:issuePanel"] ?? []),
       ...(manifest.modules["jira:issueAction"] ?? []),
@@ -29,13 +34,13 @@ describe("Forge manifest", () => {
       expect(module.render).toBe("native");
       expect(module.key).toMatch(/^[a-zA-Z0-9_-]+$/);
       const resolver = module.resolver as { function?: string };
-      expect(manifest.function.some((item) => item.key === resolver.function)).toBe(
+      expect(functionModules.some((item) => item.key === resolver.function)).toBe(
         true,
       );
     }
 
-    const functions = new Map(manifest.function.map((item) => [item.key, item]));
-    for (const item of manifest.function) {
+    const functions = new Map(functionModules.map((item) => [item.key, item]));
+    for (const item of functionModules) {
       expect(item.key).toMatch(/^[a-zA-Z0-9_-]+$/);
       if (item.handler === "index.handler") {
         const indexPath = resolve(appRoot, "src/index.ts");
