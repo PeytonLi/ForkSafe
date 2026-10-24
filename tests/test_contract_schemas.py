@@ -40,6 +40,7 @@ def _simulator_cli(*args: str) -> subprocess.CompletedProcess[str]:
 
 def _tsx(schema: str, path: Path) -> dict[str, object]:
     tsx = ROOT / "node_modules/.bin/tsx"
+    command = [str(tsx)]
     if not tsx.exists():
         matches = sorted(
             ROOT.glob("node_modules/.pnpm/tsx@*/node_modules/tsx/dist/cli.mjs")
@@ -48,9 +49,9 @@ def _tsx(schema: str, path: Path) -> dict[str, object]:
             pytest.fail(
                 "tsx was not found; run pnpm install before the contract schema tests."
             )
-        tsx = matches[0]
+        command = ["node", str(matches[0])]
     completed = subprocess.run(
-        ["node", str(tsx), str(VALIDATOR), schema, str(path)],
+        [*command, str(VALIDATOR), schema, str(path)],
         cwd=ROOT,
         env=_environment(),
         capture_output=True,
