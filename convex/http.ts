@@ -2,6 +2,7 @@ import { httpRouter } from "convex/server";
 import { httpAction, internalMutation } from "./_generated/server.js";
 import { api, internal } from "./_generated/api.js";
 import { requireServiceToken } from "./lib/auth.js";
+import { registerRunnerRoutes } from "./runnerHttp.js";
 
 const router = httpRouter();
 const MAX_ARTIFACT_BYTES = 8 * 1024 * 1024;
@@ -129,5 +130,9 @@ export const scheduleDaytonaReconcile = internalMutation({
     return true;
   },
 });
+
+registerRunnerRoutes(router);
+
+// forge routes: the outbox lane registers its Forge/Jira routes here.
 
 export default router;

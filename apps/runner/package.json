@@ -7,7 +7,9 @@
     "start": "tsx src/main.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "smoke:factory": "tsx src/smoke-factory.ts"
+    "smoke:factory": "tsx src/smoke-factory.ts",
+    "build:bundle": "node scripts/build-bundle.mjs",
+    "publish:bundles": "node scripts/publish-bundles.mjs"
   },
   "dependencies": {
     "@forksafe/agents": "workspace:*",
@@ -16,6 +18,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.15.30",
+    "esbuild": "0.27.0",
     "tsx": "^4.20.3",
     "typescript": "~5.9.3",
     "vitest": "^3.2.4"

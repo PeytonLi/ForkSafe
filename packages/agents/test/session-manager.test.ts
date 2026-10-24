@@ -12,6 +12,7 @@ const environments = Array.from({ length: 7 }, () => crypto.randomUUID());
 const dirs: string[] = [];
 const backend = {
   async run_experiment() { return { status: "blocked" }; },
+  async propose_controller_revision() { return { status: "blocked" }; },
   async submit_candidate() { return { status: "blocked" }; },
   async read_findings() { return []; },
   async write_finding() { return { status: "local" }; },

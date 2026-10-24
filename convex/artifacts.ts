@@ -1,5 +1,7 @@
 import { ConvexError, v } from "convex/values";
-import { internalMutation, internalQuery } from "./_generated/server.js";
+import { internalMutation, internalQuery, query } from "./_generated/server.js";
+import { requireUiAccess } from "./lib/auth.js";
+import { compactReplay } from "./lib/experimentStatus.js";
 import { appId, assertUUID } from "./lib/validators.js";
 
 const artifactKind = v.union(
@@ -61,5 +63,35 @@ export const markRevoked = internalMutation({
     if (!row) throw new ConvexError("artifact_not_found");
     await ctx.db.patch(row._id, { revokedAtMs: Date.now() });
     return { revoked: true };
+  },
+});
+
+export const saveReplay = internalMutation({
+  args: {
+    artifactId: v.string(), experimentId: v.string(), investigationId: v.string(),
+    visibility: v.union(v.literal("internal"), v.literal("withheld")), result: v.any(),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db.query("replays").withIndex("by_artifact", (q) => q.eq("artifactId", args.artifactId)).unique();
+    if (existing) return { duplicate: true };
+    const compact = compactReplay(args.result as Record<string, unknown>);
+    await ctx.db.insert("replays", {
+      artifactId: args.artifactId, experimentId: args.experimentId, investigationId: args.investigationId,
+      visibility: args.visibility, result: compact.result, truncatedFrames: compact.truncated, createdAtMs: Date.now(),
+    });
+    return { duplicate: false, truncated: compact.truncated };
+  },
+});
+
+/** Web: `artifacts:replay` returns a SimRunResult for an internal replay artifact. */
+export const replay = query({
+  args: { artifactId: v.string(), serviceToken: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    requireUiAccess(args.serviceToken);
+    assertUUID(args.artifactId, "artifactId");
+    const row = await ctx.db.query("replays").withIndex("by_artifact", (q) => q.eq("artifactId", args.artifactId)).unique();
+    if (!row) throw new ConvexError("replay not found");
+    if (row.visibility === "withheld") throw new ConvexError("forbidden: withheld replay");
+    return row.result;
   },
 });

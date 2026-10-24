@@ -90,7 +90,8 @@ export class LeaseKeeper {
       if (response.grantExpiresAtMs !== undefined) this.lease.grant.expiresAtMs = response.grantExpiresAtMs;
       this.lastAckMs = this.clock();
       this.checkDeadline();
-    } catch {
+    } catch (error) {
+      console.error(JSON.stringify({ kind: "heartbeat_failed", attemptId: this.lease.attempt.id, reason: error instanceof Error ? error.message.slice(0, 160) : "unknown" }));
       this.checkDeadline();
     } finally {
       this.beating = false;
