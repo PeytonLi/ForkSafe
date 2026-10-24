@@ -56,13 +56,13 @@ export const DISABLED_BUILTIN_TOOL_IDS = [
   "TaskOutput",
   "TaskStop",
   "TodoWrite",
-  "ToolSearch",
   "WaitForScript",
   "WebSearch",
 ] as const;
 const ALLOWED_FORKSAFE_TOOL_IDS = FORKSAFE_TOOL_NAMES.map((name) => `forksafe___${name}`);
-// ToolSearch only searches the catalog and cannot be disabled by Factory.
-export const UNREMOVABLE_META_TOOL_IDS = ["ToolSearch"] as const;
+// Script is droid's sandboxed tool-calling evaluator; ToolSearch loads deferred schemas, and both only reach enabled tools.
+export const FACTORY_META_TOOL_IDS = ["Script", "ToolSearch"] as const;
+const FACTORY_META_TOOL_ID_SET = new Set<string>(FACTORY_META_TOOL_IDS);
 
 export type AdapterSessionOptions = {
   cwd: string;
@@ -108,7 +108,10 @@ export type ToolInfoLike = Pick<ToolInfo, "id" | "allowed"> & {
 
 export function computeDisabledToolIds(tools: ToolInfoLike[], allowedMcpServer = "forksafe"): string[] {
   return [...new Set(tools
-    .filter((tool) => !tool.id.startsWith(`${allowedMcpServer}___`))
+    .filter((tool) =>
+      !tool.id.startsWith(`${allowedMcpServer}___`)
+      && !FACTORY_META_TOOL_ID_SET.has(tool.id),
+    )
     .map((tool) => tool.id))];
 }
 
@@ -175,7 +178,6 @@ export class LiveFactoryAdapter implements FactoryAdapter {
         modelId: opts.modelId ?? this.options.modelId ?? process.env.FACTORY_MODEL,
         autonomyLevel: opts.autonomyLevel ?? this.options.autonomyLevel ?? AutonomyLevel.Low,
         disabledToolIds,
-        restrictToolIds: ALLOWED_FORKSAFE_TOOL_IDS,
         mcpServers: opts.mcpServers,
         permissionHandler: opts.permissionHandler as never,
         systemPrompt: opts.systemPrompt,
@@ -203,7 +205,6 @@ export class LiveFactoryAdapter implements FactoryAdapter {
           modelId: opts.modelId ?? this.options.modelId ?? process.env.FACTORY_MODEL,
           autonomyLevel: opts.autonomyLevel ?? this.options.autonomyLevel ?? AutonomyLevel.Low,
           disabledToolIds,
-          restrictToolIds: ALLOWED_FORKSAFE_TOOL_IDS,
           mcpServers: opts.mcpServers,
           permissionHandler: opts.permissionHandler as never,
           systemPrompt: opts.systemPrompt,
@@ -233,16 +234,15 @@ export class LiveFactoryAdapter implements FactoryAdapter {
     }
 
     const disabledToolIds = computeDisabledToolIds(tools);
-    const restrictedToolIds = [...new Set([...DISABLED_BUILTIN_TOOL_IDS, ...disabledToolIds])];
     const hasEnabledForbiddenTool = tools.some((tool) =>
       tool.allowed
       && !ALLOWED_FORKSAFE_TOOL_IDS.includes(tool.id as typeof ALLOWED_FORKSAFE_TOOL_IDS[number])
-      && !UNREMOVABLE_META_TOOL_IDS.includes(tool.id as typeof UNREMOVABLE_META_TOOL_IDS[number]),
+      && !FACTORY_META_TOOL_ID_SET.has(tool.id),
     );
     if (hasEnabledForbiddenTool) {
       await session.close().catch(() => undefined);
       try {
-        session = await recreate(restrictedToolIds);
+        session = await recreate([...new Set([...DISABLED_BUILTIN_TOOL_IDS, ...disabledToolIds])]);
       } catch (error) {
         throw new ToolSurfaceError("Factory tool restrictions could not be applied", { cause: error });
       }
@@ -255,9 +255,13 @@ export class LiveFactoryAdapter implements FactoryAdapter {
     }
 
     const enabledToolIds = tools.filter((tool) => tool.allowed).map((tool) => tool.id);
+    if (!enabledToolIds.includes("Script")) {
+      await session.close().catch(() => undefined);
+      throw new ToolSurfaceError("Factory Script must be allowed to call deferred ForkSafe MCP tools");
+    }
     const hasUnexpectedAllowedTool = enabledToolIds.some((id) =>
       !ALLOWED_FORKSAFE_TOOL_IDS.includes(id as typeof ALLOWED_FORKSAFE_TOOL_IDS[number])
-      && !UNREMOVABLE_META_TOOL_IDS.includes(id as typeof UNREMOVABLE_META_TOOL_IDS[number]),
+      && !FACTORY_META_TOOL_ID_SET.has(id),
     );
     const hasMissingForkSafeTool = ALLOWED_FORKSAFE_TOOL_IDS.some((id) => !enabledToolIds.includes(id));
     if (hasUnexpectedAllowedTool || hasMissingForkSafeTool) {

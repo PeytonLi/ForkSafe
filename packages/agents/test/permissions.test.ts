@@ -54,8 +54,13 @@ describe("permission policy", () => {
     ]) {
       expect(decide(command)).toBe(false);
     }
+    for (const name of ["Script", "ToolSearch"]) {
+      expect(decidePermission({
+        toolUses: [use(ToolConfirmationType.Execute, { command: "arbitrary" }, name)], options: opts,
+      }, p).allowed).toBe(true);
+    }
     expect(decidePermission({
-      toolUses: [use(ToolConfirmationType.Execute, { command: "ls" }, "ToolSearch")], options: opts,
+      toolUses: [use(ToolConfirmationType.Execute, { command: "rm x" }, "Execute")], options: opts,
     }, p).allowed).toBe(false);
     expect(decide("cat src/controller.py")).toBe(true);
     expect(decide("grep -n foo ./src")).toBe(true);

@@ -3,6 +3,7 @@ import type { DroidSession } from "@factory/droid-sdk/node";
 import {
   computeDisabledToolIds,
   DISABLED_BUILTIN_TOOL_IDS,
+  FACTORY_META_TOOL_IDS,
   LiveFactoryAdapter,
   ToolSurfaceError,
   type ToolInfoLike,
@@ -46,21 +47,23 @@ describe("Factory tool surface", () => {
       { ...liveMcpToolFixture, id: "foreign___read" },
     ];
     expect(computeDisabledToolIds(tools)).toEqual([
-      "Script", "ToolSearch", "NewThing", "foreign___read",
+      "NewThing", "foreign___read",
     ]);
   });
 
   it("identifies ForkSafe tools from the live SDK tool ID shape", () => {
     expect(computeDisabledToolIds([
       { id: "Script", allowed: true, category: "builtin" },
+      { id: "ToolSearch", allowed: true, category: "builtin" },
       liveMcpToolFixture,
       { id: "other___read", allowed: true, category: "mcp" },
-    ])).toEqual(["Script", "other___read"]);
+    ])).toEqual(["other___read"]);
   });
 
-  it.each(["Script", "Execute"])("fails closed when %s remains enabled after recreation", async (toolId) => {
-    const initial = mockSession([...liveForksafeTools, liveBuiltinTool(toolId, "execute")]);
-    const recreated = mockSession([...liveForksafeTools, liveBuiltinTool(toolId, "execute")]);
+  it.each(["Execute", "Glob", "Read"])("fails closed when %s remains enabled after recreation", async (toolId) => {
+    const metaTools = FACTORY_META_TOOL_IDS.map((id) => liveBuiltinTool(id, "execute"));
+    const initial = mockSession([...liveForksafeTools, ...metaTools, liveBuiltinTool(toolId, "execute")]);
+    const recreated = mockSession([...liveForksafeTools, ...metaTools, liveBuiltinTool(toolId, "execute")]);
     const createSession = vi.fn()
       .mockResolvedValueOnce(initial.session)
       .mockResolvedValueOnce(recreated.session);
@@ -75,7 +78,38 @@ describe("Factory tool surface", () => {
     expect(recreated.close).toHaveBeenCalledOnce();
   });
 
-  it("recreates with every observed non-ForkSafe tool disabled and reports allowed ToolSearch", async () => {
+  it("fails closed when Script is missing", async () => {
+    const initial = mockSession([...liveForksafeTools, liveBuiltinTool("ToolSearch", "execute")]);
+    const createSession = vi.fn().mockResolvedValueOnce(initial.session);
+    const adapter = new LiveFactoryAdapter({}, {
+      createSession: createSession as never,
+      resumeSession: vi.fn() as never,
+    });
+
+    await expect(adapter.createSession({ cwd: "/workspace" })).rejects.toThrow("Script must be allowed");
+    expect(createSession).toHaveBeenCalledOnce();
+    expect(initial.close).toHaveBeenCalledOnce();
+  });
+
+  it("accepts exactly ForkSafe tools plus Script and ToolSearch", async () => {
+    const metaTools = FACTORY_META_TOOL_IDS.map((id) => liveBuiltinTool(id, "execute"));
+    const initial = mockSession([...liveForksafeTools, ...metaTools]);
+    const createSession = vi.fn().mockResolvedValueOnce(initial.session);
+    const adapter = new LiveFactoryAdapter({}, {
+      createSession: createSession as never,
+      resumeSession: vi.fn() as never,
+    });
+
+    const session = await adapter.createSession({ cwd: "/workspace" });
+
+    expect(createSession).toHaveBeenCalledOnce();
+    expect(session.enabledToolIds).toEqual([
+      ...liveForksafeTools.map((tool) => tool.id),
+      ...FACTORY_META_TOOL_IDS,
+    ]);
+  });
+
+  it("recreates with every observed non-meta, non-ForkSafe tool disabled", async () => {
     const observedBuiltins = [
       liveBuiltinTool("Execute", "execute"),
       liveBuiltinTool("Glob", "read"),
@@ -85,7 +119,8 @@ describe("Factory tool surface", () => {
       liveBuiltinTool("Script", "execute"),
     ];
     const initial = mockSession([...observedBuiltins, ...liveForksafeTools]);
-    const recreated = mockSession([...liveForksafeTools, liveBuiltinTool("ToolSearch", "execute")]);
+    const metaTools = FACTORY_META_TOOL_IDS.map((id) => liveBuiltinTool(id, "execute"));
+    const recreated = mockSession([...liveForksafeTools, ...metaTools]);
     const createSession = vi.fn()
       .mockResolvedValueOnce(initial.session)
       .mockResolvedValueOnce(recreated.session);
@@ -97,15 +132,14 @@ describe("Factory tool surface", () => {
     const session = await adapter.createSession({ cwd: "/workspace" });
 
     expect(createSession).toHaveBeenCalledTimes(2);
-    const recreateOptions = createSession.mock.calls[1]?.[0] as {
-      disabledToolIds: string[];
-      restrictToolIds: string[];
-    };
+    const recreateOptions = createSession.mock.calls[1]?.[0] as { disabledToolIds: string[] };
     expect(recreateOptions.disabledToolIds).toEqual(expect.arrayContaining([
       ...DISABLED_BUILTIN_TOOL_IDS,
-      ...observedBuiltins.map((tool) => tool.id),
+      ...observedBuiltins.filter((tool) => !FACTORY_META_TOOL_IDS.includes(tool.id as typeof FACTORY_META_TOOL_IDS[number])).map((tool) => tool.id),
     ]));
-    expect(recreateOptions.restrictToolIds).toEqual(liveForksafeTools.map((tool) => tool.id));
-    expect(session.enabledToolIds).toEqual([...liveForksafeTools.map((tool) => tool.id), "ToolSearch"]);
+    for (const id of FACTORY_META_TOOL_IDS) expect(recreateOptions.disabledToolIds).not.toContain(id);
+    for (const tool of liveForksafeTools) expect(recreateOptions.disabledToolIds).not.toContain(tool.id);
+    expect("restrictToolIds" in createSession.mock.calls[1]![0]!).toBe(false);
+    expect(session.enabledToolIds).toEqual([...liveForksafeTools.map((tool) => tool.id), ...FACTORY_META_TOOL_IDS]);
   });
 });

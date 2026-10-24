@@ -15,6 +15,7 @@ import {
   type ForkSafeToolBackend,
   type ToolCallContext,
 } from "./tools.js";
+import { REPAIR_AGENT_SYSTEM_PROMPT } from "./prompts.js";
 import { ActivityLog } from "./activity-log.js";
 import type { AdapterSession, FactoryAdapter, StreamMsg } from "./adapter.js";
 import { SessionMissingError } from "./adapter.js";
@@ -111,6 +112,7 @@ export class SessionManager {
     const adapterOptions = {
       cwd,
       mcpServers: [mcpServer],
+      systemPrompt: REPAIR_AGENT_SYSTEM_PROMPT,
       permissionHandler: async (params: unknown) => {
         const decision = decidePermission(params as PermissionParams, policy);
         await this.options.log.record({

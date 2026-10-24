@@ -180,7 +180,7 @@ export class RunnerExecutor {
   }
 }
 
-const CONTINUE_PROMPT = "Continue from the latest revision head. You have no shell, script or file tools here; use only ForkSafe tools. Inspect findings and the failure, read the controller, apply strict patches against the current head, and measure public cases. If a revision passes, submit_candidate. Report only measured results.";
+const CONTINUE_PROMPT = "Continue from the latest revision head. There is no shell or direct filesystem access. ForkSafe tools are deferred: load each needed schema with ToolSearch using `select:forksafe___<name>`, then call it from Script via `tools.forksafe___<name>(...)`; Script can reach only enabled tools. Inspect findings and the failure, read the controller, apply strict patches against the current head, and measure public cases. If a revision passes, submit_candidate. Report only measured results.";
 
 function submittedCandidate(turn: TurnOutcome): boolean {
   return (turn.toolCalls ?? []).some((call: unknown) => {

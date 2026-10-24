@@ -21,6 +21,7 @@ export type PermissionParams = {
 };
 
 const SAFE_COMMANDS = new Set(["ls", "cat", "head", "tail", "wc", "grep", "rg", "find", "pwd", "stat", "file", "diff", "git"]);
+const FACTORY_META_TOOL_NAMES = new Set(["Script", "ToolSearch"]);
 const META = /[;&|><`\n\r$~()]/;
 
 function withinWorkspace(root: string, filePath: string): boolean {
@@ -59,7 +60,7 @@ function safeCommand(command: string, workspaceRoot: string): boolean {
 function allowedUse(use: PermissionToolUse, policy: PermissionPolicy): boolean {
   const type = use.confirmationType;
   const details = use.details;
-  if (use.name === "ToolSearch" || details.toolName === "ToolSearch") return false;
+  if (FACTORY_META_TOOL_NAMES.has(use.name ?? "") || FACTORY_META_TOOL_NAMES.has(String(details.toolName ?? ""))) return true;
   if (type === ToolConfirmationType.Create || details.type === ToolConfirmationType.Create) {
     return typeof details.filePath === "string" && insideWorkspace(policy.workspaceRoot, details.filePath);
   }
