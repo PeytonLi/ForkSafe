@@ -7,6 +7,7 @@ import {
   HumanReview,
   Investigation,
   InvestigationEnvironment,
+  SimFrame,
   SimRunResult,
 } from "@forksafe/contracts";
 import { ConvexReactClient } from "convex/react";
@@ -26,6 +27,7 @@ import type {
   InvestigationWorkspace,
   CurrentController,
   LearningView,
+  LiveStreamSnapshot,
   PipelineHealth,
   ReviewInput,
 } from "./types";
@@ -51,6 +53,7 @@ export const CONVEX_WEB_FUNCTIONS = {
   pipelineHealth: "web/health:pipeline",
   ask: "web/ask:ask",
   handoffs: "web/timeline:handoffs",
+  live: "web/live:latest",
 } as const;
 
 export const CONVEX_LEARNING_FUNCTIONS = {
@@ -201,6 +204,17 @@ export const HandoffEventSchema = z.object({
   atMs: z.number(),
   stale: z.boolean(),
 });
+export const LiveStreamResponseSchema = z.object({
+  status: z.enum(["waiting", "streaming", "finished", "unavailable"]),
+  reason: z.string().optional(),
+  replayArtifactId: z.string().uuid().optional(),
+  nextSeq: z.number().int().nonnegative(),
+  chunks: z.array(z.object({
+    seq: z.number().int().nonnegative(),
+    final: z.boolean(),
+    frames: z.array(SimFrame),
+  })),
+}).nullable();
 
 export const CONVEX_RESPONSE_SCHEMAS = {
   listInvestigations: z.array(ListItem),
@@ -218,6 +232,7 @@ export const CONVEX_WEB_SCHEMAS = {
   pipelineHealth: PipelineHealthSchema,
   ask: EvidenceAnswerSchema,
   handoffs: z.array(HandoffEventSchema),
+  live: LiveStreamResponseSchema,
 };
 
 function parse<T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, value: unknown, what: string): T {
@@ -335,6 +350,20 @@ export class ConvexForkSafeClient implements ForkSafeClient {
     ];
     const offs = watches.map((w) => w.onUpdate(onChange));
     return () => offs.forEach((off) => off());
+  }
+  watchLive(experimentId: string, onUpdate: (snapshot: LiveStreamSnapshot) => void): () => void {
+    const watch = this.client.watchQuery(q(CONVEX_WEB_FUNCTIONS.live), { experimentId });
+    onUpdate({ mode: this.source.mode, status: "waiting", chunks: [] });
+    return watch.onUpdate(() => {
+      try {
+        const result = parse(CONVEX_WEB_SCHEMAS.live, watch.localQueryResult(), "Live stream");
+        onUpdate(result
+          ? { mode: this.source.mode, ...result }
+          : { mode: this.source.mode, status: "waiting", chunks: [] });
+      } catch {
+        onUpdate({ mode: this.source.mode, status: "unavailable", reason: "stream_error", chunks: [] });
+      }
+    });
   }
   getReadiness() {
     return fetchReadiness();

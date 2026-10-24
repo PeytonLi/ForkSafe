@@ -9,6 +9,7 @@ import type {
   Investigation,
   InvestigationEnvironment,
   ReviewDecision,
+  SimFrame,
   SimCase,
   SimRunResult,
   TaskFamily,
@@ -177,6 +178,16 @@ export interface HandoffEvent {
   stale: boolean;
 }
 
+export type LiveStreamStatus = "waiting" | "streaming" | "finished" | "unavailable";
+
+export interface LiveStreamSnapshot {
+  mode: "live" | "local" | "fixture";
+  status: LiveStreamStatus;
+  reason?: string;
+  replayArtifactId?: string;
+  chunks: { seq: number; final: boolean; frames: SimFrame[] }[];
+}
+
 export interface ForkSafeClient {
   readonly source: DataSourceInfo;
   listInvestigations(): Promise<InvestigationListItem[]>;
@@ -195,6 +206,7 @@ export interface ForkSafeClient {
   getCurrentController(taskFamily?: string): Promise<CurrentController>;
   /** Invalidation stream; listeners re-fetch what they render. */
   subscribe(investigationId: string, onChange: () => void): () => void;
+  watchLive(experimentId: string, onUpdate: (snapshot: LiveStreamSnapshot) => void): () => void;
   getReadiness(): Promise<WebIntegrationReadiness[]>;
   getPipelineHealth(): Promise<PipelineHealth>;
   /** Investigation-scoped question to the evidence agent; never affects scores. */

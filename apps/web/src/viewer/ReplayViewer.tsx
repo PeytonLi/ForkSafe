@@ -270,7 +270,6 @@ interface Props {
 
 /** Renders sampled authoritative state; it never runs physics or scores. */
 export function ReplayViewer({ replay, t = 0, label = "Scene preview", scene: overrides = {}, taskFamily, compact = false, ghost }: Props) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const s3Ref = useRef<Scene3D | null>(null);
   const [webglError, setWebglError] = useState<string | null>(null);
@@ -278,13 +277,18 @@ export function ReplayViewer({ replay, t = 0, label = "Scene preview", scene: ov
   const smp = replay ? sampleAt(replay.frames, t) : undefined;
 
   useEffect(() => {
-    const canvas = canvasRef.current;
     const wrap = wrapRef.current;
-    if (!canvas || !wrap) return;
+    if (!wrap) return;
+    const canvas = document.createElement("canvas");
+    canvas.className = styles.canvas!;
+    canvas.setAttribute("aria-label", `${label}, 3D view`);
+    canvas.setAttribute("role", "img");
+    wrap.appendChild(canvas);
     let s3: Scene3D;
     try {
       s3 = build(canvas);
     } catch (e) {
+      canvas.remove();
       setWebglError((e as Error).message || "WebGL unavailable");
       return;
     }
@@ -304,9 +308,11 @@ export function ReplayViewer({ replay, t = 0, label = "Scene preview", scene: ov
     return () => {
       ro.disconnect();
       s3.renderer.dispose();
+      s3.renderer.forceContextLoss();
       s3Ref.current = null;
+      canvas.remove();
     };
-  }, []);
+  }, [label]);
 
   useEffect(() => {
     const s3 = s3Ref.current;
@@ -343,9 +349,7 @@ export function ReplayViewer({ replay, t = 0, label = "Scene preview", scene: ov
           <div className={styles.fallback} role="note">
             3D view unavailable ({webglError}). {replay ? "Frame data is still shown below." : "The static scene preview is unavailable."}
           </div>
-        ) : (
-          <canvas ref={canvasRef} className={styles.canvas} aria-label={`${label}${replay ? " replay" : ""}, 3D view`} role="img" />
-        )}
+        ) : null}
       </div>
       <figcaption className={styles.caption}>
         <strong>{label}</strong>
@@ -357,11 +361,11 @@ export function ReplayViewer({ replay, t = 0, label = "Scene preview", scene: ov
             ? `Gap width: ${resolvedScene.gapWidth.toFixed(2)} m`
             : `Divider height: ${resolvedScene.dividerHeight.toFixed(2)} m`}
         </span>}
-        {replay && contact ? (
+        {!compact && replay && contact ? (
           <span className={styles.contact}>
             Contact {contact.a}↔{contact.b} {(contact.depthM * 1000).toFixed(1)} mm
           </span>
-        ) : replay ? (
+        ) : !compact && replay ? (
           <span className={styles.muted}>{smp?.attached ? "Cube grasped" : "No contact"}</span>
         ) : null}
       </figcaption>

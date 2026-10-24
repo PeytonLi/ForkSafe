@@ -11,6 +11,7 @@ import { classifyExperiment } from "./lib/experimentStatus.js";
 import { signedCaseCommand } from "./lib/evaluatorBackend.js";
 import { FIND_FAILURE_BUDGET, pickFirstFailure, type FailureSearchResult, type FuzzGrid } from "./lib/sceneSearch.js";
 import { ensureExecutionSandbox } from "./capture.js";
+import { isStreamFlagUnsupported, LIVE_CHUNK_READER_PYTHON, parseChunkLines } from "./lib/liveRelay.js";
 import withheldManifest from "../evaluation/withheld/manifest.json";
 import manifestsLock from "../evaluation/manifests.lock.json";
 
@@ -74,6 +75,15 @@ async function trustedExec(trusted: TrustedSandbox, command: string, timeoutSec:
   try {
     const result = await trusted.sandbox.process.executeCommand(command, "/workspace", undefined, timeoutSec);
     return { exitCode: result.exitCode ?? 1, output: (result.result ?? "").slice(-2000) };
+  } catch (error) {
+    throw new ConvexError(`daytona_exec_failed:${error instanceof Error ? error.name : "unknown"}`);
+  }
+}
+
+async function trustedExecLarge(trusted: TrustedSandbox, command: string, timeoutSec: number): Promise<{ exitCode: number; output: string }> {
+  try {
+    const result = await trusted.sandbox.process.executeCommand(command, "/workspace", undefined, timeoutSec);
+    return { exitCode: result.exitCode ?? 1, output: (result.result ?? "").slice(0, 48_000) };
   } catch (error) {
     throw new ConvexError(`daytona_exec_failed:${error instanceof Error ? error.name : "unknown"}`);
   }
@@ -209,6 +219,9 @@ const simCase = v.object({
   seed: v.number(), sceneOverrides: v.record(v.string(), v.number()), taskFamily: v.optional(v.string()), description: v.optional(v.string()),
 });
 
+const LIVE_RELAY_SLEEP_MS = 1_000;
+const liveRelaySleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export type CaseRunOutcome = {
   ok: boolean;
   exitCode: number;
@@ -234,6 +247,7 @@ export const runCase = internalAction({
   args: {
     sandboxOpId: v.string(),
     investigationId: v.string(),
+    environmentId: v.optional(v.string()),
     attemptId: v.string(),
     experimentId: v.string(),
     simCase,
@@ -255,7 +269,9 @@ export const runCase = internalAction({
     await putSmallFile(daytona, ref, `${runDir}/case.json`, encoder.encode(JSON.stringify(caseJsonFor(args.simCase))));
     console.log("runCase:stage", "exec_simulator", args.experimentId);
     const timeoutSec = Math.min(60, Math.max(1, args.timeoutSec ?? 30));
-    const command = [
+    const liveEnabled = args.simCase.suite !== "withheld";
+    const streamDir = `${runDir}/stream`;
+    const baseCommand = [
       "python3 -m simulator.cli",
       `--controller-dir ${runDir}/controller`,
       `--case-json ${runDir}/case.json`,
@@ -264,14 +280,117 @@ export const runCase = internalAction({
       `--experiment-id ${args.experimentId}`,
       `--timeout-sec ${timeoutSec}`,
     ].join(" ");
+    const command = liveEnabled ? `${baseCommand} --stream-dir ${streamDir}` : baseCommand;
     let run: { exitCode: number; output: string };
-    try {
-      run = await daytona.exec(ref, {
-        command, cwd: SIM_ROOT, timeoutSec: timeoutSec * 4 + 60,
-        env: { PYTHONPATH: SIM_PYTHONPATH, PYTHONDONTWRITEBYTECODE: "1", HOME: runDir, TMPDIR: runDir },
-      });
-    } catch (error) {
-      run = { exitCode: -1, output: `exec_failed:${error instanceof Error ? error.message : "unknown"}` };
+    let relayOpened = false;
+    const safeFinishRelay = async (outcome: "finished" | "unavailable", reason?: string, replayArtifactId?: string) => {
+      if (!liveEnabled) return;
+      try {
+        await ctx.runMutation(internal.liveFrames.finish, {
+          experimentId: args.experimentId,
+          outcome,
+          ...(reason ? { reason } : {}),
+          ...(replayArtifactId ? { replayArtifactId } : {}),
+        });
+      } catch {
+        // The relay is best-effort and never changes the experiment result.
+      }
+    };
+    if (liveEnabled) {
+      try {
+        await ctx.runMutation(internal.liveFrames.open, {
+          experimentId: args.experimentId,
+          investigationId: args.investigationId,
+          ...(args.environmentId ? { environmentId: args.environmentId } : {}),
+        });
+        relayOpened = true;
+      } catch {
+        relayOpened = false;
+      }
+    }
+    const executionOptions = {
+      command, cwd: SIM_ROOT, timeoutSec: timeoutSec * 4 + 60,
+      env: { PYTHONPATH: SIM_PYTHONPATH, PYTHONDONTWRITEBYTECODE: "1", HOME: runDir, TMPDIR: runDir },
+    };
+    if (!liveEnabled) {
+      try {
+        run = await daytona.exec(ref, executionOptions);
+      } catch (error) {
+        run = { exitCode: -1, output: `exec_failed:${error instanceof Error ? error.message : "unknown"}` };
+      }
+    } else {
+      let relayActive = relayOpened;
+      let nextSeq = 0;
+      let readerFailures = 0;
+      const drain = async () => {
+        if (!relayActive) return;
+        try {
+          const trusted = await trustedSandbox(ref);
+          const read = await trustedExecLarge(
+            trusted,
+            `python3 -c '${LIVE_CHUNK_READER_PYTHON}' ${streamDir} ${nextSeq}`,
+            10,
+          );
+          if (read.exitCode !== 0) throw new Error("live_reader_failed");
+          for (const chunk of parseChunkLines(read.output)) {
+            if (!relayActive) break;
+            const appended = await ctx.runMutation(internal.liveFrames.appendChunk, {
+              experimentId: args.experimentId,
+              seq: chunk.seq,
+              frames: chunk.frames,
+              final: chunk.final,
+            });
+            if (appended.accepted) {
+              nextSeq = chunk.seq + 1;
+              if (chunk.final) relayActive = false;
+            } else if (appended.reason === "duplicate") {
+              nextSeq = Math.max(nextSeq, chunk.seq + 1);
+            } else if (appended.reason === "gap") {
+              break;
+            } else if (appended.reason === "capped" || appended.reason === "too_large") {
+              relayActive = false;
+              await safeFinishRelay("unavailable", appended.reason === "capped" ? "chunk_cap" : "chunk_too_large");
+            } else {
+              relayActive = false;
+            }
+          }
+          readerFailures = 0;
+        } catch {
+          readerFailures += 1;
+          if (readerFailures >= 3) {
+            relayActive = false;
+            await safeFinishRelay("unavailable", "relay_error");
+          }
+        }
+      };
+      let execution: Promise<{ exitCode: number; output: string }>;
+      try {
+        execution = daytona.exec(ref, executionOptions);
+      } catch (error) {
+        execution = Promise.reject(error);
+      }
+      let unsettled = true;
+      void execution.then(() => { unsettled = false; }, () => { unsettled = false; });
+      while (unsettled && relayActive) {
+        await liveRelaySleep(LIVE_RELAY_SLEEP_MS);
+        if (unsettled) await drain();
+      }
+      try {
+        run = await execution;
+      } catch (error) {
+        run = { exitCode: -1, output: `exec_failed:${error instanceof Error ? error.message : "unknown"}` };
+      }
+      if (run.exitCode !== 0 && isStreamFlagUnsupported(run.output)) {
+        relayActive = false;
+        await safeFinishRelay("unavailable", "bundle_without_streaming");
+        try {
+          run = await daytona.exec(ref, { ...executionOptions, command: baseCommand });
+        } catch (error) {
+          run = { exitCode: -1, output: `exec_failed:${error instanceof Error ? error.message : "unknown"}` };
+        }
+      } else if (relayActive) {
+        await drain();
+      }
     }
     const expectedSha = await sha256(encoder.encode(args.controllerSource));
     let resultBytes: Uint8Array | undefined;
@@ -288,12 +407,14 @@ export const runCase = internalAction({
       engineVersion: "unknown", assetsSha256: "0".repeat(64), controllerSha256: expectedSha,
     };
     if (!resultBytes) {
+      await safeFinishRelay("unavailable", "no_replay");
       return { ...base, status: "invalid", failureKinds: ["missing_artifact"], completed: false };
     }
     let result: Record<string, unknown>;
     try {
       result = JSON.parse(new TextDecoder().decode(resultBytes)) as Record<string, unknown>;
     } catch {
+      await safeFinishRelay("unavailable", "no_replay");
       return { ...base, status: "invalid", failureKinds: ["invalid_run"], completed: false };
     }
     const failureKinds = Array.isArray(result.failureKinds) ? (result.failureKinds as string[]) : ["invalid_run"];
@@ -318,6 +439,11 @@ export const runCase = internalAction({
         visibility: "internal", result: { ...result, experimentId: args.experimentId },
       });
     }
+    await safeFinishRelay(
+      replayArtifactId ? "finished" : "unavailable",
+      replayArtifactId ? undefined : "no_replay",
+      replayArtifactId,
+    );
     return {
       ...base,
       ok: status === "succeeded",

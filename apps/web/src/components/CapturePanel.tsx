@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { DEFAULT_TASK_FAMILY, SIM, TASK_FAMILY_SPECS, validateSceneOverrides, type TaskFamily } from "@forksafe/contracts";
 import { shortSha, useClient, useHashRoute, useLoad } from "../hooks";
 import type { CaptureOutcome, InvestigationWorkspace } from "../services";
 import { ReplayControls } from "../viewer/ReplayControls";
 import { ReplayViewer } from "../viewer/ReplayViewer";
+import { LiveViewer } from "../viewer/LiveViewer";
 import { replayDuration } from "../viewer/transform";
 import { useReplayClock } from "../viewer/useReplayClock";
 import { Badge, Panel } from "./Panel";
@@ -19,8 +20,29 @@ export function CapturePanel({ workspace }: { workspace: InvestigationWorkspace 
   const inv = workspace.investigation;
   const baseline = workspace.experiments.find((e) => e.id === inv.baselineExperimentId);
   const replayId = baseline?.replayArtifactId;
-  const replay = useLoad((c) => (replayId ? c.getReplay(replayId) : Promise.resolve(null)), [replayId]);
+  const [handoff, setHandoff] = useState<{ replayArtifactId?: string; atSec: number } | null>(null);
+  const livePlayhead = useRef(0);
+  const baselineRunning = baseline?.status === "running" || baseline?.status === "queued";
+  const captureRunning = ["capturing", "admitted", "searching", "evaluating"].includes(inv.state);
+  const showLive = !handoff && (baselineRunning || (!replayId && captureRunning));
+  const effectiveReplayId = handoff?.replayArtifactId ?? replayId;
+  const replay = useLoad((c) => (effectiveReplayId ? c.getReplay(effectiveReplayId) : Promise.resolve(null)), [effectiveReplayId]);
+  const sawLive = useRef(false);
+  const lastReplayId = useRef(replayId);
   const [editorOpen, setEditorOpen] = useState(false);
+  const noteLiveProgress = useCallback((t: number) => { livePlayhead.current = t; }, []);
+  const finishLive = useCallback((artifactId: string | undefined, atSec: number) => {
+    livePlayhead.current = atSec;
+    if (artifactId || replayId) setHandoff((current) => current ?? { replayArtifactId: artifactId ?? replayId, atSec });
+  }, [replayId]);
+
+  useEffect(() => {
+    if (showLive) sawLive.current = true;
+    if (sawLive.current && replayId && !lastReplayId.current) {
+      setHandoff((current) => current ?? { replayArtifactId: replayId, atSec: livePlayhead.current });
+    }
+    lastReplayId.current = replayId;
+  }, [replayId, showLive]);
 
   return (
     <>
@@ -29,12 +51,27 @@ export function CapturePanel({ workspace }: { workspace: InvestigationWorkspace 
       <Panel
         title="Baseline replay"
         headingLevel={3}
-        state={replay}
-        isEmpty={(r) => r === null}
+        state={showLive ? { status: "ready", data: null, reload: replay.reload } : replay}
+        isEmpty={(r) => r === null && !showLive}
         empty="This baseline has no recorded replay artifact yet."
         testId="baseline-replay"
       >
-        {(r) => <BaselineReplay replay={r!} scene={inv.baselineCase.sceneOverrides} taskFamily={inv.baselineCase.taskFamily} />}
+        {(r) => showLive ? (
+          <LiveViewer
+            experimentId={inv.baselineExperimentId}
+            scene={inv.baselineCase.sceneOverrides}
+            label="Original controller"
+            onFinished={finishLive}
+            onProgress={noteLiveProgress}
+          />
+        ) : r ? (
+          <BaselineReplay
+            replay={r}
+            scene={inv.baselineCase.sceneOverrides}
+            taskFamily={inv.baselineCase.taskFamily}
+            initialT={handoff?.atSec ?? 0}
+          />
+        ) : null}
       </Panel>
       <div className={styles.side}>
         <section className={styles.card} aria-labelledby="baseline-h">
@@ -78,8 +115,8 @@ export function CapturePanel({ workspace }: { workspace: InvestigationWorkspace 
   );
 }
 
-function BaselineReplay({ replay, scene, taskFamily }: { replay: NonNullable<Awaited<ReturnType<ReturnType<typeof useClient>["getReplay"]>>>; scene: Record<string, number>; taskFamily?: string }) {
-  const clock = useReplayClock(replayDuration(replay.frames));
+function BaselineReplay({ replay, scene, taskFamily, initialT }: { replay: NonNullable<Awaited<ReturnType<ReturnType<typeof useClient>["getReplay"]>>>; scene: Record<string, number>; taskFamily?: string; initialT: number }) {
+  const clock = useReplayClock(replayDuration(replay.frames), initialT);
   const markers = replay.firstFailure ? [{ tSec: replay.firstFailure.tSec, label: human(replay.firstFailure.kind) }] : [];
   return (
     <div>

@@ -18,6 +18,7 @@ from simulator.snapshot import (
     restore_session,
     write_snapshot_atomic,
 )
+from simulator.stream import StreamWriter
 from simulator.trace_store import export_trace
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -33,6 +34,8 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument("--out-dir", required=True, type=Path)
     parser.add_argument("--experiment-id", required=True, type=UUID)
     parser.add_argument("--timeout-sec", type=float, default=30)
+    parser.add_argument("--stream-dir", type=Path)
+    parser.add_argument("--stream-interval-sec", type=float, default=0.5)
     return parser.parse_args()
 
 
@@ -52,19 +55,37 @@ def _legacy_main() -> int:
     args = _arguments()
     sys.argv[:] = sys.argv[:1]
     args.out_dir.mkdir(parents=True, exist_ok=True)
+    writer = (
+        StreamWriter(args.stream_dir, args.stream_interval_sec)
+        if args.stream_dir is not None
+        else None
+    )
     try:
         case = (
             SimCase.model_validate_json(args.case_json.read_text())
             if args.case_json
             else _resolve_case(args.case_id)
         )
-        result, trace = run_case(
-            args.controller_dir.resolve(),
-            case,
-            args.seed,
-            args.experiment_id,
-            args.timeout_sec,
-        )
+        if writer is None:
+            result, trace = run_case(
+                args.controller_dir.resolve(),
+                case,
+                args.seed,
+                args.experiment_id,
+                args.timeout_sec,
+            )
+        else:
+            session = RunSession.start(
+                args.controller_dir.resolve(),
+                case,
+                args.seed,
+                args.experiment_id,
+                args.timeout_sec,
+            )
+            while session.step():
+                writer.maybe_flush(session.frames, session.data.time)
+            result, trace = session.finish()
+            writer.finish(result["frames"])
     except Exception as exc:  # noqa: BLE001
         from simulator.assets import AssetIntegrityError, verify_assets
 
@@ -92,6 +113,8 @@ def _legacy_main() -> int:
             "assetsSha256": assets_sha,
             "frames": [],
         }
+        if writer is not None:
+            writer.finish([])
         _write_artifacts(result, trace, args.out_dir)
         print(result["firstFailure"]["detail"], file=sys.stderr)
         return 1
