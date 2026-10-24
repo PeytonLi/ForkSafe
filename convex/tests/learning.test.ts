@@ -14,7 +14,7 @@ const findingId = "66666666-6666-4666-8666-666666666666";
 const artifactId = "77777777-7777-4777-8777-777777777777";
 const baselineSha = "b".repeat(64);
 const approvedSha = "c".repeat(64);
-const simCase = { caseId: "seed-1042", suite: "original" as const, seed: 1042, sceneOverrides: { divider_height: 0.15 } };
+const simCase = { caseId: "seed-1042", suite: "original" as const, seed: 1042, sceneOverrides: { dividerHeight: 0.15 } };
 const budget = { wallTimeMs: 60_000, maxExperimentsPerEnv: 1, maxCandidatesPerEnv: 1, maxFinalCandidates: 1 };
 
 async function seedInvestigation(t: ReturnType<typeof convexTest>, state: "awaiting_review" | "completed" = "awaiting_review") {

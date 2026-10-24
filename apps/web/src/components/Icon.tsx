@@ -16,6 +16,7 @@ const PATHS = {
   external: "M6.5 3.5h-3v9h9v-3M9.5 2.5h4v4M13.5 2.5 7.5 8.5",
   user: "M8 7.5a2.75 2.75 0 1 0 0-5.5 2.75 2.75 0 0 0 0 5.5ZM2.75 14c.5-2.6 2.6-4.25 5.25-4.25s4.75 1.65 5.25 4.25",
   enter: "M13 3.5v4.75a1.25 1.25 0 0 1-1.25 1.25H3.5M6 7 3.5 9.5 6 12",
+  plus: "M8 2.5v11M2.5 8h11",
 } as const;
 
 export type IconName = keyof typeof PATHS;

@@ -19,6 +19,7 @@ import { scopedQuestion } from "./ask";
 import type {
   CaptureDraft,
   CaptureOutcome,
+  FailureSearchOutcome,
   EvidenceAnswer,
   ForkSafeClient,
   HandoffEvent,
@@ -43,6 +44,7 @@ export const CONVEX_FUNCTIONS = {
   candidateDiff: "candidates:diff",
   cancel: "investigations:cancel",
   capture: "investigations:capture",
+  findFailure: "sceneSearch:findFailure",
   recordReview: "reviews:record",
 } as const;
 
@@ -83,6 +85,26 @@ export const Workspace = z.object({
 export const Capture = z.union([
   z.object({ accepted: z.literal(true), investigationId: z.string().uuid() }),
   z.object({ accepted: z.literal(false), mode: z.enum(["live", "local", "fixture", "blocked", "not_implemented"]), reason: z.string() }),
+]);
+export const FailureSearch = z.union([
+  z.object({
+    mode: z.enum(["live", "local", "fixture", "blocked", "not_implemented"]),
+    found: z.literal(false),
+    samples: z.number().int().nonnegative(),
+    failures: z.number().int().nonnegative(),
+    reason: z.string(),
+  }),
+  z.object({
+    mode: z.enum(["live", "local", "fixture", "blocked", "not_implemented"]),
+    found: z.literal(true),
+    taskFamily: z.enum(["divider_pick_place", "push_through_gap"]),
+    caseId: z.string(),
+    sceneOverrides: z.record(z.string(), z.number()),
+    seed: z.number().int().nonnegative(),
+    samples: z.number().int().nonnegative(),
+    failures: z.number().int().nonnegative(),
+    failureKind: z.string().optional(),
+  }),
 ]);
 
 const LearningExperiment = z.object({
@@ -202,6 +224,7 @@ export const CONVEX_RESPONSE_SCHEMAS = {
   candidateReplay: SimRunResult,
   candidateDiff: z.string(),
   capture: Capture,
+  findFailure: FailureSearch,
   recordReview: HumanReview,
 };
 
@@ -292,6 +315,14 @@ export class ConvexForkSafeClient implements ForkSafeClient {
     try {
       const r = await this.client.mutation(makeFunctionReference<"mutation">(CONVEX_FUNCTIONS.capture), { ...draft });
       return parse(CONVEX_RESPONSE_SCHEMAS.capture, r, "Capture outcome");
+    } catch (e) {
+      mapError(e);
+    }
+  }
+  async findFailure(taskFamily: import("@forksafe/contracts").TaskFamily): Promise<FailureSearchOutcome> {
+    try {
+      const result = await this.client.action(makeFunctionReference<"action">(CONVEX_FUNCTIONS.findFailure), { taskFamily });
+      return parse(CONVEX_RESPONSE_SCHEMAS.findFailure, result, "Failure search") as FailureSearchOutcome;
     } catch (e) {
       mapError(e);
     }

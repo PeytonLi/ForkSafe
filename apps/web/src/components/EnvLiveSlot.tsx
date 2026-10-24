@@ -9,12 +9,14 @@ export function EnvLiveSlot({
   selected,
   experiment,
   scene,
+  taskFamily,
   onSelectLive,
 }: {
   compact: boolean;
   selected: boolean;
   experiment: Experiment | undefined;
   scene: Record<string, number>;
+  taskFamily?: string;
   onSelectLive: (button: HTMLButtonElement) => void;
 }) {
   if (compact && !selected) {
@@ -30,6 +32,7 @@ export function EnvLiveSlot({
       key={experiment.id}
       experimentId={experiment.id}
       scene={scene}
+      taskFamily={taskFamily}
       label={experiment.simCase.caseId}
       compact
     />

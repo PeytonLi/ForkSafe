@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as THREE from "three";
-import type { SimRunResult } from "@forksafe/contracts";
+import type { SimRunResult, TaskFamily } from "@forksafe/contracts";
+import { resolveScene, type ResolvedScene } from "../scene";
 import { mjToThreePos, mjToThreeQuat, sampleAt, type Sample } from "./transform";
 import styles from "./ReplayViewer.module.css";
 
@@ -15,6 +16,8 @@ interface Scene3D {
   hand: THREE.Mesh;
   cube: THREE.Mesh;
   divider: THREE.Mesh;
+  gapLeft: THREE.Mesh;
+  gapRight: THREE.Mesh;
   target: THREE.Mesh;
   contact: THREE.Mesh;
   ghost: ArmParts & { group: THREE.Group };
@@ -62,12 +65,12 @@ function ghostArm(s: THREE.Scene): ArmParts & { group: THREE.Group } {
   return { group, links, joints, hand };
 }
 
-function build(canvas: HTMLCanvasElement, scene: Record<string, number>): Scene3D {
+function build(canvas: HTMLCanvasElement): Scene3D {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true, alpha: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setClearColor(0x000000, 0);
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
   const s = new THREE.Scene();
   s.background = null;
   const camera = new THREE.PerspectiveCamera(40, 1, 0.01, 20);
@@ -111,16 +114,14 @@ function build(canvas: HTMLCanvasElement, scene: Record<string, number>): Scene3
   s.add(hand);
   const cube = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.05), new THREE.MeshStandardMaterial({ color: "#2563eb" }));
   s.add(cube);
-  const len = scene.divider_length ?? 0.3;
-  const h = scene.divider_height ?? 0.15;
-  // divider runs along MuJoCo x, thin along y, height along z
-  const divider = new THREE.Mesh(
-    new THREE.BoxGeometry(len, h, 0.02),
-    new THREE.MeshStandardMaterial({ color: "#8a94a6", transparent: true, opacity: 0.85 }),
-  );
+  const wallMat = new THREE.MeshStandardMaterial({ color: "#8a94a6", transparent: true, opacity: 0.85 });
+  const divider = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), wallMat);
   s.add(divider);
+  const gapLeft = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), wallMat);
+  const gapRight = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), wallMat);
+  s.add(gapLeft, gapRight);
   const target = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.06, 0.06, 0.003, 32),
+    new THREE.CylinderGeometry(1, 1, 1, 32),
     new THREE.MeshStandardMaterial({ color: "#16a34a", transparent: true, opacity: 0.55 }),
   );
   s.add(target);
@@ -132,7 +133,7 @@ function build(canvas: HTMLCanvasElement, scene: Record<string, number>): Scene3
   const ghost = ghostArm(s);
   const paths = new THREE.Group();
   s.add(paths);
-  return { renderer, scene: s, camera, links, joints, hand, cube, divider, target, contact, ghost, paths };
+  return { renderer, scene: s, camera, links, joints, hand, cube, divider, gapLeft, gapRight, target, contact, ghost, paths };
 }
 
 const v = (p: [number, number, number]) => new THREE.Vector3(...mjToThreePos(p));
@@ -189,7 +190,50 @@ function setPaths(s3: Scene3D, replay: SimRunResult, ghost: SimRunResult | undef
   s3.paths.add(own, ghostLine);
 }
 
-function apply(s3: Scene3D, replay: SimRunResult, t: number, ghost?: SimRunResult) {
+function setStaticScene(s3: Scene3D, scene: ResolvedScene) {
+  const placeFloorObject = (mesh: THREE.Mesh, x: number, y: number, z: number, length: number, height: number, thickness: number) => {
+    mesh.visible = true;
+    mesh.position.set(x, y + height / 2, z);
+    mesh.scale.set(length, height, thickness);
+  };
+  s3.cube.visible = true;
+  s3.cube.position.set(scene.cubeStart[0], scene.cubeStart[2], scene.cubeStart[1]);
+  s3.target.visible = true;
+  s3.target.position.set(scene.target[0], scene.target[2], scene.target[1]);
+  s3.target.scale.set(0.12, 0.003, 0.12);
+  if (scene.kind === "divider_pick_place") {
+    placeFloorObject(
+      s3.divider,
+      scene.dividerCenter[0],
+      0,
+      scene.dividerCenter[1],
+      scene.dividerHalfLength * 2,
+      scene.dividerHeight,
+      scene.dividerHalfThickness * 2,
+    );
+    s3.gapLeft.visible = false;
+    s3.gapRight.visible = false;
+  } else {
+    s3.divider.visible = false;
+    const [wallStart, wallEnd] = scene.wallSpanX;
+    const gapLeft = scene.gapCenter[0] - scene.gapWidth / 2;
+    const gapRight = scene.gapCenter[0] + scene.gapWidth / 2;
+    placeFloorObject(s3.gapLeft, (wallStart + gapLeft) / 2, 0, scene.gapCenter[1], gapLeft - wallStart, scene.wallHeight, scene.wallHalfThickness * 2);
+    placeFloorObject(s3.gapRight, (gapRight + wallEnd) / 2, 0, scene.gapCenter[1], wallEnd - gapRight, scene.wallHeight, scene.wallHalfThickness * 2);
+  }
+}
+
+function apply(s3: Scene3D, replay: SimRunResult | undefined, t: number, ghost: SimRunResult | undefined, scene: ResolvedScene) {
+  setStaticScene(s3, scene);
+  if (!replay) {
+    s3.links.forEach((mesh) => (mesh.visible = false));
+    s3.joints.forEach((mesh) => (mesh.visible = false));
+    s3.hand.visible = false;
+    s3.ghost.group.visible = false;
+    s3.paths.visible = false;
+    s3.contact.visible = false;
+    return;
+  }
   const smp = sampleAt(replay.frames, t);
   if (!smp) return;
   poseArm(s3, smp);
@@ -197,9 +241,16 @@ function apply(s3: Scene3D, replay: SimRunResult, t: number, ghost?: SimRunResul
   s3.ghost.group.visible = !!gs;
   s3.paths.visible = !!gs;
   if (gs) poseArm(s3.ghost, gs);
-  place(smp, s3.cube, "cube");
-  place(smp, s3.divider, "divider");
-  place(smp, s3.target, "target");
+  const cube = smp.bodies.get("cube");
+  if (cube) place(smp, s3.cube, "cube");
+  const divider = smp.bodies.get("divider");
+  if (divider) place(smp, s3.divider, "divider");
+  const gapLeft = smp.bodies.get("gap_wall_left");
+  if (gapLeft) place(smp, s3.gapLeft, "gap_wall_left");
+  const gapRight = smp.bodies.get("gap_wall_right");
+  if (gapRight) place(smp, s3.gapRight, "gap_wall_right");
+  const target = smp.bodies.get("target");
+  if (target) place(smp, s3.target, "target");
   const hit = smp.contacts.find((c) => c.a === "cube" || c.b === "cube");
   s3.contact.visible = !!hit;
   if (hit) s3.contact.position.copy(s3.cube.position).add(new THREE.Vector3(0, 0, -0.03));
@@ -207,10 +258,11 @@ function apply(s3: Scene3D, replay: SimRunResult, t: number, ghost?: SimRunResul
 }
 
 interface Props {
-  replay: SimRunResult;
-  t: number;
-  label: string;
-  scene: Record<string, number>;
+  replay?: SimRunResult;
+  t?: number;
+  label?: string;
+  scene?: Record<string, number>;
+  taskFamily?: TaskFamily;
   compact?: boolean;
   captionExtra?: ReactNode;
   /** Original (failing) run drawn as a translucent ghost on the same clock. */
@@ -218,23 +270,33 @@ interface Props {
 }
 
 /** Renders sampled authoritative state; it never runs physics or scores. */
-export function ReplayViewer({ replay, t, label, scene, ghost, compact = false, captionExtra }: Props) {
+export function ReplayViewer({
+  replay,
+  t = 0,
+  label = "Scene preview",
+  scene: overrides = {},
+  taskFamily,
+  compact = false,
+  ghost,
+  captionExtra,
+}: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const s3Ref = useRef<Scene3D | null>(null);
   const [webglError, setWebglError] = useState<string | null>(null);
-  const smp = sampleAt(replay.frames, t);
+  const resolvedScene = useMemo(() => resolveScene(taskFamily, overrides), [taskFamily, overrides]);
+  const smp = replay ? sampleAt(replay.frames, t) : undefined;
 
   useEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
     const canvas = document.createElement("canvas");
     canvas.className = styles.canvas!;
-    canvas.setAttribute("aria-label", `${label} replay, 3D view`);
+    canvas.setAttribute("aria-label", `${label}, 3D view`);
     canvas.setAttribute("role", "img");
     wrap.appendChild(canvas);
     let s3: Scene3D;
     try {
-      s3 = build(canvas, scene);
+      s3 = build(canvas);
     } catch (e) {
       canvas.remove();
       setWebglError((e as Error).message || "WebGL unavailable");
@@ -248,6 +310,7 @@ export function ReplayViewer({ replay, t, label, scene, ghost, compact = false, 
       s3.camera.aspect = w / h;
       s3.camera.updateProjectionMatrix();
       s3.renderer.render(s3.scene, s3.camera);
+      canvas.dataset.rendered = "true";
     };
     const ro = new ResizeObserver(resize);
     ro.observe(wrap);
@@ -259,42 +322,60 @@ export function ReplayViewer({ replay, t, label, scene, ghost, compact = false, 
       s3Ref.current = null;
       canvas.remove();
     };
-  }, [label, scene]);
+  }, [label]);
 
   useEffect(() => {
     const s3 = s3Ref.current;
     if (!s3) return;
-    setPaths(s3, replay, ghost);
-  }, [replay, ghost, scene, webglError]);
-
-  useEffect(() => {
-    const s3 = s3Ref.current;
-    if (!s3) return;
-    apply(s3, replay, t, ghost);
+    setStaticScene(s3, resolvedScene);
     s3.renderer.render(s3.scene, s3.camera);
-  }, [replay, t, ghost, scene, webglError]);
+  }, [resolvedScene, webglError]);
+
+  useEffect(() => {
+    const s3 = s3Ref.current;
+    if (!s3) return;
+    if (replay) setPaths(s3, replay, ghost);
+    else {
+      for (const child of [...s3.paths.children]) {
+        s3.paths.remove(child);
+        (child as THREE.Line).geometry.dispose();
+      }
+    }
+  }, [replay, ghost, webglError]);
+
+  useEffect(() => {
+    const s3 = s3Ref.current;
+    if (!s3) return;
+    apply(s3, replay, t, ghost, resolvedScene);
+    s3.renderer.render(s3.scene, s3.camera);
+  }, [replay, t, ghost, resolvedScene, webglError]);
   const ghostSample = ghost ? sampleAt(ghost.frames, t) : undefined;
 
-  const contact = smp?.contacts[0];
+  const contact = replay ? smp?.contacts[0] : undefined;
   return (
-    <figure className={styles.viewer} data-testid="replay-viewer" data-label={label} data-ghost={ghost ? "on" : "off"} data-ghost-t={ghostSample?.tSec.toFixed(2)}>
+    <figure className={`${styles.viewer} ${compact ? styles.compact : ""}`} data-testid={replay ? "replay-viewer" : "scene-preview"} data-label={label} data-scene-kind={resolvedScene.kind} data-ghost={ghost ? "on" : "off"} data-ghost-t={ghostSample?.tSec.toFixed(2)}>
       <div ref={wrapRef} className={styles.canvasWrap}>
         {webglError ? (
           <div className={styles.fallback} role="note">
-            3D view unavailable ({webglError}). Frame data is still shown below.
+            3D view unavailable ({webglError}). {replay ? "Frame data is still shown below." : "The static scene preview is unavailable."}
           </div>
         ) : null}
       </div>
       <figcaption className={styles.caption}>
         <strong>{label}</strong>
-        <span data-testid="frame-readout">
+        {replay && <span data-testid="frame-readout">
           t={smp?.tSec.toFixed(2) ?? "0.00"} s · frame {smp ? smp.frameIndex + 1 : 0}/{replay.frames.length}
-        </span>
-        {!compact && contact ? (
+        </span>}
+        {!replay && <span data-testid="scene-preview-summary">
+          {resolvedScene.kind === "push_through_gap"
+            ? `Gap width: ${resolvedScene.gapWidth.toFixed(2)} m`
+            : `Divider height: ${resolvedScene.dividerHeight.toFixed(2)} m`}
+        </span>}
+        {!compact && replay && contact ? (
           <span className={styles.contact}>
             Contact {contact.a}↔{contact.b} {(contact.depthM * 1000).toFixed(1)} mm
           </span>
-        ) : !compact ? (
+        ) : !compact && replay ? (
           <span className={styles.muted}>{smp?.attached ? "Cube grasped" : "No contact"}</span>
         ) : null}
         {captionExtra}

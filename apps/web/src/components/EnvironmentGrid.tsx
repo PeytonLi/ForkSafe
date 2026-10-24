@@ -61,6 +61,7 @@ export function EnvironmentGrid({ workspace: w }: { workspace: InvestigationWork
               selected={selected.id === e.id}
               experiment={current}
               scene={w.investigation.baselineCase.sceneOverrides}
+              taskFamily={w.investigation.baselineCase.taskFamily}
               onSelectLive={(button) => {
                 setSelectedLiveEnv(e.id);
                 button.closest("article")?.scrollIntoView({

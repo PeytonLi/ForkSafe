@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import type { CandidateEvaluation, ControllerCandidate, ReviewDecision, SimRunResult } from "@forksafe/contracts";
+import type { CandidateEvaluation, ControllerCandidate, ReviewDecision, SimRunResult, TaskFamily } from "@forksafe/contracts";
 import { fmtTime, shortId, shortSha, useClient, useLoad } from "../hooks";
 import { FIXTURE_REVIEWER, errorCode, type InvestigationWorkspace } from "../services";
 import { ReplayControls } from "../viewer/ReplayControls";
@@ -103,7 +103,7 @@ function CandidateDetail({ w, cand }: { w: InvestigationWorkspace; cand: Control
       <div role="tabpanel" id={`compare-panel-${active}`} aria-labelledby={`compare-tab-${active}`} className={styles.subTabPanel} data-testid={`compare-panel-content-${active}`}>
         {active === "replay" && (
           <Panel title="Synchronized replay" headingLevel={3} state={replays} testId="comparison-replay">
-            {(r) => <SyncedReplays original={r.original} candidate={r.candidate} scene={inv.baselineCase.sceneOverrides} />}
+            {(r) => <SyncedReplays original={r.original} candidate={r.candidate} scene={inv.baselineCase.sceneOverrides} taskFamily={inv.baselineCase.taskFamily} />}
           </Panel>
         )}
         {active === "results" && (
@@ -160,12 +160,14 @@ export function SyncedReplays({
   original,
   candidate,
   scene,
+  taskFamily,
   labels = { before: "Original", after: "Repaired candidate" },
   compact = false,
 }: {
   original: SimRunResult;
   candidate: SimRunResult;
   scene: Record<string, number>;
+  taskFamily?: string;
   labels?: { before: string; after: string };
   compact?: boolean;
 }) {
@@ -195,11 +197,11 @@ export function SyncedReplays({
       </div>
       <div className={styles.panes}>
         <div>
-          <ReplayViewer replay={original} t={clock.t} label={labels.before} scene={scene} />
+          <ReplayViewer replay={original} t={clock.t} label={labels.before} scene={scene} taskFamily={taskFamily as TaskFamily | undefined} />
           <p className={styles.outcome}><Badge tone={original.completed ? "green" : "red"}>{outcome(original)}</Badge></p>
         </div>
         <div>
-          <ReplayViewer replay={candidate} t={clock.t} label={labels.after} scene={scene} ghost={ghost ? original : undefined} />
+          <ReplayViewer replay={candidate} t={clock.t} label={labels.after} scene={scene} taskFamily={taskFamily as TaskFamily | undefined} ghost={ghost ? original : undefined} />
           <p className={styles.outcome}><Badge tone={candidate.completed ? "green" : "red"}>{outcome(candidate)}</Badge></p>
         </div>
       </div>

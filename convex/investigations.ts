@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
+import { DEFAULT_TASK_FAMILY, TASK_FAMILY_SPECS, isTaskFamily, validateSceneOverrides } from "@forksafe/contracts";
 import { internal } from "./_generated/api.js";
 import { mutation, query, internalMutation, internalQuery, type MutationCtx } from "./_generated/server.js";
 import { readLimits } from "./lib/constants.js";
@@ -8,7 +9,7 @@ import { hasPrivateAccess, isPublicInvestigation, requireInvestigationRead, requ
 import { appId, assertUUID } from "./lib/validators.js";
 import { MoreInvestigationRequest } from "./forgeProtocolExt.js";
 import { finalizeCancelledJob } from "./lib/jobOps.js";
-import { currentControllerForFamily, DEFAULT_TASK_FAMILY, selectPriorHints } from "./learning.js";
+import { currentControllerForFamily, selectPriorHints } from "./learning.js";
 
 export const requestMoreFromForge = internalMutation({
   args: { request: v.any(), installationId: v.string(), requestedBy: v.string() },
@@ -46,6 +47,7 @@ const simCase = v.object({
   suite: v.union(v.literal("original"), v.literal("public"), v.literal("withheld")),
   seed: v.number(),
   sceneOverrides: v.record(v.string(), v.number()),
+  taskFamily: v.optional(v.string()),
   description: v.optional(v.string()),
 });
 
@@ -435,6 +437,8 @@ function toInvestigation(row: any) {
   return {
     id: row.appId, state: row.state, title: row.title, baselineCase: row.baselineCase, baselineExperimentId: row.baselineExperimentId,
     ...(row.jiraIssueKey ? { jiraIssueKey: row.jiraIssueKey } : {}), requestedEnvironments: row.requestedEnvironments,
+    ...(row.captureStatus ? { captureStatus: row.captureStatus } : {}),
+    ...(row.lastError ? { lastError: row.lastError } : {}),
     createdAtMs: row.createdAtMs, updatedAtMs: row.updatedAtMs,
   };
 }
@@ -525,20 +529,17 @@ export const capture = mutation({
   handler: async (ctx, args): Promise<{ accepted: true; investigationId: string } | { accepted: false; mode: string; reason: string }> => {
     await requireWriteIdentity(ctx, args.serviceToken);
     const limits = readLimits();
+    const taskFamily = args.taskFamily ?? DEFAULT_TASK_FAMILY;
+    const validation = validateSceneOverrides(taskFamily, args.sceneOverrides);
+    if (!validation.ok) return { accepted: false, mode: "live", reason: validation.reason };
+    if (!isTaskFamily(taskFamily)) return { accepted: false, mode: "live", reason: `Unknown task "${taskFamily}".` };
     if (!args.title.trim()) return { accepted: false, mode: "live", reason: "title is required" };
     if (!Number.isInteger(args.seed) || args.seed < 0) return { accepted: false, mode: "live", reason: "seed must be a non-negative integer" };
     if (!Number.isInteger(args.requestedEnvironments) || args.requestedEnvironments < 1 || args.requestedEnvironments > limits.maxEnvironments) {
       return { accepted: false, mode: "live", reason: `requestedEnvironments must be 1-${limits.maxEnvironments}` };
     }
-    for (const [key, value] of Object.entries(args.sceneOverrides)) {
-      if (!/^[A-Za-z][A-Za-z0-9_]{0,40}$/.test(key) || !Number.isFinite(value)) return { accepted: false, mode: "live", reason: `invalid scene override ${key}` };
-    }
     if (process.env.DAYTONA_MODE !== "cloud" || !process.env.DAYTONA_API_KEY) {
       return { accepted: false, mode: process.env.DAYTONA_MODE === "local" ? "local" : "blocked", reason: "capture needs a Daytona execution sandbox; DAYTONA_API_KEY is not configured" };
-    }
-    const taskFamily = args.taskFamily ?? DEFAULT_TASK_FAMILY;
-    if (!["divider_pick_place", "push_through_gap"].includes(taskFamily)) {
-      return { accepted: false, mode: "live", reason: "taskFamily must be divider_pick_place or push_through_gap" };
     }
     const requestedChoice = args.controller ?? "approved";
     const current = await currentControllerForFamily(ctx, taskFamily);
@@ -555,7 +556,10 @@ export const capture = mutation({
     await ctx.db.insert("investigations", {
       appId: investigationId, title: args.title.trim().slice(0, 200), state: "capturing", cancelStatus: "none", cancelEpoch: 0, version: 1,
       requestedEnvironments: args.requestedEnvironments,
-      baselineCase: { caseId: "original-divider-collision", suite: "original", seed: args.seed, sceneOverrides: args.sceneOverrides, description: "Captured baseline failure" },
+      baselineCase: {
+        caseId: TASK_FAMILY_SPECS[taskFamily].baseCaseId, suite: "original", seed: args.seed,
+        sceneOverrides: args.sceneOverrides, taskFamily, description: "Captured baseline failure",
+      },
       baselineExperimentId,
       budget: { wallTimeMs: 600_000, maxExperimentsPerEnv: 20, maxCandidatesPerEnv: 2, maxFinalCandidates: 3 },
       idempotencyKey, captureStatus: "pending", autoStart: args.autoStart ?? true,

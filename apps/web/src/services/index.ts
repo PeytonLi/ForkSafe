@@ -16,3 +16,4 @@ export function createClient(env: ImportMetaEnv = import.meta.env): ForkSafeClie
   return new FixtureClient({ simulateStream });
 }
 export * from "./ask";
+export * from "./sceneActionMessage";

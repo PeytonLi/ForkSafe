@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { SimRunResult } from "@forksafe/contracts";
+import type { SimRunResult, TaskFamily } from "@forksafe/contracts";
 import { useClient } from "../hooks";
 import type { LiveStreamSnapshot } from "../services/types";
 import { Badge } from "../components/Panel";
@@ -12,13 +12,14 @@ import styles from "./LiveViewer.module.css";
 interface LiveViewerProps {
   experimentId: string;
   scene: Record<string, number>;
+  taskFamily?: string;
   label: string;
   compact?: boolean;
   onFinished?: (replayArtifactId: string | undefined, atSec: number) => void;
   onProgress?: (atSec: number) => void;
 }
 
-export function LiveViewer({ experimentId, scene, label, compact = false, onFinished, onProgress }: LiveViewerProps) {
+export function LiveViewer({ experimentId, scene, taskFamily, label, compact = false, onFinished, onProgress }: LiveViewerProps) {
   const client = useClient();
   const clientMode = client.source.mode === "fixture" ? "fixture" : client.source.mode === "local" ? "local" : "live";
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -120,7 +121,7 @@ export function LiveViewer({ experimentId, scene, label, compact = false, onFini
   return (
     <div ref={wrapperRef} className={styles.liveViewer} data-testid="live-viewer" data-state={snapshot.status}>
       {visible && replay ? (
-        <ReplayViewer replay={replay} t={playback.t} label={label} scene={scene} compact={compact} captionExtra={captionExtra} />
+        <ReplayViewer replay={replay} t={playback.t} label={label} scene={scene} taskFamily={taskFamily as TaskFamily | undefined} compact={compact} captionExtra={captionExtra} />
       ) : (
         <figure className={replayStyles.viewer}>
           <div className={replayStyles.canvasWrap}>

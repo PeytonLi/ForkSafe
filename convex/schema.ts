@@ -9,6 +9,7 @@ const simCase = v.object({
   suite: v.union(v.literal("original"), v.literal("public"), v.literal("withheld")),
   seed: v.number(),
   sceneOverrides: v.record(v.string(), v.number()),
+  taskFamily: v.optional(v.string()),
   description: v.optional(v.string()),
 });
 const resources = v.object({ cpu: v.number(), memoryGiB: v.number(), diskGiB: v.number() });

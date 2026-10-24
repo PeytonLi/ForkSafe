@@ -15,7 +15,7 @@ import { evaluatorBackend } from "./lib/evaluatorBackend.js";
  *  Convex-owned lease with its own environment-independent grant. Withheld
  *  cases never leave this module: agents only ever see case ids. */
 
-type ManifestCase = { caseId: string; suite: "public" | "withheld"; seed: number; sceneOverrides: Record<string, number>; description?: string };
+type ManifestCase = { caseId: string; suite: "public" | "withheld"; seed: number; sceneOverrides: Record<string, number>; taskFamily?: string; description?: string };
 const suites: Record<"public" | "withheld", ManifestCase[]> = {
   public: (publicManifest as { cases: ManifestCase[] }).cases,
   withheld: (withheldManifest as { cases: ManifestCase[] }).cases,
@@ -367,7 +367,7 @@ export const evaluateNext = internalAction({
           }
           signingKeys.add(verified.keyId);
           for (const signed of verified.cases) {
-            const simCase = { caseId: manifestCase.caseId, suite, seed: manifestCase.seed, sceneOverrides: manifestCase.sceneOverrides ?? {}, ...(manifestCase.description ? { description: manifestCase.description } : {}) };
+            const simCase = { caseId: manifestCase.caseId, suite, seed: manifestCase.seed, sceneOverrides: manifestCase.sceneOverrides ?? {}, ...(manifestCase.taskFamily ? { taskFamily: manifestCase.taskFamily } : {}), ...(manifestCase.description ? { description: manifestCase.description } : {}) };
             const completed = signed.status === "passed" || signed.completionTimeSec !== undefined;
             const experimentStatus = signed.status === "passed" ? "succeeded" : signed.status === "invalid" ? "invalid" : classifyExperiment({ completed: false, failureKinds: signed.failureKinds });
             await ctx.runMutation(internal.evidence.reserveExperiment, {
@@ -397,7 +397,7 @@ export const evaluateNext = internalAction({
           continue;
         }
         const experimentId = appId();
-        const simCase = { caseId: manifestCase.caseId, suite, seed: manifestCase.seed, sceneOverrides: manifestCase.sceneOverrides ?? {}, ...(manifestCase.description ? { description: manifestCase.description } : {}) };
+        const simCase = { caseId: manifestCase.caseId, suite, seed: manifestCase.seed, sceneOverrides: manifestCase.sceneOverrides ?? {}, ...(manifestCase.taskFamily ? { taskFamily: manifestCase.taskFamily } : {}), ...(manifestCase.description ? { description: manifestCase.description } : {}) };
         await ctx.runMutation(internal.evidence.reserveExperiment, {
           experimentId, investigationId: args.investigationId, candidateId: candidate.appId, attemptId: claimed.attemptId, epoch: claimed.epoch,
           grantId: grant.grantId, purpose: "evaluation", simCase, controllerSha256: candidate.controllerSha256, sandboxOpId: sandbox.appId, changedFunctions: candidate.changedFunctions,
