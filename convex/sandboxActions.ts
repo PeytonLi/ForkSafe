@@ -148,8 +148,26 @@ export const reconcileSandbox = internalAction({
             status: "ready",
             sandbox: sandbox.ref,
           });
-          resolved += 1;
+        } else {
+          // The provider listing is authoritative: no sandbox carries this operation label, so the
+          // create never happened and its retained reservation must stop counting toward capacity.
+          await ctx.runMutation(internal.sandboxes.updateSandboxOp, {
+            sandboxOpId: op.appId,
+            status: "terminated",
+            terminatedAtMs: Date.now(),
+            releaseReservation: true,
+            lastError: "create_never_materialized",
+          });
         }
+        resolved += 1;
+      } else if (op.status === "ambiguous_terminate" && !op.sandbox) {
+        await ctx.runMutation(internal.sandboxes.updateSandboxOp, {
+          sandboxOpId: op.appId,
+          status: "terminated",
+          terminatedAtMs: Date.now(),
+          releaseReservation: true,
+        });
+        resolved += 1;
       } else if (op.status === "ambiguous_terminate" && op.sandbox) {
         const sandbox = await provider.get(op.sandbox as VendorRef);
         if (!sandbox) {
