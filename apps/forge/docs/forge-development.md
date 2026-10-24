@@ -29,12 +29,21 @@ identities or authorize based on issue data alone.
 
 ## Configuration and deployment
 
-Use an authorized development site. Register the app once, configure
-`CONVEX_SITE_URL` with `node scripts/configure-remote.mjs`, set the Forge
-variable `FORKSAFE_BACKEND_MODE=remote`, then deploy and install with the
-development environment. The configuration script rejects non-HTTPS URLs and
-changes only the remote base URL. `forge lint` validates the manifest before
-deploying.
+The app is registered under Developer Space **Peyton ForkSafe** with ID
+`ari:cloud:ecosystem::app/66bb7292-9ddc-4529-aa0f-db7b15fc667a`.
+
+Use an authorized development site. Configure `CONVEX_SITE_URL` with
+`node scripts/configure-remote.mjs`, set the Forge variable
+`FORKSAFE_BACKEND_MODE=remote`, and build the resolver before deployment:
+
+```sh
+pnpm --filter @forksafe/forge build
+forge lint
+forge deploy -e development --non-interactive
+```
+
+The configuration script rejects non-HTTPS URLs and changes only the remote
+base URL. Install only into an authorized development site.
 
 The fixture backend is selected unless `FORKSAFE_BACKEND_MODE=remote`; fixture
 mode remains visibly labeled in the UI. The app does not use a shared secret

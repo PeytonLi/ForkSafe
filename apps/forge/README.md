@@ -17,6 +17,11 @@ calls the remote backend using Forge Remote and its Invocation Token. Shared
 backend secrets are never sent to the browser. The backend contract paths and
 schemas are exported from `@forksafe/integrations-atlassian`.
 
+## Registered app
+
+The app is registered under Developer Space **Peyton ForkSafe** with ID
+`ari:cloud:ecosystem::app/66bb7292-9ddc-4529-aa0f-db7b15fc667a`.
+
 ## Modes
 
 By default the Forge app uses clearly labeled deterministic fixture data.
@@ -30,16 +35,16 @@ From this directory:
 
 ```sh
 forge login
-forge register
 CONVEX_SITE_URL=https://<deployment>.convex.site node scripts/configure-remote.mjs
 forge variables set FORKSAFE_BACKEND_MODE remote
-forge deploy -e development
+pnpm --filter @forksafe/forge build
+forge deploy -e development --non-interactive
 forge install --site <site>.atlassian.net --product jira -e development
 ```
 
-Registration creates the app identity consumed by Forge. Configure the remote
-URL before deployment; `configure-remote.mjs` only updates that URL and rejects
-non-HTTPS values. Deploy and install only into an authorized development site.
+Configure the remote URL before deployment; `configure-remote.mjs` only updates
+that URL and rejects non-HTTPS values. Build the resolver bundle before
+deployment. Deploy and install only into an authorized development site.
 
 ## Demo
 

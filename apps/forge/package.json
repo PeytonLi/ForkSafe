@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build": "node scripts/build-resolver.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
@@ -20,6 +21,7 @@
   "devDependencies": {
     "@types/node": "^22",
     "@types/react": "^18",
+    "esbuild": "^0.28.2",
     "typescript": "~5.9.3",
     "vitest": "^3.2.4",
     "yaml": "^2"

@@ -14,7 +14,7 @@ modules:
       title: Start ForkSafe investigation
   function:
     - key: resolver
-      handler: index.handler
+      handler: generated/resolver.handler
 resources:
   - key: panel
     path: src/frontend/panel.tsx

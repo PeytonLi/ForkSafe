@@ -40,13 +40,20 @@ describe("Forge manifest", () => {
     }
 
     const functions = new Map(functionModules.map((item) => [item.key, item]));
+    const packageJson = JSON.parse(
+      await readFile(resolve(appRoot, "package.json"), "utf8"),
+    ) as { scripts: Record<string, string> };
+    expect(packageJson.scripts.build).toBe("node scripts/build-resolver.mjs");
+    const buildScriptPath = resolve(appRoot, "scripts/build-resolver.mjs");
+    expect(existsSync(buildScriptPath)).toBe(true);
+    expect(await readFile(buildScriptPath, "utf8")).toMatch(/src\/index\.ts/);
+    const indexPath = resolve(appRoot, "src/index.ts");
+    expect(await readFile(indexPath, "utf8")).toMatch(
+      /export\s+const\s+handler\b/,
+    );
     for (const item of functionModules) {
       expect(item.key).toMatch(/^[a-zA-Z0-9_-]+$/);
-      if (item.handler === "index.handler") {
-        const indexPath = resolve(appRoot, "src/index.ts");
-        expect(existsSync(indexPath)).toBe(true);
-        expect(await readFile(indexPath, "utf8")).toMatch(/export\s+const\s+handler\b/);
-      }
+      expect(item.handler).toBe("generated/resolver.handler");
       expect(functions.has(item.key)).toBe(true);
     }
 
