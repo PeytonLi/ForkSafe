@@ -23,7 +23,7 @@ The Convex schema, lifecycle mutations, pure handoff/lease/reservation/auth/comm
 - Hosted backend command/artifact smoke: `python3 --version` returned exit 0 and `Python 3.12.15`; its 48-byte internal log artifact (`fca44691-423a-441b-8b7a-407d5786a0fc`) was stored in Convex. Total time was 11,814 ms. Cancellation led sandbox operation `71c4457f-b739-4b53-8534-26512390083b` to `terminated`; the final cleanup dry-run returned zero owned sandboxes.
 - `pnpm daytona:prepare`: exit 0; active snapshots `forksafe-runner-v1` (`06355f66-f6a0-416a-bced-c28a711af037`) and `forksafe-exec-v1` (`e8ce44ba-ce7c-4931-bcc7-3ea3cc628789`).
 - `pnpm daytona:smoke`: exit 0; MuJoCo 3.17.0, 500 steps, `finalZ=0.09989224448747304`, four contacts; startup 2,301 ms, execution 503 ms, destroy 1,126 ms. Destruction was confirmed.
-- Final `pnpm --filter @forksafe/integrations daytona:cleanup --dry-run`: exit 0, `ownedCount: 0`, empty list. No `trueforge*` resources were touched.
+- Final `pnpm --filter @forksafe/daytona daytona:cleanup --dry-run`: exit 0, `ownedCount: 0`, empty list. No `trueforge*` resources were touched.
 
 ## Remaining verification and operational work
 

@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { Daytona, Image } from "@daytonaio/sdk";
 import { loadDaytonaConfig } from "../src/config.js";
 
-const root = resolve(process.cwd(), "../..");
+const root = resolve(process.cwd(), "../../..");
 const snapshotsPath = resolve(root, "infra/daytona/snapshots.json");
 const dryRun = process.argv.includes("--dry-run");
 

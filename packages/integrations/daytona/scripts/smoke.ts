@@ -4,7 +4,8 @@ import { randomUUID } from "node:crypto";
 import { createSandboxProvider, sandboxLabels } from "../src/index.js";
 import type { SandboxHandle } from "../src/types.js";
 
-const snapshots = JSON.parse(await readFile(resolve(process.cwd(), "../../infra/daytona/snapshots.json"), "utf8"));
+const root = resolve(process.cwd(), "../../..");
+const snapshots = JSON.parse(await readFile(resolve(root, "infra/daytona/snapshots.json"), "utf8"));
 const runId = randomUUID();
 const provider = createSandboxProvider();
 const createdAt = Date.now();

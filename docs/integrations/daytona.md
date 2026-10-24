@@ -27,7 +27,7 @@ The installed SDK declarations do not expose an organization quota endpoint. The
 - `pnpm daytona:smoke`: exit 0. Run `21b79c1b-db0d-4853-a33d-07d2bf903e6e` ran MuJoCo 3.17.0 for 500 steps; `finalZ=0.09989224448747304`, four contacts. Timings: startup 2,301 ms, execution 503 ms, destroy 1,126 ms. The provider confirmed destruction.
 - Hosted Convex lifecycle: create/start/claim/heartbeat and four ordered stages completed; the completion call intentionally used outcome `failed` to avoid triggering evaluation and further sandbox work. End-to-end call elapsed time was 5,515 ms.
 - Hosted backend provisioning: operation `71c4457f-b739-4b53-8534-26512390083b` provisioned one execution sandbox. Through Convex `runCommand`/`pollCommand`, `python3 --version` exited 0 and returned `Python 3.12.15`; the 48-byte internal log artifact was uploaded to Convex storage. Completion used outcome `failed` for the same safety reason, then cancellation terminated the sandbox. This provisioning/command/artifact/teardown smoke took 11,814 ms.
-- `pnpm --filter @forksafe/integrations daytona:cleanup --dry-run`: exit 0 after the physics smoke and hosted attempts. Final output was `{"mode":"dry_run","ownedCount":0,"sandboxes":[]}`; the hosted operation was also confirmed `terminated`.
+- `pnpm --filter @forksafe/daytona daytona:cleanup --dry-run`: exit 0 after the physics smoke and hosted attempts. Final output was `{"mode":"dry_run","ownedCount":0,"sandboxes":[]}`; the hosted operation was also confirmed `terminated`.
 - Snapshot and smoke resources stayed within the cap of two ForkSafe snapshots and one ForkSafe sandbox alive at a time.
 
 ## Commands
@@ -35,7 +35,7 @@ The installed SDK declarations do not expose an organization quota endpoint. The
 ```sh
 pnpm daytona:prepare
 pnpm daytona:smoke
-pnpm --filter @forksafe/integrations daytona:cleanup --dry-run
+pnpm --filter @forksafe/daytona daytona:cleanup --dry-run
 ```
 
 The runner image leaves the optional Droid CLI disabled because the upstream installation is not pinned. The smoke sandbox was destroyed and confirmed absent; final dry-run count was zero.

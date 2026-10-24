@@ -6,9 +6,11 @@ import { internal } from "./_generated/api.js";
 import { internalAction, action } from "./_generated/server.js";
 import { Daytona } from "@daytonaio/sdk";
 import type { VendorRef } from "@forksafe/contracts";
-import { CloudDaytonaProvider } from "../packages/integrations/daytona/src/cloud.js";
-import { loadDaytonaConfig } from "../packages/integrations/daytona/src/config.js";
-import type { SandboxPurpose } from "../packages/integrations/daytona/src/types.js";
+import {
+  CloudDaytonaProvider,
+  loadDaytonaConfig,
+  type SandboxPurpose,
+} from "@forksafe/daytona";
 import { requireServiceToken } from "./lib/auth.js";
 import { LOG_TAIL_MAX_BYTES } from "./lib/constants.js";
 import { assertUUID } from "./lib/validators.js";

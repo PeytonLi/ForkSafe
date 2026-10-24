@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 
 const child = spawn("pnpm", [
   "--filter",
-  "@forksafe/integrations",
+  "@forksafe/daytona",
   "daytona:prepare",
   ...process.argv.slice(2),
 ], { stdio: "inherit", shell: false });

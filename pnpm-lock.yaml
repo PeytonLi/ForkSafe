@@ -149,9 +149,9 @@ importers:
       '@forksafe/contracts':
         specifier: workspace:*
         version: link:../packages/contracts
-      '@forksafe/integrations':
+      '@forksafe/daytona':
         specifier: workspace:*
-        version: link:../packages/integrations
+        version: link:../packages/integrations/daytona
       convex:
         specifier: ^1.48.0
         version: 1.48.0(react@19.3.1)
@@ -207,21 +207,15 @@ importers:
         specifier: ^3.2.4
         version: 3.2.7(@edge-runtime/vm@5.0.0)(@types/node@22.20.5)(lightningcss@1.33.0)(tsx@4.23.15)(yaml@2.9.1)
 
-  packages/integrations:
+  packages/integrations/artifacts:
     dependencies:
-      '@daytonaio/sdk':
-        specifier: ^0.226.1
-        version: 0.226.1
       '@forksafe/contracts':
         specifier: workspace:*
-        version: link:../contracts
-      zod:
-        specifier: ^3.25.76
-        version: 3.25.76
+        version: link:../../contracts
     devDependencies:
-      tsx:
-        specifier: ^4.20.5
-        version: 4.23.15
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.5
       typescript:
         specifier: ~5.9.3
         version: 5.9.3
@@ -241,6 +235,31 @@ importers:
         specifier: ^3.25.76
         version: 3.25.76
     devDependencies:
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.7(@edge-runtime/vm@5.0.0)(@types/node@22.20.5)(lightningcss@1.33.0)(tsx@4.23.15)(yaml@2.9.1)
+
+  packages/integrations/daytona:
+    dependencies:
+      '@daytonaio/sdk':
+        specifier: ^0.226.1
+        version: 0.226.1
+      '@forksafe/contracts':
+        specifier: workspace:*
+        version: link:../../contracts
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.5
+      tsx:
+        specifier: ^4.20.5
+        version: 4.23.15
       typescript:
         specifier: ~5.9.3
         version: 5.9.3
