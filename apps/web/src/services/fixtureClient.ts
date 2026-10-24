@@ -18,6 +18,7 @@ import type {
   CancellationState,
   CaptureDraft,
   CaptureOutcome,
+  FailureSearchOutcome,
   EvidenceAnswer,
   ForkSafeClient,
   HandoffEvent,
@@ -220,6 +221,16 @@ export class FixtureClient implements ForkSafeClient {
       mode: "fixture" as const,
       reason:
         "Fixture mode cannot run physics. Connect the simulator and Convex (set VITE_CONVEX_URL) to record a new baseline.",
+    }));
+  }
+
+  findFailure(_taskFamily: import("@forksafe/contracts").TaskFamily): Promise<FailureSearchOutcome> {
+    return this.wait(() => ({
+      mode: "fixture" as const,
+      found: false as const,
+      samples: 0,
+      failures: 0,
+      reason: "Fixture mode cannot search for a failure because it cannot run physics. Connect the simulator and Convex (set VITE_CONVEX_URL) to search.",
     }));
   }
 

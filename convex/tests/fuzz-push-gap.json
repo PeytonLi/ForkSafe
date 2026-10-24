@@ -1,0 +1,318 @@
+{
+  "aroundCase": {
+    "caseId": "push-gap-aligned",
+    "description": "Push the cube straight through the aligned gap.",
+    "sceneOverrides": {},
+    "seed": 0,
+    "suite": "public",
+    "taskFamily": "push_through_gap"
+  },
+  "axes": {
+    "x": {
+      "key": "gapDx",
+      "values": [
+        -0.06,
+        -0.019999999999999997,
+        0.020000000000000004,
+        0.06
+      ]
+    },
+    "y": {
+      "key": "gapWidth",
+      "values": [
+        0.05625,
+        0.06875,
+        0.08125,
+        0.09375
+      ]
+    }
+  },
+  "cols": 4,
+  "controllerSha256": "31abf2d7c41b7127601bfc8a8fa419b0853c0403ea10e1dfc5058e9c694faeed",
+  "n": 16,
+  "rows": 4,
+  "samples": [
+    {
+      "col": 0,
+      "completionTimeSec": null,
+      "failureKind": "forbidden_contact",
+      "firstFailureTSec": 4.819999999999691,
+      "index": 0,
+      "passed": false,
+      "row": 0,
+      "sceneOverrides": {
+        "cubeDx": 0.00274,
+        "cubeDy": -0.0046,
+        "gapDx": -0.06,
+        "gapWidth": 0.05625,
+        "targetDx": -0.06
+      },
+      "seed": 661058651
+    },
+    {
+      "col": 1,
+      "completionTimeSec": 6.943999999999457,
+      "failureKind": null,
+      "firstFailureTSec": null,
+      "index": 1,
+      "passed": true,
+      "row": 0,
+      "sceneOverrides": {
+        "cubeDx": -0.00967,
+        "cubeDy": 0.00627,
+        "gapDx": -0.019999999999999997,
+        "gapWidth": 0.05625,
+        "targetDx": -0.019999999999999997
+      },
+      "seed": 87989972
+    },
+    {
+      "col": 2,
+      "completionTimeSec": 6.885999999999464,
+      "failureKind": null,
+      "firstFailureTSec": null,
+      "index": 2,
+      "passed": true,
+      "row": 0,
+      "sceneOverrides": {
+        "cubeDx": 0.00826,
+        "cubeDy": 0.00213,
+        "gapDx": 0.020000000000000004,
+        "gapWidth": 0.05625,
+        "targetDx": 0.020000000000000004
+      },
+      "seed": 2084654369
+    },
+    {
+      "col": 3,
+      "completionTimeSec": null,
+      "failureKind": "forbidden_contact",
+      "firstFailureTSec": 4.713999999999703,
+      "index": 3,
+      "passed": false,
+      "row": 0,
+      "sceneOverrides": {
+        "cubeDx": 0.00087,
+        "cubeDy": 0.0087,
+        "gapDx": 0.06,
+        "gapWidth": 0.05625,
+        "targetDx": 0.06
+      },
+      "seed": 1566581934
+    },
+    {
+      "col": 0,
+      "completionTimeSec": null,
+      "failureKind": "forbidden_contact",
+      "firstFailureTSec": 4.847999999999688,
+      "index": 4,
+      "passed": false,
+      "row": 1,
+      "sceneOverrides": {
+        "cubeDx": 0.00632,
+        "cubeDy": -0.00995,
+        "gapDx": -0.06,
+        "gapWidth": 0.06875,
+        "targetDx": -0.06
+      },
+      "seed": 846428919
+    },
+    {
+      "col": 1,
+      "completionTimeSec": 6.979999999999453,
+      "failureKind": null,
+      "firstFailureTSec": null,
+      "index": 5,
+      "passed": true,
+      "row": 1,
+      "sceneOverrides": {
+        "cubeDx": -0.00933,
+        "cubeDy": 0.00459,
+        "gapDx": -0.019999999999999997,
+        "gapWidth": 0.06875,
+        "targetDx": -0.019999999999999997
+      },
+      "seed": 1841261662
+    },
+    {
+      "col": 2,
+      "completionTimeSec": 6.899999999999462,
+      "failureKind": null,
+      "firstFailureTSec": null,
+      "index": 6,
+      "passed": true,
+      "row": 1,
+      "sceneOverrides": {
+        "cubeDx": -0.00649,
+        "cubeDy": 0.00726,
+        "gapDx": 0.020000000000000004,
+        "gapWidth": 0.06875,
+        "targetDx": 0.020000000000000004
+      },
+      "seed": 47463574
+    },
+    {
+      "col": 3,
+      "completionTimeSec": null,
+      "failureKind": "forbidden_contact",
+      "firstFailureTSec": 4.819999999999691,
+      "index": 7,
+      "passed": false,
+      "row": 1,
+      "sceneOverrides": {
+        "cubeDx": -0.00401,
+        "cubeDy": -0.00155,
+        "gapDx": 0.06,
+        "gapWidth": 0.06875,
+        "targetDx": 0.06
+      },
+      "seed": 1162779115
+    },
+    {
+      "col": 0,
+      "completionTimeSec": null,
+      "failureKind": "forbidden_contact",
+      "firstFailureTSec": 4.837999999999689,
+      "index": 8,
+      "passed": false,
+      "row": 2,
+      "sceneOverrides": {
+        "cubeDx": -0.00943,
+        "cubeDy": -0.00751,
+        "gapDx": -0.06,
+        "gapWidth": 0.08125,
+        "targetDx": -0.06
+      },
+      "seed": 17790419
+    },
+    {
+      "col": 1,
+      "completionTimeSec": 6.989999999999452,
+      "failureKind": null,
+      "firstFailureTSec": null,
+      "index": 9,
+      "passed": true,
+      "row": 2,
+      "sceneOverrides": {
+        "cubeDx": 0.00294,
+        "cubeDy": 0.00231,
+        "gapDx": -0.019999999999999997,
+        "gapWidth": 0.08125,
+        "targetDx": -0.019999999999999997
+      },
+      "seed": 1440154963
+    },
+    {
+      "col": 2,
+      "completionTimeSec": 6.869999999999465,
+      "failureKind": null,
+      "firstFailureTSec": null,
+      "index": 10,
+      "passed": true,
+      "row": 2,
+      "sceneOverrides": {
+        "cubeDx": -0.00233,
+        "cubeDy": 0.00994,
+        "gapDx": 0.020000000000000004,
+        "gapWidth": 0.08125,
+        "targetDx": 0.020000000000000004
+      },
+      "seed": 1728701086
+    },
+    {
+      "col": 3,
+      "completionTimeSec": null,
+      "failureKind": "forbidden_contact",
+      "firstFailureTSec": 4.7439999999997,
+      "index": 11,
+      "passed": false,
+      "row": 2,
+      "sceneOverrides": {
+        "cubeDx": 0.00371,
+        "cubeDy": 0.00301,
+        "gapDx": 0.06,
+        "gapWidth": 0.08125,
+        "targetDx": 0.06
+      },
+      "seed": 2106327850
+    },
+    {
+      "col": 0,
+      "completionTimeSec": null,
+      "failureKind": "forbidden_contact",
+      "firstFailureTSec": 4.795999999999694,
+      "index": 12,
+      "passed": false,
+      "row": 3,
+      "sceneOverrides": {
+        "cubeDx": 0.00377,
+        "cubeDy": -0.00222,
+        "gapDx": -0.06,
+        "gapWidth": 0.09375,
+        "targetDx": -0.06
+      },
+      "seed": 1879383516
+    },
+    {
+      "col": 1,
+      "completionTimeSec": 7.00999999999945,
+      "failureKind": null,
+      "firstFailureTSec": null,
+      "index": 13,
+      "passed": true,
+      "row": 3,
+      "sceneOverrides": {
+        "cubeDx": 0.00443,
+        "cubeDy": 0.00051,
+        "gapDx": -0.019999999999999997,
+        "gapWidth": 0.09375,
+        "targetDx": -0.019999999999999997
+      },
+      "seed": 290117534
+    },
+    {
+      "col": 2,
+      "completionTimeSec": 6.973999999999454,
+      "failureKind": null,
+      "firstFailureTSec": null,
+      "index": 14,
+      "passed": true,
+      "row": 3,
+      "sceneOverrides": {
+        "cubeDx": -0.0038,
+        "cubeDy": -0.00028,
+        "gapDx": 0.020000000000000004,
+        "gapWidth": 0.09375,
+        "targetDx": 0.020000000000000004
+      },
+      "seed": 1543657888
+    },
+    {
+      "col": 3,
+      "completionTimeSec": null,
+      "failureKind": "forbidden_contact",
+      "firstFailureTSec": 4.781999999999695,
+      "index": 15,
+      "passed": false,
+      "row": 3,
+      "sceneOverrides": {
+        "cubeDx": 0.00868,
+        "cubeDy": -0.00284,
+        "gapDx": 0.06,
+        "gapWidth": 0.09375,
+        "targetDx": 0.06
+      },
+      "seed": 1910160578
+    }
+  ],
+  "schema": "forksafe.fuzz-grid/v1",
+  "seed": 0,
+  "summary": {
+    "failCount": 8,
+    "failureKindCounts": {
+      "forbidden_contact": 8
+    },
+    "passCount": 8
+  },
+  "taskFamily": "push_through_gap"
+}

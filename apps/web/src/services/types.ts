@@ -11,6 +11,7 @@ import type {
   ReviewDecision,
   SimCase,
   SimRunResult,
+  TaskFamily,
 } from "@forksafe/contracts";
 
 export type WebIntegrationReadiness = import("@forksafe/contracts").IntegrationReadiness & { probed: boolean };
@@ -63,11 +64,16 @@ export interface CaptureDraft {
   seed: number;
   sceneOverrides: Record<string, number>;
   requestedEnvironments: number;
+  taskFamily: TaskFamily;
 }
 
 export type CaptureOutcome =
   | { accepted: true; investigationId: string }
   | { accepted: false; mode: IntegrationMode; reason: string };
+
+export type FailureSearchOutcome =
+  | { mode: IntegrationMode; found: false; samples: number; failures: number; reason: string }
+  | { mode: IntegrationMode; found: true; taskFamily: TaskFamily; caseId: string; sceneOverrides: Record<string, number>; seed: number; samples: number; failures: number; failureKind?: string };
 
 /** Pipeline counters for the health page (Convex-owned bookkeeping). */
 export interface PipelineHealth {
@@ -127,6 +133,7 @@ export interface ForkSafeClient {
   cancelInvestigation(investigationId: string): Promise<void>;
   submitReview(input: ReviewInput): Promise<HumanReview>;
   requestCapture(draft: CaptureDraft): Promise<CaptureOutcome>;
+  findFailure(taskFamily: TaskFamily): Promise<FailureSearchOutcome>;
   /** Invalidation stream; listeners re-fetch what they render. */
   subscribe(investigationId: string, onChange: () => void): () => void;
   getReadiness(): Promise<WebIntegrationReadiness[]>;

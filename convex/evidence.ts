@@ -9,7 +9,7 @@ import { appId, assertUUID } from "./lib/validators.js";
 
 const simCase = v.object({
   caseId: v.string(), suite: v.union(v.literal("original"), v.literal("public"), v.literal("withheld")),
-  seed: v.number(), sceneOverrides: v.record(v.string(), v.number()), description: v.optional(v.string()),
+  seed: v.number(), sceneOverrides: v.record(v.string(), v.number()), taskFamily: v.optional(v.string()), description: v.optional(v.string()),
 });
 
 export const reserveExperiment = internalMutation({

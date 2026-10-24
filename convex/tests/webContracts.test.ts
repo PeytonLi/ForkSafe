@@ -10,6 +10,7 @@ import * as evidence from "../evidence.js";
 import * as artifacts from "../artifacts.js";
 import * as candidates from "../candidates.js";
 import * as reviews from "../reviews.js";
+import * as sceneSearch from "../sceneSearch.js";
 
 const modules = import.meta.glob("../**/*.ts");
 const id = "11111111-1111-4111-8111-111111111111";
@@ -33,16 +34,17 @@ describe("web Convex contracts", () => {
       candidateDiff: api.candidates.diff,
       cancel: api.investigations.cancel,
       capture: api.investigations.capture,
+      findFailure: api.sceneSearch.findFailure,
       recordReview: api.reviews.record,
     } satisfies Record<keyof typeof CONVEX_FUNCTIONS, FunctionReference<"query" | "mutation" | "action", "public">>;
-    const implementations: Record<string, Record<string, unknown>> = { investigations, evidence, artifacts, candidates, reviews };
+    const implementations: Record<string, Record<string, unknown>> = { investigations, evidence, artifacts, candidates, reviews, sceneSearch };
     for (const key of Object.keys(expected) as (keyof typeof expected)[]) {
       expect(getFunctionName(expected[key])).toBe(CONVEX_FUNCTIONS[key]);
       const [module, name] = CONVEX_FUNCTIONS[key].split(":") as [string, string];
       const fn = implementations[module]![name] as { isPublic?: boolean; isQuery?: boolean; isMutation?: boolean; isAction?: boolean };
       expect(fn, CONVEX_FUNCTIONS[key]).toBeDefined();
       expect(fn.isPublic).toBe(true);
-      const kind = key === "recordReview" ? "isAction" : key === "capture" || key === "cancel" ? "isMutation" : "isQuery";
+      const kind = key === "recordReview" || key === "findFailure" ? "isAction" : key === "capture" || key === "cancel" ? "isMutation" : "isQuery";
       expect(fn[kind], CONVEX_FUNCTIONS[key]).toBe(true);
     }
   });

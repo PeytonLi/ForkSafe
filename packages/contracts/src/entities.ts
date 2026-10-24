@@ -54,6 +54,7 @@ export const SimCase = z.object({
   suite: z.enum(["original", "public", "withheld"]),
   seed: z.number().int().nonnegative(),
   sceneOverrides: z.record(z.number()).default({}),
+  taskFamily: z.string().optional(),
   description: z.string().optional(),
 });
 export type SimCase = z.infer<typeof SimCase>;
@@ -68,6 +69,8 @@ export const Investigation = z.object({
   jiraIssueKey: z.string().optional(), // vendor ref, not an application id
   confluencePageId: z.string().optional(),
   requestedEnvironments: z.number().int().min(1).max(10),
+  captureStatus: z.enum(["pending", "running", "recorded", "failed"]).optional(),
+  lastError: z.string().optional(),
   createdAtMs: z.number().int(),
   updatedAtMs: z.number().int(),
 });

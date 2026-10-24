@@ -6,8 +6,11 @@ import type { VendorRef } from "@forksafe/contracts";
 import { CloudDaytonaProvider, loadDaytonaConfig } from "@forksafe/daytona";
 import { internal } from "./_generated/api.js";
 import { internalAction } from "./_generated/server.js";
+import { caseJsonFor } from "./lib/caseJson.js";
 import { classifyExperiment } from "./lib/experimentStatus.js";
 import { signedCaseCommand } from "./lib/evaluatorBackend.js";
+import { pickFirstFailure, type FailureSearchResult, type FuzzGrid } from "./lib/sceneSearch.js";
+import { ensureExecutionSandbox } from "./capture.js";
 import withheldManifest from "../evaluation/withheld/manifest.json";
 import manifestsLock from "../evaluation/manifests.lock.json";
 
@@ -161,7 +164,7 @@ export const ensureSimBundle = internalAction({
 
 const simCase = v.object({
   caseId: v.string(), suite: v.union(v.literal("original"), v.literal("public"), v.literal("withheld")),
-  seed: v.number(), sceneOverrides: v.record(v.string(), v.number()), description: v.optional(v.string()),
+  seed: v.number(), sceneOverrides: v.record(v.string(), v.number()), taskFamily: v.optional(v.string()), description: v.optional(v.string()),
 });
 
 export type CaseRunOutcome = {
@@ -207,10 +210,7 @@ export const runCase = internalAction({
     console.log("runCase:stage", "put_controller", args.experimentId);
     await putSmallFile(daytona, ref, `${runDir}/controller/task_controller.py`, encoder.encode(args.controllerSource));
     console.log("runCase:stage", "put_case", args.experimentId);
-    await putSmallFile(daytona, ref, `${runDir}/case.json`, encoder.encode(JSON.stringify({
-      caseId: args.simCase.caseId, suite: args.simCase.suite, seed: args.simCase.seed,
-      sceneOverrides: args.simCase.sceneOverrides, ...(args.simCase.description ? { description: args.simCase.description } : {}),
-    })));
+    await putSmallFile(daytona, ref, `${runDir}/case.json`, encoder.encode(JSON.stringify(caseJsonFor(args.simCase))));
     console.log("runCase:stage", "exec_simulator", args.experimentId);
     const timeoutSec = Math.min(60, Math.max(1, args.timeoutSec ?? 30));
     const command = [
@@ -291,6 +291,55 @@ export const runCase = internalAction({
       ...(traceArtifactId ? { traceArtifactId } : {}),
       ...(replayArtifactId ? { replayArtifactId, replayBytes: resultBytes.byteLength } : {}),
     };
+  },
+});
+
+export const runFuzz = internalAction({
+  args: {
+    searchId: v.string(),
+    taskFamily: v.string(),
+    seed: v.number(),
+    controllerSource: v.string(),
+  },
+  handler: async (ctx, args): Promise<FailureSearchResult> => {
+    const scratchInvestigationId = args.searchId;
+    try {
+      const family = args.taskFamily;
+      if (family !== "divider_pick_place" && family !== "push_through_gap") {
+        throw new ConvexError("unknown_task_family");
+      }
+      const baseCaseId = family === "divider_pick_place" ? "original-divider-collision" : "push-gap-aligned";
+      const sandbox = await ensureExecutionSandbox(ctx, scratchInvestigationId, 240_000);
+      const { ref } = await readyRef(ctx, sandbox.appId);
+      const ensured = await ctx.runAction(internal.execution.ensureSimBundle, { sandboxOpId: sandbox.appId });
+      if (!ensured.ready) throw new ConvexError(ensured.detail ?? "simulator_bundle_not_ready");
+      const daytona = provider();
+      const manifestCheck = await daytona.exec(ref, {
+        command: `python3 -c 'from pathlib import Path; required=[Path("evaluation/public/manifest.json"),Path("evaluation/push_gap/manifest.json")]; missing=[str(p) for p in required if not p.is_file()]; print("missing manifests: "+", ".join(missing) if missing else "required manifests present"); raise SystemExit(bool(missing))'`,
+        cwd: SIM_ROOT,
+        env: { PYTHONPATH: SIM_PYTHONPATH },
+        timeoutSec: 30,
+      });
+      if (manifestCheck.exitCode !== 0) throw new ConvexError(manifestCheck.output.slice(-300));
+      const runDir = `${RUN_ROOT}/${args.searchId}`;
+      await putSmallFile(daytona, ref, `${runDir}/controller/task_controller.py`, new TextEncoder().encode(args.controllerSource));
+      const outputPath = `${runDir}/fuzz.json`;
+      const fuzz = await daytona.exec(ref, {
+        command: `python3 -m simulator.fuzz --controller ${runDir}/controller --around ${baseCaseId} --n 16 --workers 2 --out ${outputPath} --timeout-sec 30`,
+        cwd: SIM_ROOT,
+        env: { PYTHONPATH: SIM_PYTHONPATH, PYTHONDONTWRITEBYTECODE: "1" },
+        timeoutSec: 660,
+      });
+      if (fuzz.exitCode !== 0) throw new ConvexError(`simulator_fuzz_failed:${fuzz.output.slice(-400)}`);
+      const resultBytes = await pullFile(ctx, daytona, ref, outputPath);
+      const grid = JSON.parse(new TextDecoder().decode(resultBytes)) as FuzzGrid;
+      return pickFirstFailure(grid, family, args.seed);
+    } finally {
+      await ctx.runMutation(internal.sandboxes.terminateInvestigationOps, {
+        investigationId: scratchInvestigationId,
+        reason: "failure_search_complete",
+      });
+    }
   },
 });
 

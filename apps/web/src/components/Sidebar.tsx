@@ -31,7 +31,7 @@ export function Sidebar({ route, go, investigations, collapsed, onToggleCollapse
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const items = investigations.data ?? [];
   const section = activeSection(route.tab);
-  const activeKey = route.page === "health" ? "health" : route.investigationId ? `${route.investigationId}:${section}` : "home";
+  const activeKey = route.page === "health" ? "health" : route.page === "new" ? "new" : route.investigationId ? `${route.investigationId}:${section}` : "home";
   const [innerRef, indicator] = useIndicator<HTMLDivElement>('[data-active="true"]', [activeKey, items.length, showAll, collapsed]);
 
   const capped = showAll ? items : items.slice(0, VISIBLE);
@@ -90,6 +90,12 @@ export function Sidebar({ route, go, investigations, collapsed, onToggleCollapse
           <span className={styles.indicator} style={indicator} aria-hidden="true" />
           <h2 className={styles.group}><span className={styles.label}>Workspace</span></h2>
           <ul className={styles.list}>
+            <li>
+              <a href="#/new" className={`${styles.row} ${styles.newSimulation}`} data-active={activeKey === "new"} aria-current={activeKey === "new" ? "page" : undefined} aria-label="New simulation" title={collapsed ? "New simulation" : undefined} data-tip="New simulation">
+                <Icon name="plus" className={styles.icon} />
+                <span className={styles.label}>New simulation</span>
+              </a>
+            </li>
             <li>
               <a href="#/" className={styles.row} data-active={activeKey === "home"} aria-current={activeKey === "home" ? "page" : undefined} data-tip="Overview">
                 <Icon name="home" className={styles.icon} />
