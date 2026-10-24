@@ -5,6 +5,7 @@ import { internal } from "./_generated/api.js";
 import { requireServiceToken } from "./lib/auth.js";
 import { GRANT_TTL_MS } from "./lib/constants.js";
 import { verifyRunnerSignature } from "./lib/runnerAuth.js";
+import { traceLog } from "./lib/tracing.js";
 
 /** HTTP surface for trusted runner sandboxes. Requests are signed with the
  *  sandbox's scoped credential; the deploy key, service token and bridge
@@ -83,6 +84,7 @@ export function registerRunnerRoutes(router: HttpRouter): void {
     path: "/runner/claim",
     method: "POST",
     handler: httpAction(async (ctx, request) => {
+      traceLog("/runner/claim", request);
       const auth = await authenticate(ctx, request);
       if (!auth.ok) return auth.response;
       const workerId = typeof auth.body.workerId === "string" && auth.body.workerId.trim() ? auth.body.workerId.slice(0, 120) : "runner";
@@ -142,6 +144,7 @@ export function registerRunnerRoutes(router: HttpRouter): void {
     path: "/runner/heartbeat",
     method: "POST",
     handler: httpAction(async (ctx, request) => {
+      traceLog("/runner/heartbeat", request);
       const auth = await authenticate(ctx, request);
       if (!auth.ok) return auth.response;
       const { attemptId, grantId, epoch } = auth.body;
@@ -153,6 +156,7 @@ export function registerRunnerRoutes(router: HttpRouter): void {
       } catch (error) {
         if (isArgumentValidationError(error)) return errorResponse(error, 400);
         const code = errorCode(error);
+        if (code === "fenced" || code === "stale_epoch") return errorResponse(error, 409);
         return json({ ok: false, reason: code === "unauthorized" ? "revoked" : "unknown_attempt" }, code === "unauthorized" ? 401 : 200);
       }
     }),
@@ -163,6 +167,7 @@ export function registerRunnerRoutes(router: HttpRouter): void {
       path: `/runner/model_turn/${endpoint}`,
       method: "POST",
       handler: httpAction(async (ctx, request) => {
+        traceLog(`/runner/model_turn/${endpoint}`, request);
         const auth = await authenticate(ctx, request);
         if (!auth.ok) return auth.response;
         const { attemptId, grantId, epoch, sessionId, turnKey } = auth.body;
@@ -184,6 +189,7 @@ export function registerRunnerRoutes(router: HttpRouter): void {
     path: "/runner/start",
     method: "POST",
     handler: httpAction(async (ctx, request) => {
+      traceLog("/runner/start", request);
       const auth = await authenticate(ctx, request);
       if (!auth.ok) return auth.response;
       const { attemptId, epoch } = auth.body;
@@ -200,6 +206,7 @@ export function registerRunnerRoutes(router: HttpRouter): void {
     path: "/runner/session",
     method: "POST",
     handler: httpAction(async (ctx, request) => {
+      traceLog("/runner/session", request);
       const auth = await authenticate(ctx, request);
       if (!auth.ok) return auth.response;
       const { attemptId, epoch, session } = auth.body;
@@ -216,6 +223,7 @@ export function registerRunnerRoutes(router: HttpRouter): void {
     path: "/runner/usage",
     method: "POST",
     handler: httpAction(async (ctx, request) => {
+      traceLog("/runner/usage", request);
       const auth = await authenticateRaw(ctx, request, await request.text(), { ignoreRevocation: true });
       if (!auth.ok) return auth.response;
       const { attemptId, sessionId, tokenUsage, unknownTurns, partialTurns } = auth.body;
@@ -235,6 +243,7 @@ export function registerRunnerRoutes(router: HttpRouter): void {
     path: "/runner/checkpoint",
     method: "POST",
     handler: httpAction(async (ctx, request) => {
+      traceLog("/runner/checkpoint", request);
       const auth = await authenticate(ctx, request);
       if (!auth.ok) return auth.response;
       const { attemptId, epoch, checkpoint } = auth.body;
@@ -256,6 +265,7 @@ export function registerRunnerRoutes(router: HttpRouter): void {
     path: "/runner/complete",
     method: "POST",
     handler: httpAction(async (ctx, request) => {
+      traceLog("/runner/complete", request);
       const rawBody = await request.text();
       if (rawBody.length > MAX_BODY_BYTES) return json({ error: "body_too_large" }, 413);
       let parsed: any;
@@ -292,6 +302,7 @@ export function registerRunnerRoutes(router: HttpRouter): void {
         if (isArgumentValidationError(error)) return errorResponse(error, 400);
         const code = errorCode(error);
         console.log("runner/complete rejected", code);
+        if (code === "fenced" || code === "stale_epoch") return errorResponse(error, 409);
         return json({ accepted: false, reason: code }, 409);
       }
     }),
@@ -302,6 +313,7 @@ export function registerRunnerRoutes(router: HttpRouter): void {
       path: `/runner/tools/${name}`,
       method: "POST",
       handler: httpAction(async (ctx, request) => {
+        traceLog(`/runner/tools/${name}`, request);
         const auth = await authenticate(ctx, request);
         if (!auth.ok) return auth.response;
         const body = auth.body as Record<string, unknown>;

@@ -8,6 +8,7 @@ import {
   type Heartbeat,
 } from "@forksafe/contracts";
 import { z } from "zod";
+import { injectTraceHeaders } from "@forksafe/telemetry";
 import {
   ClaimRequest,
   ClaimResponse,
@@ -35,6 +36,26 @@ export class FencedError extends Error {
     super("Runner lease is stale");
     this.name = "FencedError";
   }
+}
+
+export class RunnerHttpError extends Error {
+  constructor(
+    readonly endpoint: string,
+    readonly status: number,
+    readonly body: unknown,
+  ) {
+    super(`Runner ${endpoint} failed: HTTP ${status}`);
+    this.name = "RunnerHttpError";
+  }
+}
+
+export function isSearchCompleteRevocation(error: unknown): boolean {
+  if (!(error instanceof RunnerHttpError) || error.status !== 401) return false;
+  if (!error.body || typeof error.body !== "object" || Array.isArray(error.body)) return false;
+  const body = error.body as Record<string, unknown>;
+  return [body.error, body.reason, body.code].some(
+    (value) => typeof value === "string" && /revoked|search[_ -]?complete/i.test(value),
+  );
 }
 
 export class HttpJobSource implements JobSource {
@@ -98,15 +119,22 @@ export class HttpJobSource implements JobSource {
         "x-forksafe-signature": signature,
         "x-forksafe-timestamp": timestamp,
         ...(this.credentialId ? { "x-forksafe-runner": this.credentialId } : {}),
+        ...injectTraceHeaders({}),
       },
       body: rawBody,
     });
     if (!response.ok) {
-      const text = await response.text();
-      let code = "";
-      try { code = String((JSON.parse(text) as { error?: string }).error ?? ""); } catch { code = ""; }
+      let errorBody: unknown;
+      try {
+        errorBody = await response.json();
+      } catch {
+        errorBody = undefined;
+      }
+      const code = errorBody && typeof errorBody === "object" && !Array.isArray(errorBody)
+        ? String((errorBody as { error?: string }).error ?? "")
+        : "";
       if (response.status === 409 && code === "stale_epoch") throw new FencedError();
-      throw new Error(`Runner ${endpoint} failed: HTTP ${response.status}`);
+      throw new RunnerHttpError(endpoint, response.status, errorBody);
     }
     return schema.parse(await response.json());
   }

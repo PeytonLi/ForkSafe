@@ -1,45 +1,69 @@
-# ForkSafe implementation status
+# Implementation status
 
-Lead coordinator: Devin session https://app.devin.ai/sessions/18c7f881146e4e33b07213d7305c31d2 (lead). Feature work is delegated to child sessions; only the lead edits this file.
+Last updated: 2026-10-24 (UTC), on `main` at `c0dc558`.
 
-## Phase
+ForkSafe has run two real investigations end to end on the hosted stack: a real
+baseline in Daytona, Factory agents in two environments, shared evidence in
+SpacetimeDB, signed protected evaluations, a Jira issue, and (for one run) an
+approved human review bound to the controller SHA. Details and IDs are in the
+[integration matrix](docs/integration-matrix.md).
 
-Phase 1 — environment and contracts bootstrap (lead acting as Environment and Contracts Agent).
+## What is done (merged into `main`)
 
-## Environment facts (verified 2026-10-24 on the lead VM, Ubuntu x86_64)
-
-| Tool | Version / location |
-|---|---|
-| Node | 22.23.4 (`/opt/hostedtoolcache/node/22.23.4/x64/bin`) |
-| pnpm | 10.34.8 |
-| Python | 3.12.13 (pyenv); uv 0.13.5 |
-| Docker | present (`/usr/bin/docker`), daemon running |
-| SpacetimeDB CLI | 2.13.0 (`~/.local/bin/spacetime`, installed via install.spacetimedb.com) |
-| Factory `droid` CLI | 0.249.0 (`~/.local/bin/droid`, installed via app.factory.ai/cli) |
-| MuJoCo (pip) | 3.17.0 imports under Python 3.12 |
-| MuJoCo Menagerie | pinned commit `f3b6013629c7b94f8ee93fd977b161fa8350f9bc` (franka_emika_panda/panda.xml, scene.xml present) |
-
-Latest npm versions seen at bootstrap: convex 1.48.0, @convex-dev/workflow 0.4.10, @convex-dev/workpool 0.4.14, @factory/droid-sdk 0.10.0, @daytonaio/sdk 0.226.1, spacetimedb (npm, TS module+client) 2.13.0, @elastic/elasticsearch 9.5.1, zod 4.6.7 (Factory tool schemas must stay on zod 3.x), three 0.186.1, vite 8.3.5.
+| Area | Status | Where | PRs |
+| --- | --- | --- | --- |
+| Shared contracts (zod schemas, enums) | done | `packages/contracts` | round 1 |
+| Simulator and protected evaluator (MuJoCo Panda, signed manifests) | done | `services/simulator`, `services/evaluator`, `evaluation/` | #12, #13 |
+| Convex lifecycle, jobs, leasing, fencing, outbox, reconcile | done | `convex/` | #19, #21 |
+| Daytona adapter and snapshots | done | `packages/integrations/daytona` | #19, #22 |
+| Trusted runner and Factory agents (five tools) | done | `apps/runner`, `packages/agents` | #19, #21 |
+| SpacetimeDB module (grants, evidence, findings, `finding_use`, revisions) | done, on Maincloud | `packages/spacetimedb` | round 1, #16 |
+| Elastic indexer, search, Agent Builder | done | `packages/integrations/elastic`, `convex/dispatchers/elastic.ts` | #11, #15 |
+| Jira, Confluence adapters and Forge app | done, Forge FIT path untested | `packages/integrations/atlassian`, `apps/forge`, `convex/forge.ts` | #11, #18, #20 |
+| Web app (replay, environments, evidence, compare, review) | done, hosted | `apps/web` | round 1, #14, #20 |
+| Health page, "Why did this fail?", ghost replay, timeline, influence graph | merged, partly deployed | `apps/web`, `convex/web/*` | #23 |
+| Ops: doctor, hosted smoke, sandbox cleanup, release check, runbook | done | `scripts/`, `docs/operations` | #9, #17 |
+| Evidence pack | done | `packages/evidence-pack` | #10 |
 
 ## Integration modes
 
-| Integration | Mode | Note |
-|---|---|---|
-| Factory | fixture until FACTORY_API_KEY is provided | secret requested from Peyton 2026-10-24 |
-| Daytona | local container adapter until DAYTONA_API_KEY | secret requested |
-| Convex | local anonymous dev deployment | CONVEX_DEPLOY_KEY requested for hosted |
-| SpacetimeDB | local CLI instance | no credential needed |
-| Elastic | local Elasticsearch (docker) | Serverless URL/API key + KIBANA_URL requested for Agent Builder |
-| Atlassian | fixture | ATLASSIAN_EMAIL/API_TOKEN/SITE_URL/PROJECT_KEY requested |
+| Integration | Mode |
+| --- | --- |
+| Convex | live |
+| SpacetimeDB Maincloud | live |
+| Daytona | live (cannot reach Factory or Maincloud from inside a sandbox) |
+| Runner | live on an external host |
+| Factory Droid | live in runs; readiness doesn't probe it |
+| Protected evaluator | live in runs; readiness label still says not implemented |
+| Elastic | live, retrieval only |
+| Kibana Agent Builder | configured |
+| Jira | live, review projection |
+| Forge | configured (needs a real FIT token test) |
+| Confluence | configured |
+| Telemetry | not implemented on main (PR #24) |
+| Chaos harness | not implemented on main (PR #25) |
 
-## Blockers
+## Pending (not done)
 
-- No sponsor credentials configured yet (names above). Local work proceeds.
+- **PR #24**, OpenTelemetry tracing and metrics for runner and evaluator: open.
+- **PR #25**, `pnpm chaos` harness and findings: open.
+- Deploying the rest of the #23 Convex functions (`web/ask`, `web/timeline`) to
+  the hosted deployment. Only `web/health:pipeline` is there now.
 
-## Next action
+## Known limits
 
-Scaffold monorepo + shared contracts, verify Panda physics step, publish ownership, then launch feature sessions.
+- Daytona on this org's tier blocks `api.factory.ai`, `app.factory.ai` and
+  `maincloud.spacetimedb.com`, so the runner runs outside Daytona (#22).
+- A real Forge Invocation Token has not been tested, so reviewing from inside
+  Jira is not verified.
+- One withheld evaluation in run `fbdc8b1c...` didn't reach SpacetimeDB
+  (Maincloud HTTP 530).
+- Jira issue status does not follow the ForkSafe state (FS-3 is still To Do
+  although its run was approved).
+- `KIBANA_API_KEY` isn't set on the hosted deployment.
+- Reading `convex/investigations.ts`: an investigation created with
+  `autoStart: false` reaches `admitted` after capture, but the public `start`
+  mutation only starts from `capturing` and returns `duplicate: true` for
+  `admitted`. Worth a look by the pipeline lane.
 
-## Progress log
-
-- 2026-10-24: Repo created; handoff docs committed. Toolchain verified: spacetime 2.13.0, droid 0.249.0, MuJoCo 3.17.0 imports, Panda assets pinned (menagerie f3b6013, tree sha256 bcf7166c). Local Convex binary unusable on glibc 2.35 — plan switched to hosted/cloud for all integrations per Peyton. FACTORY_API_KEY + DAYTONA_API_KEY received. `packages/contracts` landed with entity schemas, handoff protocol, env validation; 9 vitest tests green; doctor reports missing names only.
+See [verification report](docs/verification-report.md) for the latest test run.
