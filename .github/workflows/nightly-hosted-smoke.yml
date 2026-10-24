@@ -1,0 +1,112 @@
+name: Nightly hosted smoke
+
+on:
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "yes" to really delete stale ForkSafe Daytona sandboxes (anything else is a dry run).'
+        required: false
+        default: "no"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-hosted-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: Hosted integration smoke
+    # Never run on forks: their scheduled runs have no secrets and nothing to probe.
+    if: github.repository == 'PeytonLi/ForkSafe'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CONVEX_SITE_URL: ${{ secrets.CONVEX_SITE_URL }}
+      CONVEX_URL: ${{ secrets.CONVEX_URL }}
+      SPACETIMEDB_URI: ${{ secrets.SPACETIMEDB_URI }}
+      SPACETIMEDB_DATABASE: ${{ secrets.SPACETIMEDB_DATABASE }}
+      DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+      DAYTONA_API_URL: ${{ secrets.DAYTONA_API_URL }}
+      FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
+      ELASTICSEARCH_URL: ${{ secrets.ELASTICSEARCH_URL }}
+      ELASTICSEARCH_API_KEY: ${{ secrets.ELASTICSEARCH_API_KEY }}
+      KIBANA_URL: ${{ secrets.KIBANA_URL }}
+      KIBANA_API_KEY: ${{ secrets.KIBANA_API_KEY }}
+      ATLASSIAN_SITE_URL: ${{ secrets.ATLASSIAN_SITE_URL }}
+      ATLASSIAN_EMAIL: ${{ secrets.ATLASSIAN_EMAIL }}
+      ATLASSIAN_API_TOKEN: ${{ secrets.ATLASSIAN_API_TOKEN }}
+      ATLASSIAN_PROJECT_KEY: ${{ secrets.ATLASSIAN_PROJECT_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Mask configured values that do not look secret
+        run: |
+          for name in ATLASSIAN_EMAIL ATLASSIAN_SITE_URL ELASTICSEARCH_URL KIBANA_URL; do
+            value="${!name}"
+            if [ -n "$value" ]; then echo "::add-mask::$value"; fi
+          done
+      - name: Human-readable smoke (pnpm smoke:hosted)
+        # Informational log only; the next step owns the verdict, summary and artifact.
+        continue-on-error: true
+        run: pnpm smoke:hosted
+      - name: Smoke with latency, job summary and JSON
+        run: node scripts/nightly-smoke.mjs --json var/nightly/smoke.json
+      - name: Upload JSON result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosted-smoke-${{ github.run_id }}
+          path: var/nightly/smoke.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  cleanup-sandboxes:
+    name: Stale Daytona sandbox cleanup
+    if: github.repository == 'PeytonLi/ForkSafe'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+      DAYTONA_API_URL: ${{ secrets.DAYTONA_API_URL }}
+      CONFIRM: ${{ github.event_name == 'workflow_dispatch' && inputs.confirm || 'no' }}
+    steps:
+      - name: Skip when Daytona is not configured
+        id: gate
+        run: |
+          if [ -z "$DAYTONA_API_KEY" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            printf '## Daytona sandbox cleanup\n\nSkipped: not configured (DAYTONA_API_KEY secret is absent).\n' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.gate.outputs.configured == 'true'
+        uses: actions/checkout@v4
+      - if: steps.gate.outputs.configured == 'true'
+        uses: pnpm/action-setup@v4
+      - if: steps.gate.outputs.configured == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+      - if: steps.gate.outputs.configured == 'true'
+        run: pnpm install --frozen-lockfile --filter @forksafe/daytona...
+      - name: Clean up ForkSafe-labelled sandboxes (dry run unless confirm=yes)
+        if: steps.gate.outputs.configured == 'true'
+        run: |
+          set -o pipefail
+          if [ "$CONFIRM" = "yes" ]; then mode="delete"; args="--yes"; else mode="dry run"; args=""; fi
+          {
+            echo "## Daytona sandbox cleanup ($mode)"
+            echo
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          pnpm cleanup:sandboxes $args 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
