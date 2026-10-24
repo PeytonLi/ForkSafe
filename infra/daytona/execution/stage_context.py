@@ -17,6 +17,11 @@ EVALUATOR_FILES = (
     "case_worker.py",
     "run_candidate.py",
     "benchmark.py",
+    "errors.py",
+    "ed25519.py",
+    "signing.py",
+    "admission.py",
+    "verify_manifest.py",
 )
 
 

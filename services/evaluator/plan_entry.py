@@ -150,6 +150,10 @@ def _audit_hook(workdir: Path) -> None:
             resolved = _realpath(args[0])  # type: ignore[arg-type]
             if not _is_within(resolved, os.path.realpath(workdir)):
                 raise PermissionError("blocked chdir outside workdir")
+        elif event in {"os.listdir", "os.scandir"}:
+            path = args[0] if args else None
+            if not allowed_path(path):
+                raise PermissionError(f"blocked directory listing: {event}")
         elif event in MUTATING_EVENTS or event.startswith("shutil."):
             paths = [
                 arg

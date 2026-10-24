@@ -146,8 +146,11 @@ def run_plan_sandbox(
     try:
         workdir.mkdir(parents=True, exist_ok=True)
         if os.geteuid() == 0:
-            os.chown(workdir, 65534, 65534)
-            os.chown(controller_path, 65534, 65534)
+            workdir.parent.chmod(0o711)
+            for current, directories, files in os.walk(workdir, followlinks=False):
+                os.chown(current, 65534, 65534)
+                for name in (*directories, *files):
+                    os.chown(Path(current) / name, 65534, 65534, follow_symlinks=False)
         with tempfile.TemporaryFile() as stderr_file:
             process = subprocess.Popen(
                 command,

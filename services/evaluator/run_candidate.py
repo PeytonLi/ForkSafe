@@ -23,8 +23,17 @@ from simulator.assets import verify_assets
 from simulator.models import SimCase, SimRunResult
 from simulator.runner import finite_json
 
+from evaluator.admission import AdmissionError, AdmittedBundle, admit, materialize
+from evaluator.errors import CandidateIntegrityError
 from evaluator.models import CandidateEvaluation, CaseEvaluation
 from evaluator.sandbox import probe_isolation
+from evaluator.signing import (
+    SigningKey,
+    SigningKeyError,
+    build_payload,
+    load_signing_key,
+    sign_payload,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 SERVICES = ROOT / "services"
@@ -32,10 +41,6 @@ PUBLIC_MANIFEST = ROOT / "evaluation/public/manifest.json"
 LOCK_PATH = ROOT / "evaluation/manifests.lock.json"
 CASE_WORKER = Path(__file__).with_name("case_worker.py")
 INVALID_FAILURES = {"invalid_run", "engine_error", "missing_artifact"}
-
-
-class CandidateIntegrityError(RuntimeError):
-    pass
 
 
 class CaseInfrastructureError(RuntimeError):
@@ -55,6 +60,30 @@ def code_tree_sha256(services_root: Path = SERVICES) -> str:
         digest.update(b"\0")
         digest.update(path.read_bytes())
     return digest.hexdigest()
+
+
+def simulator_tree_sha256(services_root: Path = SERVICES) -> str:
+    digest = hashlib.sha256()
+    paths = sorted(
+        path
+        for suffix in ("*.py", "*.json")
+        for path in services_root.joinpath("simulator").rglob(suffix)
+        if "tests" not in path.relative_to(services_root / "simulator").parts
+        and "__pycache__" not in path.parts
+    )
+    for path in paths:
+        digest.update(path.relative_to(services_root).as_posix().encode())
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+def _make_parent_nondumpable() -> bool:
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        return libc.prctl(4, 0, 0, 0, 0) == 0 and not _parent_dumpable()
+    except (AttributeError, OSError):
+        return False
 
 
 def _parent_dumpable() -> bool:
@@ -127,17 +156,11 @@ def execute_case(
     case_memory_mb: int = 3072,
     require_netns: bool = False,
     test_skip_netns: bool = False,
+    bundle: AdmittedBundle | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
-    controller_path = controller_path.resolve()
-    try:
-        controller_bytes = controller_path.read_bytes()
-    except OSError as exc:
-        raise CandidateIntegrityError("controller file is unavailable") from exc
-    if len(controller_bytes) > 200_000:
-        raise CandidateIntegrityError("controller exceeds 200 KB")
-    controller_hash = _sha256_bytes(controller_bytes)
-    if controller_hash != expected_sha256:
+    admitted = bundle or admit(controller_path)
+    if admitted.controller_sha256 != expected_sha256:
         raise CandidateIntegrityError("controller SHA does not match --expected-sha256")
 
     experiment_id = uuid5(
@@ -154,9 +177,8 @@ def execute_case(
         with tempfile.TemporaryDirectory(prefix="forksafe-case-", dir=work_dir) as temporary:
             case_root = Path(temporary)
             candidate_dir = case_root / "candidate"
-            candidate_dir.mkdir()
+            materialize(admitted, candidate_dir)
             candidate_copy = candidate_dir / "task_controller.py"
-            candidate_copy.write_bytes(controller_bytes)
             case_path = case_root / "case.json"
             _write_json(case_path, case)
             output_dir = case_root / "out"
@@ -202,7 +224,7 @@ def execute_case(
             try:
                 completed = subprocess.run(
                     command,
-                    cwd=case_root,
+                    cwd=candidate_dir,
                     env=environment,
                     check=False,
                     capture_output=True,
@@ -295,10 +317,14 @@ def _arguments() -> argparse.Namespace:
         return value
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--controller", required=True, type=Path)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--controller", type=Path)
+    source.add_argument("--bundle", type=Path)
     parser.add_argument("--expected-sha256", required=True, type=sha_argument)
+    parser.add_argument("--expected-bundle-sha256", type=sha_argument)
     parser.add_argument("--suite", required=True, choices=("public", "withheld", "all"))
     parser.add_argument("--out", required=True, type=Path)
+    parser.add_argument("--manifest-out", type=Path)
     parser.add_argument("--withheld-manifest", type=Path, default=os.environ.get("FORKSAFE_WITHHELD_MANIFEST"))
     parser.add_argument("--consume-withheld-manifest", action="store_true")
     parser.add_argument("--candidate-id", type=UUID)
@@ -317,11 +343,15 @@ def _arguments() -> argparse.Namespace:
 
 
 def _atomic_write(path: Path, document: dict[str, Any]) -> None:
+    _atomic_json_write(path, document)
+
+
+def _atomic_json_write(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
     try:
         temporary.write_text(
-            json.dumps(finite_json(document), sort_keys=True, indent=2, allow_nan=True) + "\n",
+            json.dumps(finite_json(value), sort_keys=True, indent=2, allow_nan=True) + "\n",
             encoding="utf-8",
         )
         os.replace(temporary, path)
@@ -342,6 +372,8 @@ def _base_document(args: argparse.Namespace) -> dict[str, Any]:
         "exitCode": 4,
         "controllerSha256": sha,
         "assetsSha256": None,
+        "simulatorSha256": None,
+        "bundleSha256": None,
         "engineVersion": mujoco.__version__,
         "evaluatorCodeSha256": None,
         "manifestSha256": {},
@@ -367,6 +399,8 @@ def _base_document(args: argparse.Namespace) -> dict[str, Any]:
             "wallTimeSec": 0.0,
         },
         "error": None,
+        "signing": {"mode": "unsigned", "keyId": None},
+        "signedManifest": None,
     }
 
 
@@ -435,8 +469,29 @@ def _candidate_evaluations(
 
 
 def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
+    key: SigningKey | None = None
+    key_error: SigningKeyError | None = None
+    try:
+        key = load_signing_key()
+    except SigningKeyError as exc:
+        key_error = exc
     document = _base_document(args)
     wall_started = time.perf_counter()
+    if key_error is not None:
+        code, document = _error_document(document, 4, "signing_key_invalid", str(key_error))
+        return code, document
+    if os.environ.get("FORKSAFE_REQUIRE_SIGNING") == "1" and key is None:
+        code, document = _error_document(
+            document, 4, "signing_key_required", "a signing key is required"
+        )
+        return code, document
+    if key is not None:
+        if not _make_parent_nondumpable():
+            code, document = _error_document(
+                document, 4, "signing_isolation_failed", "could not disable parent dumpability"
+            )
+            return code, document
+        document["signing"] = {"mode": "signed", "keyId": key.key_id}
     parent_dumpable = _parent_dumpable()
     document["isolation"]["parentDumpable"] = parent_dumpable
     try:
@@ -461,19 +516,23 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
                 except OSError as exc:
                     raise CandidateIntegrityError("withheld manifest could not be consumed") from exc
 
-        controller_path = args.controller.resolve()
-        try:
-            controller_bytes = controller_path.read_bytes()
-        except OSError as exc:
-            raise CandidateIntegrityError("controller is unreadable") from exc
-        if len(controller_bytes) > 200_000:
-            raise CandidateIntegrityError("controller exceeds 200 KB")
-        controller_sha = _sha256_bytes(controller_bytes)
-        if controller_sha != args.expected_sha256:
+        candidate_path = args.bundle if args.bundle is not None else args.controller
+        assert candidate_path is not None
+        bundle = admit(candidate_path)
+        if bundle.controller_sha256 != args.expected_sha256:
             raise CandidateIntegrityError("controller SHA does not match --expected-sha256")
+        if (
+            args.expected_bundle_sha256 is not None
+            and bundle.bundle_sha256 != args.expected_bundle_sha256
+        ):
+            raise CandidateIntegrityError("bundle SHA does not match --expected-bundle-sha256")
+        document["controllerSha256"] = bundle.controller_sha256
+        document["bundleSha256"] = bundle.bundle_sha256
 
         code_sha = code_tree_sha256()
+        simulator_sha = simulator_tree_sha256()
         document["evaluatorCodeSha256"] = code_sha
+        document["simulatorSha256"] = simulator_sha
         isolation = probe_isolation()
         require_netns = isolation["netns"] and not args.test_audit_hook_only
         document["isolation"].update(
@@ -506,10 +565,10 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
                 case_id = case["caseId"]
                 if case_ids is not None and case_id not in case_ids:
                     continue
-                if code_tree_sha256() != code_sha:
+                if code_tree_sha256() != code_sha or simulator_tree_sha256() != simulator_sha:
                     raise CandidateIntegrityError("evaluator_code_modified")
                 report = execute_case(
-                    controller_path,
+                    candidate_path,
                     args.expected_sha256,
                     case,
                     suite,
@@ -525,13 +584,14 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
                     case_memory_mb=args.case_memory_mb,
                     require_netns=require_netns,
                     test_skip_netns=args.test_audit_hook_only,
+                    bundle=bundle,
                 )
                 if suite == "withheld" and report["firstFailure"] is not None:
                     report["firstFailure"] = dict(
                         report["firstFailure"], detail="redacted: withheld case"
                     )
                 document["cases"].append(report)
-        if code_tree_sha256() != code_sha:
+        if code_tree_sha256() != code_sha or simulator_tree_sha256() != simulator_sha:
             raise CandidateIntegrityError("evaluator_code_modified")
 
         statuses = [case["status"] for case in document["cases"]]
@@ -570,7 +630,46 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
             "casesInvalid": sum(case["status"] == "invalid" for case in document["cases"]),
             "wallTimeSec": time.perf_counter() - wall_started,
         }
+        if key is not None and document["exitCode"] in {0, 1}:
+            try:
+                manifests_lock_sha256 = _sha256_bytes(LOCK_PATH.read_bytes())
+                filtered_cases = (
+                    sorted(item.strip() for item in args.case_ids.split(",") if item.strip())
+                    if args.case_ids
+                    else None
+                )
+                payload = build_payload(
+                    document,
+                    bundle=bundle,
+                    simulator_sha256=simulator_sha,
+                    manifests_lock_sha256=manifests_lock_sha256,
+                    case_filter=filtered_cases,
+                    key_id=key.key_id,
+                )
+                envelope = sign_payload(payload, key)
+                manifest_path = args.manifest_out or args.out.with_name(
+                    f"{args.out.stem}.manifest.json"
+                )
+                _atomic_json_write(manifest_path, envelope)
+                document["signedManifest"] = envelope
+            except Exception as exc:  # noqa: BLE001
+                document["signing"] = {"mode": "signed", "keyId": key.key_id}
+                code, document = _error_document(
+                    document, 4, "signing_failed", f"could not sign evaluation manifest ({type(exc).__name__})"
+                )
+                document["metrics"]["wallTimeSec"] = time.perf_counter() - wall_started
+                return code, document
         return document["exitCode"], document
+    except AdmissionError as exc:
+        code, document = _error_document(
+            document,
+            3,
+            "admission_rejected",
+            f"{exc.reason}: {str(exc)[:120]}",
+        )
+        document["error"]["reason"] = exc.reason
+        document["metrics"]["wallTimeSec"] = time.perf_counter() - wall_started
+        return code, document
     except CandidateIntegrityError as exc:
         code, document = _error_document(document, 3, "integrity_error", str(exc))
         document["metrics"]["wallTimeSec"] = time.perf_counter() - wall_started

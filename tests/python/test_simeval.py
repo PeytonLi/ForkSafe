@@ -591,6 +591,15 @@ def test_staged_image_context_excludes_protected_paths_and_matches_asset_hash(
     assert not any("withheld" in path.lower() for path in staged_paths)
     assert not any("reference_controller" in path.lower() for path in staged_paths)
     assert "services/simulator/app.py" not in staged_paths
+    assert {
+        "services/evaluator/ed25519.py",
+        "services/evaluator/signing.py",
+        "services/evaluator/admission.py",
+        "services/evaluator/verify_manifest.py",
+        "services/evaluator/errors.py",
+    }.issubset(set(staged_paths))
+    assert "services/evaluator/keygen.py" not in staged_paths
+    assert not any(path.startswith("services/evaluator/ts/") for path in staged_paths)
     expected_sha = json.loads(
         (output / "assets/robots/manifest.json").read_text(encoding="utf-8")
     )["sha256"]
