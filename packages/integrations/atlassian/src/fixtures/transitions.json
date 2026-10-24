@@ -1,0 +1,7 @@
+{
+  "_fixture": "recorded response shape; illustrative data, not a live Atlassian call",
+  "transitions": [
+    { "id": "21", "name": "Start review", "to": { "name": "Ready for review" } },
+    { "id": "31", "name": "Accept", "to": { "name": "Accepted" } }
+  ]
+}

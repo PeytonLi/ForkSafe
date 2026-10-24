@@ -1,0 +1,16 @@
+{
+  "_fixture": "recorded response shape; illustrative data, not a live Atlassian call",
+  "id": "123456789",
+  "title": "Divider requirements",
+  "spaceId": "fixture-space",
+  "version": { "number": 7, "createdAt": "2025-10-24T12:00:00.000Z" },
+  "body": {
+    "storage": {
+      "value": "<ul><li>Timeout of 30 seconds</li><li>Must not touch the divider</li><li>Penetration must stay under 1 mm</li><li>Always review grasp stability</li><li>Informational note without criteria</li></ul>"
+    }
+  },
+  "_links": {
+    "base": "https://fixture.atlassian.net",
+    "webui": "/spaces/FS/pages/123456789/Divider+requirements"
+  }
+}

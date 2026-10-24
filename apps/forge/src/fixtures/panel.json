@@ -1,0 +1,81 @@
+{
+  "_fixture": "recorded response shape; illustrative data, not a live backend call",
+  "mode": "fixture",
+  "issue": { "key": "FS-42", "id": "10042" },
+  "readiness": [
+    { "name": "atlassian_jira", "mode": "fixture", "detail": "Illustrative fixture data", "checkedAtMs": 1761200000000 },
+    { "name": "atlassian_confluence", "mode": "fixture", "detail": "Illustrative fixture data", "checkedAtMs": 1761200000000 }
+  ],
+  "investigation": {
+    "id": "00000000-0000-4000-8000-000000000101",
+    "state": "awaiting_review",
+    "title": "Investigate cube-divider contact",
+    "requestedEnvironments": 3,
+    "confluencePageId": "123456789",
+    "updatedAtMs": 1761200000000
+  },
+  "environments": [
+    { "id": "00000000-0000-4000-8000-000000000111", "index": 0, "state": "active" },
+    { "id": "00000000-0000-4000-8000-000000000112", "index": 1, "state": "active" },
+    { "id": "00000000-0000-4000-8000-000000000113", "index": 2, "state": "provisioning" }
+  ],
+  "findingsCount": 4,
+  "candidates": [
+    {
+      "candidate": {
+        "id": "00000000-0000-4000-8000-000000000121",
+        "environmentId": "00000000-0000-4000-8000-000000000111",
+        "status": "evaluated",
+        "controllerSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "changedFunctions": ["approach_divider", "grasp_cube"],
+        "submittedAtMs": 1761199000000
+      },
+      "evaluation": {
+        "id": "00000000-0000-4000-8000-000000000131",
+        "suite": "withheld",
+        "status": "passed",
+        "allRequiredPassed": true,
+        "medianCompletionTimeSec": 12.4
+      },
+      "passedCases": 8,
+      "totalCases": 8
+    },
+    {
+      "candidate": {
+        "id": "00000000-0000-4000-8000-000000000122",
+        "environmentId": "00000000-0000-4000-8000-000000000112",
+        "status": "evaluated",
+        "controllerSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "changedFunctions": ["approach_divider"],
+        "submittedAtMs": 1761198000000
+      },
+      "evaluation": {
+        "id": "00000000-0000-4000-8000-000000000132",
+        "suite": "public",
+        "status": "failed",
+        "allRequiredPassed": false,
+        "medianCompletionTimeSec": 14.1
+      },
+      "passedCases": 6,
+      "totalCases": 8
+    }
+  ],
+  "underReview": {
+    "candidateId": "00000000-0000-4000-8000-000000000121",
+    "evaluationId": "00000000-0000-4000-8000-000000000131",
+    "controllerSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "reviews": [],
+  "requirements": {
+    "pageId": "123456789",
+    "version": 7,
+    "title": "Divider requirements",
+    "checkedRules": 3,
+    "humanReviewItems": 1
+  },
+  "links": {
+    "investigationUrl": "https://forksafe.example.invalid/investigations/00000000-0000-4000-8000-000000000101",
+    "reportUrl": "https://forksafe.example.invalid/reports/fixture-report"
+  },
+  "fetchedAtMs": 1761200000000
+}

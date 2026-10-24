@@ -1,0 +1,3 @@
+src/generated/
+src/**/*.d.ts
+test/**/*.d.ts

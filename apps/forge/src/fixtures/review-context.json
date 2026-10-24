@@ -1,0 +1,49 @@
+{
+  "_fixture": "recorded response shape; illustrative data, not a live backend call",
+  "investigation": {
+    "id": "00000000-0000-4000-8000-000000000101",
+    "state": "awaiting_review",
+    "title": "Investigate cube-divider contact",
+    "baselineCase": {
+      "caseId": "baseline-divider-contact",
+      "suite": "original",
+      "seed": 13,
+      "sceneOverrides": {}
+    },
+    "baselineExperimentId": "00000000-0000-4000-8000-000000000141",
+    "jiraIssueKey": "FS-42",
+    "confluencePageId": "123456789",
+    "requestedEnvironments": 3,
+    "createdAtMs": 1761190000000,
+    "updatedAtMs": 1761200000000
+  },
+  "candidate": {
+    "id": "00000000-0000-4000-8000-000000000121",
+    "investigationId": "00000000-0000-4000-8000-000000000101",
+    "environmentId": "00000000-0000-4000-8000-000000000111",
+    "status": "evaluated",
+    "controllerSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "sourceArtifactId": "00000000-0000-4000-8000-000000000151",
+    "changedFunctions": ["approach_divider", "grasp_cube"],
+    "rationale": "Adds a conservative clearance check before approach.",
+    "basedOnFindings": [],
+    "submittedByAttemptId": "00000000-0000-4000-8000-000000000161",
+    "submittedAtMs": 1761199000000
+  },
+  "evaluation": {
+    "id": "00000000-0000-4000-8000-000000000131",
+    "candidateId": "00000000-0000-4000-8000-000000000121",
+    "investigationId": "00000000-0000-4000-8000-000000000101",
+    "evaluatorAttemptId": "00000000-0000-4000-8000-000000000171",
+    "suite": "withheld",
+    "cases": [
+      { "caseId": "divider-approach-a", "status": "passed", "completionTimeSec": 11.9 },
+      { "caseId": "divider-approach-b", "status": "passed", "completionTimeSec": 12.9 }
+    ],
+    "allRequiredPassed": true,
+    "medianCompletionTimeSec": 12.4,
+    "status": "passed",
+    "reportArtifactId": "00000000-0000-4000-8000-000000000181",
+    "createdAtMs": 1761199500000
+  }
+}
