@@ -9,7 +9,7 @@ from uuid import UUID
 import mujoco
 
 from simulator.models import SimCase
-from simulator.runner import _resolve_case, run_case
+from simulator.runner import _resolve_case, finite_json, run_case
 
 
 def _arguments() -> argparse.Namespace:
@@ -71,12 +71,20 @@ def main() -> int:
             "assetsSha256": assets_sha,
             "frames": [],
         }
-        (args.out_dir / "trace.json").write_text(json.dumps(trace, indent=2) + "\n")
-        (args.out_dir / "result.json").write_text(json.dumps(result, indent=2) + "\n")
+        (args.out_dir / "trace.json").write_text(
+            json.dumps(finite_json(trace), indent=2) + "\n"
+        )
+        (args.out_dir / "result.json").write_text(
+            json.dumps(finite_json(result), indent=2) + "\n"
+        )
         print(result["firstFailure"]["detail"], file=sys.stderr)
         return 1
-    (args.out_dir / "trace.json").write_text(json.dumps(trace, indent=2) + "\n")
-    (args.out_dir / "result.json").write_text(json.dumps(result, indent=2) + "\n")
+    (args.out_dir / "trace.json").write_text(
+        json.dumps(finite_json(trace), indent=2) + "\n"
+    )
+    (args.out_dir / "result.json").write_text(
+        json.dumps(finite_json(result), indent=2) + "\n"
+    )
     print(json.dumps(result, separators=(",", ":")))
     return 0 if not result["failureKinds"] else 1
 

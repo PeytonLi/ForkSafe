@@ -1,0 +1,2 @@
+class CandidateIntegrityError(RuntimeError):
+    pass
