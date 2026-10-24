@@ -20,6 +20,7 @@ export async function main(): Promise<void> {
     token,
     maxRunners: positiveInteger(process.env.POOL_MAX_RUNNERS, 4),
     runnerEntryPoint: process.env.RUNNER_ENTRYPOINT ?? resolve(here, "../../runner/dist/runner.mjs"),
+    workRoot: process.env.RUNNER_POOL_WORK_ROOT,
   });
   await pool.start(positiveInteger(process.env.PORT, 8080));
   const stop = () => { void pool.stop(); };

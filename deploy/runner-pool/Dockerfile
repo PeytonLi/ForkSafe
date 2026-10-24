@@ -12,10 +12,13 @@ FROM node:22-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && useradd --create-home --uid 10001 forksafe \
+    && mkdir -p /app /home/forksafe/work \
+    && chown -R forksafe:forksafe /app /home/forksafe/work \
     && rm -rf /var/lib/apt/lists/*
 USER forksafe
 ENV HOME=/home/forksafe
 ENV PATH="/home/forksafe/.local/bin:${PATH}"
+ENV RUNNER_POOL_WORK_ROOT=/home/forksafe/work
 RUN curl -fsSL https://app.factory.ai/cli | sh && droid --version
 
 WORKDIR /app
