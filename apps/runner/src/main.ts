@@ -161,6 +161,7 @@ export async function main(): Promise<void> {
       claimSpan.end();
       jobSpan.span.setAttribute("forksafe.job_id", lease.job.id);
       jobSpan.span.setAttribute("forksafe.attempt_id", lease.attempt.id);
+      process.stdout.write(`${JSON.stringify({ traceId: jobSpan.span.spanContext().traceId })}\n`);
       const task = executor.execute(lease, jobSpan.context)
         .catch(async (error) => {
           await log.record({
