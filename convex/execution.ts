@@ -130,7 +130,12 @@ export const ensureSimBundle = internalAction({
     if (!bundleUrl) throw new ConvexError("simulator_bundle_missing");
     const daytona = provider();
     await fetchToFile(daytona, ref, bundleUrl, "/workspace/sim.tar");
-    const extract = await daytona.exec(ref, { command: `python3 -m tarfile -e /workspace/sim.tar ${SIM_ROOT}`, cwd: "/workspace", timeoutSec: 120 });
+    // Extraction is idempotent, so one retry absorbs a transient sandbox exec failure.
+    let extract = await daytona.exec(ref, { command: `python3 -m tarfile -e /workspace/sim.tar ${SIM_ROOT}`, cwd: "/workspace", timeoutSec: 120 });
+    if (extract.exitCode !== 0) {
+      console.log("ensureSimBundle:extract_retry", extract.exitCode, extract.output.slice(-160));
+      extract = await daytona.exec(ref, { command: `python3 -m tarfile -e /workspace/sim.tar ${SIM_ROOT}`, cwd: "/workspace", timeoutSec: 120 });
+    }
     if (extract.exitCode !== 0) throw new ConvexError("simulator_bundle_extract_failed");
     // forksafe-exec-v1 ships mujoco+numpy only; the simulator also imports pydantic, so install it into
     // a bundle-local target dir (deterministic regardless of HOME) until the execution image adds it.
