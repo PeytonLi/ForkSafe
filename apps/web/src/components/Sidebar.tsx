@@ -78,9 +78,9 @@ export function Sidebar({ route, go, investigations, collapsed, onToggleCollapse
       </div>
 
       <div className={styles.searchWrap}>
-        <button type="button" className={styles.search} onClick={onSearch} data-tip="Search" onPointerOver={showTip} onPointerLeave={() => setTip(null)} onFocus={showTip} onBlur={() => setTip(null)}>
+        <button type="button" className={styles.search} onClick={onSearch} aria-label="Search or jump to" aria-keyshortcuts="Control+K Meta+K" data-tip="Search" onPointerOver={showTip} onPointerLeave={() => setTip(null)} onFocus={showTip} onBlur={() => setTip(null)}>
           <Icon name="search" className={styles.icon} />
-          <span className={styles.label}>Search or jump to…</span>
+          <span className={styles.label}>Search…</span>
           <kbd className={styles.kbd}>{isMac() ? "⌘K" : "Ctrl K"}</kbd>
         </button>
       </div>
