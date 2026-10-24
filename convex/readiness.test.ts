@@ -82,7 +82,7 @@ describe("persistent readiness cache", () => {
     await t.mutation(internal.readiness.acquire, {});
     const result = await t.action(internal.readiness.get, {});
     expect(result.integrations.length).toBeGreaterThan(0);
-    for (const name of remoteNames) expect(result.integrations.find((r) => r.name === name)).toMatchObject({ mode: "live", probed: true });
+    for (const name of remoteNames) expect(result.integrations.find((r: { name: string }) => r.name === name)).toMatchObject({ mode: "live", probed: true });
   });
 
   it("serves cached snapshots without fetches, then refreshes after 60 seconds", async () => {
