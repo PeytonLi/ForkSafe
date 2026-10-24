@@ -1,0 +1,150 @@
+{
+  "version": "1",
+  "generatorSeed": 20260604,
+  "domain": {
+    "objectDx": [
+      -0.08,
+      0.08
+    ],
+    "objectDy": [
+      -0.08,
+      0.08
+    ],
+    "binDx": [
+      -0.15,
+      0.15
+    ],
+    "binDy": [
+      -0.2,
+      0.2
+    ],
+    "objectMass": [
+      0.02,
+      0.3
+    ],
+    "binWallHeight": [
+      0.03,
+      0.15
+    ],
+    "speedScale": [
+      0.5,
+      1.5
+    ]
+  },
+  "cases": [
+    {
+      "caseId": "toss-bin-default",
+      "suite": "original",
+      "taskFamily": "toss_into_bin",
+      "seed": 0,
+      "sceneOverrides": {},
+      "description": "Default scene baseline failure reproduction."
+    },
+    {
+      "caseId": "toss-bin-nominal",
+      "suite": "public",
+      "taskFamily": "toss_into_bin",
+      "seed": 0,
+      "sceneOverrides": {
+        "binDx": -0.12
+      },
+      "description": "Bin moved closer to the fixed-speed baseline toss."
+    },
+    {
+      "caseId": "toss-public-01",
+      "suite": "public",
+      "taskFamily": "toss_into_bin",
+      "seed": 1787234055,
+      "sceneOverrides": {
+        "objectDx": -0.00241,
+        "objectDy": 0.035,
+        "binDx": -0.10933,
+        "binDy": -0.13569,
+        "objectMass": 0.29821,
+        "binWallHeight": 0.11938,
+        "speedScale": 0.92694
+      },
+      "description": "Toss the object into the open-top bin."
+    },
+    {
+      "caseId": "toss-public-02",
+      "suite": "public",
+      "taskFamily": "toss_into_bin",
+      "seed": 126418603,
+      "sceneOverrides": {
+        "objectDx": 0.04488,
+        "objectDy": -0.0368,
+        "binDx": -0.02617,
+        "binDy": -0.10327,
+        "objectMass": 0.05127,
+        "binWallHeight": 0.06836,
+        "speedScale": 0.8105
+      },
+      "description": "Toss the object into the open-top bin."
+    },
+    {
+      "caseId": "toss-public-03",
+      "suite": "public",
+      "taskFamily": "toss_into_bin",
+      "seed": 1309464296,
+      "sceneOverrides": {
+        "objectDx": 0.02035,
+        "objectDy": -0.07812,
+        "binDx": -0.09154,
+        "binDy": -0.15962,
+        "objectMass": 0.06695,
+        "binWallHeight": 0.14768,
+        "speedScale": 0.68568
+      },
+      "description": "Toss the object into the open-top bin."
+    },
+    {
+      "caseId": "toss-public-04",
+      "suite": "public",
+      "taskFamily": "toss_into_bin",
+      "seed": 2062665355,
+      "sceneOverrides": {
+        "objectDx": -0.03183,
+        "objectDy": 0.06249,
+        "binDx": -0.07465,
+        "binDy": -0.1839,
+        "objectMass": 0.29639,
+        "binWallHeight": 0.08243,
+        "speedScale": 1.4008
+      },
+      "description": "Toss the object into the open-top bin."
+    },
+    {
+      "caseId": "toss-public-05",
+      "suite": "public",
+      "taskFamily": "toss_into_bin",
+      "seed": 67525125,
+      "sceneOverrides": {
+        "objectDx": 0.03466,
+        "objectDy": 0.07877,
+        "binDx": -0.02528,
+        "binDy": -0.04341,
+        "objectMass": 0.03337,
+        "binWallHeight": 0.05585,
+        "speedScale": 0.90569
+      },
+      "description": "Toss the object into the open-top bin."
+    },
+    {
+      "caseId": "toss-public-06",
+      "suite": "public",
+      "taskFamily": "toss_into_bin",
+      "seed": 282542700,
+      "sceneOverrides": {
+        "objectDx": 0.05285,
+        "objectDy": -0.0322,
+        "binDx": -0.14911,
+        "binDy": 0.17893,
+        "objectMass": 0.1448,
+        "binWallHeight": 0.04493,
+        "speedScale": 0.67699
+      },
+      "description": "Toss the object into the open-top bin."
+    }
+  ]
+}

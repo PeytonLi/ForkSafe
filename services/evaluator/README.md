@@ -10,6 +10,12 @@ PYTHONPATH=services .venv/bin/python -m evaluator.run_candidate \
   --expected-sha256 "$CONTROLLER_SHA256" --suite public --out result.json
 ```
 
+`--task-family` defaults to `divider_pick_place`. Select
+`--task-family toss_into_bin` to load the toss public manifest and
+`evaluation/toss_bin/suites.lock.json`; signed results bind the SHA-256 of
+that family-specific lock. Every manifest case must declare the selected
+`taskFamily` (the legacy divider manifest may omit it).
+
 `--controller` accepts a single controller file. `--bundle PATH` instead
 accepts a directory or tar archive containing `task_controller.py`; optional
 `forksafe-bundle.json` manifests declare JSON, TXT, or CSV files under

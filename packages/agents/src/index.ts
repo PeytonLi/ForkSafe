@@ -5,4 +5,5 @@ export * from "./adapter.js";
 export * from "./session-manager.js";
 export * from "./activity-log.js";
 export * from "./prompts.js";
+export * from "./controllerApi.js";
 export * from "./readiness.js";

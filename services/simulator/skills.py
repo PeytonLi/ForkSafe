@@ -15,6 +15,7 @@ TCP_TOLERANCE = 0.005
 GRASP_DISTANCE = 0.02
 TOOL_QUATERNION = np.array([0.0, 1.0, 0.0, 0.0])
 TOOL_TRACKING_COMPENSATION = np.array([0.006, 0.0, 0.006])
+TOSS_TRACKING_COMPENSATION = np.array([0.0, 0.0, 0.006])
 
 
 def _quat_conjugate(quaternion: np.ndarray) -> np.ndarray:
@@ -106,6 +107,7 @@ class SkillExecutor:
     gripper_settled: float = 0.0
     close_complete: bool = False
     attached: bool = False
+    toss_released: bool = False
     attachment_events: list[dict[str, Any]] = field(default_factory=list)
     ik: DampedLeastSquaresIK = field(init=False)
     error: tuple[str, str] | None = None
@@ -129,8 +131,12 @@ class SkillExecutor:
     def _site_position(self) -> np.ndarray:
         return self.data.site_xpos[self.scene.tcp_site_id].copy()
 
-    def _arm_control(self, position: np.ndarray) -> None:
-        targets = self.ik.solve(position + TOOL_TRACKING_COMPENSATION)
+    def _arm_control(
+        self,
+        position: np.ndarray,
+        compensation: np.ndarray = TOOL_TRACKING_COMPENSATION,
+    ) -> None:
+        targets = self.ik.solve(position + compensation)
         for actuator_id, target in zip(self.scene.actuator_ids[:JOINT_COUNT], targets):
             low, high = self.scene.model.actuator_ctrlrange[actuator_id]
             self.data.ctrl[actuator_id] = np.clip(target, low, high)
@@ -147,7 +153,15 @@ class SkillExecutor:
         self.move_start = self._site_position()
         self.progress = 0.0
 
-    def _move(self, skill: dict[str, Any], time: float, *, pushing: bool = False) -> None:
+    def _move(
+        self,
+        skill: dict[str, Any],
+        time: float,
+        *,
+        pushing: bool = False,
+        speed_limit: float = 0.5,
+        release_at: float | None = None,
+    ) -> None:
         raw_target = skill.get("pos")
         try:
             target = np.asarray(raw_target, dtype=float)
@@ -179,8 +193,11 @@ class SkillExecutor:
         if not math.isfinite(speed):
             self.error = ("nonfinite_command", "move speed contains NaN or infinity")
             return
-        if speed <= 0 or speed > 0.5:
-            self.error = ("command_limit", f"move speed outside (0, 0.5]: {speed}")
+        if speed <= 0 or speed > speed_limit:
+            self.error = (
+                "command_limit",
+                f"move speed outside (0, {speed_limit}]: {speed}",
+            )
             return
         if self.started_at is None:
             self._begin(time)
@@ -190,7 +207,15 @@ class SkillExecutor:
         travelled = min(distance, speed * elapsed)
         self.progress = 1.0 if distance == 0 else travelled / distance
         waypoint = self.move_start + (target - self.move_start) * self.progress
-        self._arm_control(waypoint)
+        compensation = (
+            TOSS_TRACKING_COMPENSATION
+            if self.scene.task_family == "toss_into_bin"
+            else TOOL_TRACKING_COMPENSATION
+        )
+        self._arm_control(waypoint, compensation)
+        if release_at is not None and self.progress >= release_at and self.attached:
+            self._detach(time, release_mode="toss")
+            self.data.ctrl[self.scene.actuator_ids[7]] = 255.0
         if np.linalg.norm(self._site_position() - target) <= TCP_TOLERANCE and travelled >= distance:
             self._advance()
         elif elapsed > distance / speed + 5.0:
@@ -268,21 +293,37 @@ class SkillExecutor:
         )
         return float(np.linalg.norm(self.data.efc_force[mask]))
 
-    def _detach(self, time: float) -> None:
+    def _tcp_speed(self) -> float:
+        jacobian_position = np.zeros((3, self.scene.model.nv))
+        jacobian_rotation = np.zeros((3, self.scene.model.nv))
+        mujoco.mj_jacSite(
+            self.scene.model,
+            self.data,
+            jacobian_position,
+            jacobian_rotation,
+            self.scene.tcp_site_id,
+        )
+        return float(np.linalg.norm(jacobian_position @ self.data.qvel))
+
+    def _detach(self, time: float, *, release_mode: str | None = None) -> None:
         self.data.eq_active[self.scene.equality_id] = 0
         self.attached = False
-        self.attachment_events.append(
-            {
-                "tSec": float(time),
-                "attached": False,
-                "tcpDistM": float(
-                    np.linalg.norm(
-                        self._site_position() - self.data.xpos[self.scene.cube_body_id]
-                    )
-                ),
-                "weldForce": self._weld_force(),
-            }
-        )
+        event = {
+            "tSec": float(time),
+            "attached": False,
+            "tcpDistM": float(
+                np.linalg.norm(
+                    self._site_position() - self.data.xpos[self.scene.cube_body_id]
+                )
+            ),
+            "weldForce": self._weld_force(),
+        }
+        if self.scene.task_family == "toss_into_bin":
+            self.toss_released = release_mode == "toss"
+            event["tcpSpeedMps"] = self._tcp_speed()
+            event["releasePos"] = self.data.xpos[self.scene.cube_body_id].copy().tolist()
+            event["releaseMode"] = release_mode or "open_gripper"
+        self.attachment_events.append(event)
 
     def tick(self, time: float) -> None:
         skill = self.current_skill
@@ -295,6 +336,27 @@ class SkillExecutor:
             self._move(skill, time, pushing=name == "push")
         elif name in {"open_gripper", "close_gripper"}:
             self._gripper(skill, time)
+        elif name == "toss":
+            try:
+                release_at = float(skill.get("releaseAt", 0.7))
+            except (TypeError, ValueError):
+                self.error = ("invalid_run", "toss releaseAt must be numeric")
+                return
+            if not math.isfinite(release_at):
+                self.error = ("nonfinite_command", "toss releaseAt contains NaN or infinity")
+                return
+            if release_at <= 0 or release_at > 1:
+                self.error = ("command_limit", f"toss releaseAt outside (0, 1]: {release_at}")
+                return
+            speed = skill.get("speed", 0.25)
+            move_skill = dict(skill)
+            move_skill["speed"] = speed
+            self._move(
+                move_skill,
+                time,
+                speed_limit=2.0,
+                release_at=release_at,
+            )
         elif name == "wait":
             try:
                 duration = float(skill.get("sec"))
@@ -317,7 +379,7 @@ class SkillExecutor:
             self.error = ("command_limit", f"unknown skill: {name!r}")
 
     def maybe_attach(self, time: float) -> None:
-        if self.attached or not self.close_complete:
+        if self.attached or not self.close_complete or self.toss_released:
             return
         distance = float(
             np.linalg.norm(

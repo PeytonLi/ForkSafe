@@ -52,6 +52,7 @@ export const SIM = {
 export const SimCase = z.object({
   caseId: z.string().min(1),
   suite: z.enum(["original", "public", "withheld"]),
+  taskFamily: z.enum(["divider_pick_place", "push_through_gap", "toss_into_bin"]).optional(),
   seed: z.number().int().nonnegative(),
   sceneOverrides: z.record(z.number()).default({}),
   description: z.string().optional(),

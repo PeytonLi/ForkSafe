@@ -39,6 +39,8 @@ ROOT = Path(__file__).resolve().parents[2]
 SERVICES = ROOT / "services"
 PUBLIC_MANIFEST = ROOT / "evaluation/public/manifest.json"
 LOCK_PATH = ROOT / "evaluation/manifests.lock.json"
+TOSS_PUBLIC_MANIFEST = ROOT / "evaluation/toss_bin/public/manifest.json"
+TOSS_LOCK_PATH = ROOT / "evaluation/toss_bin/suites.lock.json"
 CASE_WORKER = Path(__file__).with_name("case_worker.py")
 INVALID_FAILURES = {"invalid_run", "engine_error", "missing_artifact"}
 
@@ -97,9 +99,9 @@ def _parent_dumpable() -> bool:
         return True
 
 
-def _manifest_lock() -> dict[str, str]:
+def _manifest_lock(path: Path = LOCK_PATH) -> dict[str, str]:
     try:
-        lock = json.loads(LOCK_PATH.read_text(encoding="utf-8"))
+        lock = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(lock, dict):
             raise TypeError("manifest lock must be an object")
         return {"public": str(lock["public"]), "withheld": str(lock["withheld"])}
@@ -323,6 +325,11 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument("--expected-sha256", required=True, type=sha_argument)
     parser.add_argument("--expected-bundle-sha256", type=sha_argument)
     parser.add_argument("--suite", required=True, choices=("public", "withheld", "all"))
+    parser.add_argument(
+        "--task-family",
+        choices=("divider_pick_place", "toss_into_bin"),
+        default="divider_pick_place",
+    )
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--manifest-out", type=Path)
     parser.add_argument("--withheld-manifest", type=Path, default=os.environ.get("FORKSAFE_WITHHELD_MANIFEST"))
@@ -497,17 +504,28 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     try:
         assets_sha = verify_assets()
         document["assetsSha256"] = assets_sha
-        lock = _manifest_lock()
+        task_family = getattr(args, "task_family", "divider_pick_place")
+        lock_path = TOSS_LOCK_PATH if task_family == "toss_into_bin" else LOCK_PATH
+        public_manifest_path = (
+            TOSS_PUBLIC_MANIFEST if task_family == "toss_into_bin" else PUBLIC_MANIFEST
+        )
+        lock = _manifest_lock(lock_path)
         selected_suites = ("public", "withheld") if args.suite == "all" else (args.suite,)
         manifests: dict[str, dict[str, Any]] = {}
         for suite in selected_suites:
             if suite == "public":
-                manifest_path = PUBLIC_MANIFEST
+                manifest_path = public_manifest_path
             else:
                 if args.withheld_manifest is None:
                     raise CandidateIntegrityError("withheld manifest is required for this suite")
                 manifest_path = Path(args.withheld_manifest)
             manifest, manifest_sha = _read_manifest(manifest_path, suite, lock[suite])
+            for payload in manifest["cases"]:
+                case_family = payload.get("taskFamily", "divider_pick_place")
+                if case_family != task_family:
+                    raise CandidateIntegrityError(
+                        f"{suite} manifest case taskFamily does not match selected family"
+                    )
             manifests[suite] = manifest
             document["manifestSha256"][suite] = manifest_sha
             if suite == "withheld" and args.consume_withheld_manifest:
@@ -632,7 +650,7 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         }
         if key is not None and document["exitCode"] in {0, 1}:
             try:
-                manifests_lock_sha256 = _sha256_bytes(LOCK_PATH.read_bytes())
+                manifests_lock_sha256 = _sha256_bytes(lock_path.read_bytes())
                 filtered_cases = (
                     sorted(item.strip() for item in args.case_ids.split(",") if item.strip())
                     if args.case_ids

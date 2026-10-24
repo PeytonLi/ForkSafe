@@ -101,6 +101,10 @@ export const FailureKind = z.enum([
   "engine_error",
   "missing_artifact",
   "invalid_run",
+  "dropped_early",
+  "bounced_out",
+  "missed_bin_short",
+  "missed_bin_long",
 ]);
 export type FailureKind = z.infer<typeof FailureKind>;
 

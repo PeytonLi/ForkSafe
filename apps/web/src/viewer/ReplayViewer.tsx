@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import type { SimRunResult } from "@forksafe/contracts";
 import { mjToThreePos, mjToThreeQuat, sampleAt, type Sample } from "./transform";
+import { makeTossBin, placeTossBin } from "./tossBin";
 import styles from "./ReplayViewer.module.css";
 
 const CHAIN = ["link0", "link1", "link4", "link6", "hand"] as const;
@@ -15,6 +16,7 @@ interface Scene3D {
   hand: THREE.Mesh;
   cube: THREE.Mesh;
   divider: THREE.Mesh;
+  bin: THREE.Group;
   target: THREE.Mesh;
   contact: THREE.Mesh;
   ghost: ArmParts & { group: THREE.Group };
@@ -124,6 +126,8 @@ function build(canvas: HTMLCanvasElement, scene: Record<string, number>): Scene3
     new THREE.MeshStandardMaterial({ color: "#16a34a", transparent: true, opacity: 0.55 }),
   );
   s.add(target);
+  const bin = makeTossBin(scene.binWallHeight ?? scene.bin_wall_height);
+  s.add(bin);
   const contact = new THREE.Mesh(new THREE.SphereGeometry(0.018, 16, 10), new THREE.MeshBasicMaterial({ color: "#dc2626" }));
   s.add(contact);
   for (const object of s.children) {
@@ -132,7 +136,7 @@ function build(canvas: HTMLCanvasElement, scene: Record<string, number>): Scene3
   const ghost = ghostArm(s);
   const paths = new THREE.Group();
   s.add(paths);
-  return { renderer, scene: s, camera, links, joints, hand, cube, divider, target, contact, ghost, paths };
+  return { renderer, scene: s, camera, links, joints, hand, cube, divider, bin, target, contact, ghost, paths };
 }
 
 const v = (p: [number, number, number]) => new THREE.Vector3(...mjToThreePos(p));
@@ -199,6 +203,7 @@ function apply(s3: Scene3D, replay: SimRunResult, t: number, ghost?: SimRunResul
   if (gs) poseArm(s3.ghost, gs);
   place(smp, s3.cube, "cube");
   place(smp, s3.divider, "divider");
+  placeTossBin(s3.bin, smp.bodies.get("bin"));
   place(smp, s3.target, "target");
   const hit = smp.contacts.find((c) => c.a === "cube" || c.b === "cube");
   s3.contact.visible = !!hit;

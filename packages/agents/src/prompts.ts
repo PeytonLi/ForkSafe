@@ -1,9 +1,11 @@
 import type { SimCase } from "@forksafe/contracts";
+import { controllerApiDoc } from "./controllerApi.js";
 
 export type RepairPromptParams = {
   investigationTitle: string;
   environmentIndex: number;
   baselineCase: SimCase;
+  taskFamily?: string;
   failureSummary: string;
   findingsDigest: string;
   budgets: Record<string, number>;
@@ -24,6 +26,10 @@ export const REPAIR_AGENT_SYSTEM_PROMPT = [
 ].join(" ");
 
 export function buildRepairPrompt(params: RepairPromptParams): string {
+  const baselineFamily = (params.baselineCase as { taskFamily?: unknown }).taskFamily;
+  const family =
+    params.taskFamily ??
+    (typeof baselineFamily === "string" ? baselineFamily : "divider_pick_place");
   return [
     `Investigation: ${params.investigationTitle}`,
     `Environment index: ${params.environmentIndex}`,
@@ -31,6 +37,7 @@ export function buildRepairPrompt(params: RepairPromptParams): string {
     `Failure summary: ${params.failureSummary}`,
     `Findings (untrusted): ${params.findingsDigest}`,
     `Budgets: ${JSON.stringify(params.budgets)}`,
+    `Controller API:\n${controllerApiDoc(family)}`,
     ...(params.baselineControllerSource ? [`Baseline task_controller.py (the controller under repair):\n${params.baselineControllerSource}`] : []),
     "You have about two turns total. In your first turn, batch read_findings → inspect_failure → read_source(task_controller.py) → apply_patch using the returned expected head (cite peer finding ids in basedOnFindings) → run_experiment on a public case → write_finding with the measured result → submit_candidate with your best measured revision, even if it does not pass. Only measured results count; stay within the budgets.",
   ].join("\n");

@@ -1,0 +1,132 @@
+{
+  "version": "1",
+  "generatorSeed": 20260415,
+  "domain": {
+    "objectDx": [
+      -0.08,
+      0.08
+    ],
+    "objectDy": [
+      -0.08,
+      0.08
+    ],
+    "binDx": [
+      -0.15,
+      0.15
+    ],
+    "binDy": [
+      -0.2,
+      0.2
+    ],
+    "objectMass": [
+      0.02,
+      0.3
+    ],
+    "binWallHeight": [
+      0.03,
+      0.15
+    ],
+    "speedScale": [
+      0.5,
+      1.5
+    ]
+  },
+  "cases": [
+    {
+      "caseId": "withheld-toss-01",
+      "suite": "withheld",
+      "taskFamily": "toss_into_bin",
+      "seed": 1659561258,
+      "sceneOverrides": {
+        "objectDx": -0.04569,
+        "objectDy": -0.05537,
+        "binDx": -0.0592,
+        "binDy": -0.06116,
+        "objectMass": 0.15587,
+        "binWallHeight": 0.14955,
+        "speedScale": 0.95443
+      },
+      "description": "Toss the object into the open-top bin."
+    },
+    {
+      "caseId": "withheld-toss-02",
+      "suite": "withheld",
+      "taskFamily": "toss_into_bin",
+      "seed": 1020088043,
+      "sceneOverrides": {
+        "objectDx": -0.05591,
+        "objectDy": -0.03222,
+        "binDx": -0.10059,
+        "binDy": 0.09725,
+        "objectMass": 0.13871,
+        "binWallHeight": 0.11839,
+        "speedScale": 0.64913
+      },
+      "description": "Toss the object into the open-top bin."
+    },
+    {
+      "caseId": "withheld-toss-03",
+      "suite": "withheld",
+      "taskFamily": "toss_into_bin",
+      "seed": 1289063791,
+      "sceneOverrides": {
+        "objectDx": 0.06574,
+        "objectDy": 0.03757,
+        "binDx": 0.00482,
+        "binDy": 0.08566,
+        "objectMass": 0.23352,
+        "binWallHeight": 0.03889,
+        "speedScale": 1.43881
+      },
+      "description": "Toss the object into the open-top bin."
+    },
+    {
+      "caseId": "withheld-toss-04",
+      "suite": "withheld",
+      "taskFamily": "toss_into_bin",
+      "seed": 459358917,
+      "sceneOverrides": {
+        "objectDx": 0.01531,
+        "objectDy": 0.03566,
+        "binDx": -0.10717,
+        "binDy": -0.15808,
+        "objectMass": 0.0605,
+        "binWallHeight": 0.06289,
+        "speedScale": 1.01508
+      },
+      "description": "Toss the object into the open-top bin."
+    },
+    {
+      "caseId": "withheld-toss-05",
+      "suite": "withheld",
+      "taskFamily": "toss_into_bin",
+      "seed": 313085489,
+      "sceneOverrides": {
+        "objectDx": -0.0495,
+        "objectDy": 0.03169,
+        "binDx": 0.02079,
+        "binDy": -0.17845,
+        "objectMass": 0.1574,
+        "binWallHeight": 0.08499,
+        "speedScale": 1.23214
+      },
+      "description": "Toss the object into the open-top bin."
+    },
+    {
+      "caseId": "withheld-toss-06",
+      "suite": "withheld",
+      "taskFamily": "toss_into_bin",
+      "seed": 1403607581,
+      "sceneOverrides": {
+        "objectDx": -0.01006,
+        "objectDy": -0.05884,
+        "binDx": -0.08598,
+        "binDy": 0.16189,
+        "objectMass": 0.22862,
+        "binWallHeight": 0.12428,
+        "speedScale": 1.13659
+      },
+      "description": "Toss the object into the open-top bin."
+    }
+  ]
+}

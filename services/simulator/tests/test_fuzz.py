@@ -92,6 +92,38 @@ def test_fuzz_seed_changes_cube_jitter(tmp_path: Path) -> None:
     assert zero_jitter != one_jitter
 
 
+def test_toss_fuzz_small_n_uses_toss_axes_and_position_jitter(
+    tmp_path: Path, capsys
+) -> None:
+    output = tmp_path / "toss-grid.json"
+    reference = SIMULATOR_ROOT / "evaluation/toss_bin/reference_controller"
+    args = [
+        "--controller",
+        str(reference),
+        "--around",
+        "toss-bin-default",
+        "--n",
+        "1",
+        "--seed",
+        "13",
+        "--workers",
+        "1",
+        "--out",
+        str(output),
+    ]
+    assert fuzz.main(args) == 0
+    capsys.readouterr()
+    grid = json.loads(output.read_text())
+    assert grid["taskFamily"] == "toss_into_bin"
+    assert grid["axes"]["x"]["key"] == "binDx"
+    assert grid["axes"]["x"]["values"] == [0.0]
+    assert grid["axes"]["y"]["key"] == "objectMass"
+    overrides = grid["samples"][0]["sceneOverrides"]
+    assert set(overrides) == {"binDx", "objectMass", "objectDx", "objectDy"}
+    assert -0.01 <= overrides["objectDx"] <= 0.01
+    assert -0.01 <= overrides["objectDy"] <= 0.01
+
+
 def test_fuzz_invalid_n_and_missing_controller_exit_two(tmp_path: Path, capsys) -> None:
     invalid_n = fuzz.main(
         [

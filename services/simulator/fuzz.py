@@ -124,6 +124,9 @@ def main(argv: list[str] | None = None) -> int:
         if family == "divider_pick_place":
             x_key, x_low, x_high = "dividerDx", -0.25, 0.25
             y_key, y_low, y_high = "dividerHeight", 0.03, 0.12
+        elif family == "toss_into_bin":
+            x_key, x_low, x_high = "binDx", -0.15, 0.15
+            y_key, y_low, y_high = "objectMass", 0.02, 0.3
         else:
             x_key, x_low, x_high = "gapDx", -0.08, 0.08
             y_key, y_low, y_high = "gapWidth", 0.05, 0.10
@@ -133,8 +136,10 @@ def main(argv: list[str] | None = None) -> int:
         rng = np.random.default_rng(args.seed)
         around_doc = around.model_dump(by_alias=True, exclude_none=True)
         base_overrides = dict(around.scene_overrides)
-        base_cube_dx = float(base_overrides.get("cubeDx", 0.0))
-        base_cube_dy = float(base_overrides.get("cubeDy", 0.0))
+        position_dx_key = "objectDx" if family == "toss_into_bin" else "cubeDx"
+        position_dy_key = "objectDy" if family == "toss_into_bin" else "cubeDy"
+        base_position_dx = float(base_overrides.get(position_dx_key, 0.0))
+        base_position_dy = float(base_overrides.get(position_dy_key, 0.0))
         jobs = []
         for index in range(args.n):
             row, col = divmod(index, cols)
@@ -143,11 +148,11 @@ def main(argv: list[str] | None = None) -> int:
             overrides[y_key] = y_values[row]
             if family == "push_through_gap":
                 overrides["targetDx"] = x_values[col]
-            overrides["cubeDx"] = round(
-                base_cube_dx + float(rng.uniform(-0.01, 0.01)), 5
+            overrides[position_dx_key] = round(
+                base_position_dx + float(rng.uniform(-0.01, 0.01)), 5
             )
-            overrides["cubeDy"] = round(
-                base_cube_dy + float(rng.uniform(-0.01, 0.01)), 5
+            overrides[position_dy_key] = round(
+                base_position_dy + float(rng.uniform(-0.01, 0.01)), 5
             )
             sample_seed = int(rng.integers(0, 2**31 - 1))
             case_doc = dict(around_doc)
