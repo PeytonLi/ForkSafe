@@ -19,7 +19,11 @@ import {
   Text,
   TextArea,
 } from "@forge/react";
-import type { ReviewDecision } from "@forksafe/contracts";
+import type {
+  EvidenceKind,
+  FindingKind,
+  ReviewDecision,
+} from "@forksafe/contracts";
 import type { PanelData } from "@forksafe/integrations-atlassian";
 import {
   approveBlockedReason,
@@ -76,6 +80,42 @@ export type PanelViewProps = {
   onExtraEnvironmentsChange(value?: number): void;
   onRequestInvestigation(): void;
 };
+
+const FINDING_KIND_LABELS: Record<FindingKind, string> = {
+  collision_frame: "Collision",
+  limit_violation: "Limit violation",
+  behavioral_note: "Observation",
+  candidate_hypothesis: "Candidate hypothesis",
+  cross_environment_pattern: "Cross-environment pattern",
+};
+
+const CITATION_KIND_LABELS: Record<EvidenceKind, string> = {
+  trace_frame: "trace frame",
+  contact_event: "contact event",
+  metric: "measured result",
+  log_excerpt: "log excerpt",
+  code_diff: "code change",
+  replay_segment: "replay segment",
+};
+
+function kindLabel<T extends string>(labels: Record<T, string>, kind: string) {
+  return labels[kind as T] ?? "Other";
+}
+
+function citationLabel(
+  citation: NonNullable<PanelData["findings"]>[number]["citations"][number],
+) {
+  const references = [
+    citation.experimentId
+      ? `experiment ${shortSha(citation.experimentId)}`
+      : undefined,
+    citation.artifactId
+      ? `artifact ${shortSha(citation.artifactId)}`
+      : undefined,
+  ].filter((reference): reference is string => Boolean(reference));
+  const source = references.length ? ` from ${references.join(", ")}` : "";
+  return `${kindLabel(CITATION_KIND_LABELS, citation.kind)}${source}`;
+}
 
 export function PanelView(props: PanelViewProps) {
   const data = props.result?.ok ? props.result.data : undefined;
@@ -168,6 +208,21 @@ export function PanelView(props: PanelViewProps) {
                 ))}
               </Stack>
             </SectionMessage>
+            {item.uncommittedSuites?.map((suite) => {
+              const label = suite === "withheld" ? "Withheld" : "Public";
+              return (
+                <SectionMessage
+                  key={suite}
+                  appearance="warning"
+                  title={`${label} checks not saved`}
+                >
+                  <Text>
+                    {label} checks: result not saved to the shared record, so
+                    this candidate can&apos;t be approved yet.
+                  </Text>
+                </SectionMessage>
+              );
+            })}
             <Text>Controller SHA-256: {shortSha(item.candidate.controllerSha256)}</Text>
             <Text>Select the full SHA-256 below to copy it.</Text>
             <CodeBlock text={item.candidate.controllerSha256} language="text" />
@@ -181,23 +236,12 @@ export function PanelView(props: PanelViewProps) {
           {data.findings.map((finding) => (
             <Stack key={finding.id} space="space.050">
               <Text>{finding.summary}</Text>
+              <Text>{kindLabel(FINDING_KIND_LABELS, finding.kind)}</Text>
               <Text>
-                {finding.kind} ·{" "}
-                {finding.citations
-                  .map((citation) =>
-                    [
-                      citation.kind,
-                      citation.artifactId
-                        ? `artifact ${shortSha(citation.artifactId)}`
-                        : undefined,
-                      citation.experimentId
-                        ? `experiment ${shortSha(citation.experimentId)}`
-                        : undefined,
-                    ]
-                      .filter(Boolean)
-                      .join(" · "),
-                  )
-                  .join("; ")}
+                Backed by:{" "}
+                {finding.citations.length
+                  ? finding.citations.map(citationLabel).join("; ")
+                  : "No cited evidence"}
               </Text>
             </Stack>
           ))}
