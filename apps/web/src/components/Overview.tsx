@@ -29,7 +29,7 @@ export function Overview({ investigations }: { investigations: AsyncState<Invest
       <header className={styles.hero}>
         <h1>Let’s work out what went wrong.</h1>
         <p>ForkSafe brings robot failures, agent discoveries, and verified repairs together, so you can approve a fix you trust.</p>
-        <a href={routeHref({ page: "new", tab: "" })} className="primary">New simulation</a>
+        <a href={routeHref({ page: "new", tab: "" })} className={`primary ${styles.newSimulation}`}>New simulation</a>
       </header>
 
       <section aria-labelledby="how-it-works">

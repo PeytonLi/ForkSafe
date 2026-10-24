@@ -1,49 +1,41 @@
 import type { InvestigationWorkspace } from "../services";
+import { captureProgressFor } from "./captureProgress";
 import styles from "./CaptureProgress.module.css";
+
+const STEP_LABELS = ["Queued", "Recording the robot", "Result", "Agents"];
 
 export function CaptureProgress({ workspace }: { workspace: InvestigationWorkspace }) {
   const investigation = workspace.investigation;
   const baseline = workspace.experiments.find((item) => item.id === investigation.baselineExperimentId);
-  const status = investigation.captureStatus ?? (baseline ? "recorded" : undefined);
-  if (!status) return null;
-
-  let title = "Baseline capture queued";
-  let detail = "The selected scene will be run before agent environments start.";
-  let active = true;
-  if (status === "running") {
-    title = "Recording the baseline failure";
-    detail = "The simulator is running the selected scene.";
-  } else if (status === "recorded") {
-    title = "Baseline recorded";
-    active = ["admitted", "searching", "evaluating"].includes(investigation.state);
-    detail = investigation.state === "admitted"
-      ? "Agents are starting in their environments."
-      : ["searching", "evaluating"].includes(investigation.state)
-        ? "Agents are working through the investigation."
-        : "The baseline replay and evidence are ready.";
-  } else if (status === "failed") {
-    active = false;
-    if (baseline?.status === "physics_failure") {
-      title = "The baseline failed with a physics failure";
-      detail = "The scene produced a physics failure before the capture could be recorded.";
-    } else if (baseline?.status === "constraint_violation") {
-      title = "The baseline failed with a constraint violation";
-      detail = "The scene produced a constraint violation before the capture could be recorded.";
-    } else if (baseline?.status === "succeeded") {
-      title = "The baseline succeeded";
-      detail = "No failure was recorded for this scene.";
-    } else {
-      title = "Baseline capture failed";
-      detail = investigation.lastError ?? "The baseline run could not be recorded.";
-    }
-  }
+  const progress = captureProgressFor({
+    captureStatus: investigation.captureStatus ?? (baseline ? "recorded" : undefined),
+    baselineStatus: baseline?.status,
+    investigationState: investigation.state,
+    lastError: investigation.lastError,
+  });
+  if (!progress) return null;
 
   return (
-    <section className={styles.progress} data-active={active || undefined} aria-live="polite" data-testid="capture-progress">
-      <span className={styles.marker} aria-hidden="true" />
-      <div>
-        <strong>{title}</strong>
-        <p>{detail}</p>
+    <section className={styles.progress} aria-live="polite" data-testid="capture-progress">
+      <ol className={styles.steps} aria-label="Baseline capture progress">
+        {STEP_LABELS.map((label, index) => (
+          <li
+            className={styles.step}
+            key={label}
+            data-state={index < progress.activeStep ? "complete" : index === progress.activeStep ? "active" : "upcoming"}
+            aria-current={index === progress.activeStep ? "step" : undefined}
+          >
+            <span className={styles.marker} aria-hidden="true" />
+            <span className={styles.label}>{label}</span>
+            {index === 2 && <strong className={styles.stepStatus}>{progress.resultTitle}</strong>}
+            {index === 3 && <strong className={styles.stepStatus}>{progress.agentsTitle}</strong>}
+          </li>
+        ))}
+      </ol>
+      <div className={styles.current}>
+        <strong>{progress.currentTitle}</strong>
+        <p>{progress.currentDetail}</p>
+        {progress.activeStep === 3 && progress.resultDetail && <p>{progress.resultDetail}</p>}
       </div>
     </section>
   );

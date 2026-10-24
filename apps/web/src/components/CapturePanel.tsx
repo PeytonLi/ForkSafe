@@ -198,8 +198,8 @@ function SceneEditor({ scene, taskFamily: taskFamilyInput, seed, envs, open, onO
               setOutcome(null);
             }}
             legacy={legacy}
+            preview={<ReplayViewer taskFamily={taskFamily} scene={draft} compact />}
           />
-          <ReplayViewer taskFamily={taskFamily} scene={draft} />
           {!validation.ok && <p className={styles.warn} role="alert">{validation.reason}</p>}
           {!seedValid && <p className={styles.warn} role="alert">Seed must be a non-negative integer.</p>}
           <div className={styles.actions}>

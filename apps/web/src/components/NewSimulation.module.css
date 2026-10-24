@@ -1,4 +1,4 @@
-.page { display: grid; gap: 1rem; min-width: 0; max-width: 900px; margin: 0 auto; }
+.page { display: grid; gap: 1rem; min-width: 0; max-width: 1100px; margin: 0 auto; }
 .header { display: grid; gap: 0.35rem; }
 .eyebrow { color: var(--accent); font-size: var(--text-xs); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
 .header h1 { color: var(--ink); font-size: 28px; letter-spacing: -0.025em; }
@@ -9,6 +9,12 @@
 .stepTrack span[data-active="true"] { background: var(--accent); }
 .card { display: grid; gap: 1rem; min-width: 0; padding: 1.1rem; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); box-shadow: var(--shadow-card); }
 .card h2 { color: var(--ink); font-size: var(--text-xl); letter-spacing: -0.02em; }
+.sceneLayout { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(330px, 0.9fr); align-items: start; gap: 1rem; min-width: 0; }
+.scenePreview { position: sticky; top: 1rem; min-width: 0; }
+.sceneControls { display: grid; align-content: start; gap: 1rem; min-width: 0; }
+.environmentFieldset { display: grid; gap: 0.55rem; margin: 0; padding: 0; border: 0; }
+.environmentFieldset legend { margin-bottom: 0.45rem; color: var(--ink); font-size: var(--text-sm); font-weight: 600; }
+.environmentSegments { width: min(100%, 360px); }
 .taskChoices { display: grid; gap: 0.65rem; margin: 0; padding: 0; border: 0; }
 .taskCard { display: flex; align-items: flex-start; gap: 0.8rem; min-width: 0; padding: 1rem; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); cursor: pointer; }
 .taskCard[data-selected="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
@@ -29,4 +35,8 @@
   .card { padding: 0.8rem; }
   .taskCard { padding: 0.8rem; }
   .stepHeader { font-size: var(--text-xs); }
+}
+@media (max-width: 959px) {
+  .sceneLayout { grid-template-columns: minmax(0, 1fr); }
+  .scenePreview { position: static; }
 }

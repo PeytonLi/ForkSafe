@@ -7,6 +7,7 @@ import { useBrowserAccess } from "../services/browserAccess";
 import { human } from "./tone";
 import { ReplayViewer } from "../viewer/ReplayViewer";
 import { SceneFields } from "./SceneFields";
+import { SegThumb } from "./SegThumb";
 import styles from "./NewSimulation.module.css";
 
 export function NewSimulation({ onAccepted }: { onAccepted: (investigationId: string) => void }) {
@@ -121,39 +122,46 @@ export function NewSimulation({ onAccepted }: { onAccepted: (investigationId: st
         <section aria-labelledby="scene-heading" className={styles.card}>
           <h2 id="scene-heading">Set up the scene</h2>
           <p className={styles.description}>{TASK_FAMILY_SPECS[taskFamily].description}</p>
-          <SceneFields
-            taskFamily={taskFamily}
-            values={overrides}
-            onChange={(key, value) => setOverrides((current) => ({ ...current, [key]: value }))}
-            seed={seed}
-            onSeedChange={setSeed}
-            environments={environments}
-            onEnvironmentsChange={setEnvironments}
-            onReset={() => {
-              setOverrides(defaultOverride(taskFamily));
-              setSeed(1);
-              setEnvironments(1);
-              setSearchResult(null);
-            }}
-          />
-          {!validation.ok && <p className={styles.validation} role="alert">{validation.reason}</p>}
-          {!seedValid && <p className={styles.validation} role="alert">Seed must be a non-negative integer.</p>}
-          <ReplayViewer taskFamily={taskFamily} scene={overrides} />
-          <div className={styles.searchRow}>
-            <button type="button" onClick={findFailure} disabled={searching}>
-              {searching ? "Searching…" : "Find a failure for me"}
-            </button>
-            {searchResult && (
-              <p className={styles.searchResult} role="status" data-testid="find-failure-result" data-found={searchResult.found || undefined}>
-                {searchResult.found
-                  ? `Found a failing scene: ${human(searchResult.failureKind ?? "failure")}.`
-                  : `${searchResult.mode === "fixture" ? "Fixture: " : ""}${searchResult.reason}`}
-              </p>
-            )}
-          </div>
-          <div className={styles.actions}>
-            <button type="button" onClick={() => setStep(1)}>Back</button>
-            <button type="button" className="primary" disabled={!validation.ok || !seedValid} onClick={() => setStep(3)}>Next</button>
+          <div className={styles.sceneLayout}>
+            <div className={styles.scenePreview}>
+              <ReplayViewer taskFamily={taskFamily} scene={overrides} />
+            </div>
+            <div className={styles.sceneControls}>
+              <SceneFields
+                taskFamily={taskFamily}
+                values={overrides}
+                onChange={(key, value) => setOverrides((current) => ({ ...current, [key]: value }))}
+                seed={seed}
+                onSeedChange={setSeed}
+                environments={environments}
+                onEnvironmentsChange={setEnvironments}
+                showEnvironments={false}
+                onReset={() => {
+                  setOverrides(defaultOverride(taskFamily));
+                  setSeed(1);
+                  setEnvironments(1);
+                  setSearchResult(null);
+                }}
+              />
+              {!validation.ok && <p className={styles.validation} role="alert">{validation.reason}</p>}
+              {!seedValid && <p className={styles.validation} role="alert">Seed must be a non-negative integer.</p>}
+              <div className={styles.searchRow}>
+                <button type="button" onClick={findFailure} disabled={searching}>
+                  {searching ? "Searching…" : "Find a failure for me"}
+                </button>
+                {searchResult && (
+                  <p className={styles.searchResult} role="status" data-testid="find-failure-result" data-found={searchResult.found || undefined}>
+                    {searchResult.found
+                      ? `Found a failing scene: ${human(searchResult.failureKind ?? "failure")}.`
+                      : `${searchResult.mode === "fixture" ? "Fixture: " : ""}${searchResult.reason}`}
+                  </p>
+                )}
+              </div>
+              <div className={styles.actions}>
+                <button type="button" onClick={() => setStep(1)}>Back</button>
+                <button type="button" className="primary" disabled={!validation.ok || !seedValid} onClick={() => setStep(3)}>Next</button>
+              </div>
+            </div>
           </div>
         </section>
       )}
@@ -162,6 +170,22 @@ export function NewSimulation({ onAccepted }: { onAccepted: (investigationId: st
         <section aria-labelledby="agents-heading" className={styles.card}>
           <h2 id="agents-heading">Agents</h2>
           <p className={styles.description}>Your agents will explore this scene in {environments} environment{environments === 1 ? "" : "s"}.</p>
+          <fieldset className={styles.environmentFieldset}>
+            <legend>Agent environments</legend>
+            <div className={`seg seg-fill ${styles.environmentSegments}`} role="group" aria-label="Environment count">
+              <SegThumb active={environments} />
+              {[1, 2, 3, 4].map((count) => (
+                <button
+                  type="button"
+                  key={count}
+                  aria-pressed={environments === count}
+                  onClick={() => setEnvironments(count)}
+                >
+                  {count}
+                </button>
+              ))}
+            </div>
+          </fieldset>
           <label className={styles.titleField}>
             <span>Investigation name</span>
             <input

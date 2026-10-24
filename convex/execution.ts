@@ -2,7 +2,7 @@
 
 import { ConvexError, v } from "convex/values";
 import { Daytona } from "@daytonaio/sdk";
-import type { VendorRef } from "@forksafe/contracts";
+import { isTaskFamily, TASK_FAMILY_SPECS, type VendorRef } from "@forksafe/contracts";
 import { CloudDaytonaProvider, loadDaytonaConfig } from "@forksafe/daytona";
 import { internal } from "./_generated/api.js";
 import { internalAction } from "./_generated/server.js";
@@ -305,10 +305,8 @@ export const runFuzz = internalAction({
     const scratchInvestigationId = args.searchId;
     try {
       const family = args.taskFamily;
-      if (family !== "divider_pick_place" && family !== "push_through_gap") {
-        throw new ConvexError("unknown_task_family");
-      }
-      const baseCaseId = family === "divider_pick_place" ? "original-divider-collision" : "push-gap-aligned";
+      if (!isTaskFamily(family)) throw new ConvexError("unknown_task_family");
+      const baseCaseId = TASK_FAMILY_SPECS[family].baseCaseId;
       const sandbox = await ensureExecutionSandbox(ctx, scratchInvestigationId, 240_000);
       const { ref } = await readyRef(ctx, sandbox.appId);
       const ensured = await ctx.runAction(internal.execution.ensureSimBundle, { sandboxOpId: sandbox.appId });

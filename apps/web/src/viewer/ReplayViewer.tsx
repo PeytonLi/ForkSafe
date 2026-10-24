@@ -70,7 +70,7 @@ function build(canvas: HTMLCanvasElement): Scene3D {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setClearColor(0x000000, 0);
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
   const s = new THREE.Scene();
   s.background = null;
   const camera = new THREE.PerspectiveCamera(40, 1, 0.01, 20);
@@ -263,12 +263,13 @@ interface Props {
   label?: string;
   scene?: Record<string, number>;
   taskFamily?: TaskFamily;
+  compact?: boolean;
   /** Original (failing) run drawn as a translucent ghost on the same clock. */
   ghost?: SimRunResult;
 }
 
 /** Renders sampled authoritative state; it never runs physics or scores. */
-export function ReplayViewer({ replay, t = 0, label = "Scene preview", scene: overrides = {}, taskFamily, ghost }: Props) {
+export function ReplayViewer({ replay, t = 0, label = "Scene preview", scene: overrides = {}, taskFamily, compact = false, ghost }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const s3Ref = useRef<Scene3D | null>(null);
@@ -295,6 +296,7 @@ export function ReplayViewer({ replay, t = 0, label = "Scene preview", scene: ov
       s3.camera.aspect = w / h;
       s3.camera.updateProjectionMatrix();
       s3.renderer.render(s3.scene, s3.camera);
+      canvas.dataset.rendered = "true";
     };
     const ro = new ResizeObserver(resize);
     ro.observe(wrap);
@@ -335,7 +337,7 @@ export function ReplayViewer({ replay, t = 0, label = "Scene preview", scene: ov
 
   const contact = replay ? smp?.contacts[0] : undefined;
   return (
-    <figure className={styles.viewer} data-testid={replay ? "replay-viewer" : "scene-preview"} data-label={label} data-scene-kind={resolvedScene.kind} data-ghost={ghost ? "on" : "off"} data-ghost-t={ghostSample?.tSec.toFixed(2)}>
+    <figure className={`${styles.viewer} ${compact ? styles.compact : ""}`} data-testid={replay ? "replay-viewer" : "scene-preview"} data-label={label} data-scene-kind={resolvedScene.kind} data-ghost={ghost ? "on" : "off"} data-ghost-t={ghostSample?.tSec.toFixed(2)}>
       <div ref={wrapRef} className={styles.canvasWrap}>
         {webglError ? (
           <div className={styles.fallback} role="note">
