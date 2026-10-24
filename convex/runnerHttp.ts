@@ -168,7 +168,8 @@ export function registerRunnerRoutes(router: HttpRouter): void {
       const auth = await authenticate(ctx, request);
       if (!auth.ok) return auth.response;
       const { attemptId, epoch, checkpoint } = auth.body;
-      if (typeof attemptId !== "string" || typeof epoch !== "number" || !checkpoint || typeof checkpoint !== "object") {
+      if (typeof attemptId !== "string" || typeof epoch !== "number" || !checkpoint || typeof checkpoint !== "object"
+        || !["primary", "subtask"].includes(String((checkpoint as Record<string, unknown>).role))) {
         return json({ error: "invalid_body" }, 400);
       }
       try {
@@ -307,9 +308,9 @@ export function registerRunnerRoutes(router: HttpRouter): void {
             if (callId) await ctx.runMutation(internal.agentTools.finishToolCall, { callId, result }).catch(() => undefined);
             return json(result);
           }
-          if (callId) {
+          if (callId && name !== "request_subtask") {
             await ctx.runMutation(internal.agentTools.finishToolCall, {
-              callId, result: { status: "rejected", reason: code },
+              callId, result: { status: "error", reason: code },
             }).catch(() => undefined);
           }
           const status = code === "unauthorized" ? 401 : ["fenced", "lease_expired", "grant_revoked", "investigation_cancelling", "environment_inactive"].includes(code) ? 409 : 500;

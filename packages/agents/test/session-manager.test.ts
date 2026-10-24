@@ -23,7 +23,10 @@ const backend = {
   async write_finding() { return { status: "local" }; },
   async request_evidence() { return { status: "local" }; },
 };
-async function manager(adapter = new FixtureFactoryAdapter(), opts: { sessionsPerEnvironment?: number; maxActiveTurns?: number } = {}) {
+async function manager(
+  adapter = new FixtureFactoryAdapter(),
+  opts: Pick<ConstructorParameters<typeof SessionManager>[0], "sessionsPerEnvironment" | "maxActiveTurns" | "onTurnComplete"> = {},
+) {
   const workspaceRoot = await mkdtemp(join(tmpdir(), "forksafe-sessions-"));
   dirs.push(workspaceRoot);
   return new SessionManager({
@@ -101,5 +104,35 @@ describe("SessionManager", () => {
     (adapter as unknown as { sessions: Set<string> }).sessions.clear();
     const replacement = await sessions.resume(created.sessionId);
     expect(sessions.replacesSessionId(replacement.sessionId)).toBe(created.sessionId);
+  });
+
+  it("returns session_cap when a subtask would create the third environment session", async () => {
+    const sessions = await manager();
+    const investigationId = crypto.randomUUID();
+    const environmentId = crypto.randomUUID();
+    const parent = await sessions.createSession({ investigationId, environmentId });
+    await sessions.createSession({ investigationId, environmentId });
+    await expect(sessions.runSubtask({ prompt: "analyze", purpose: "focused analysis" }, {
+      investigationId, environmentId, sessionId: parent.sessionId,
+      attemptId: crypto.randomUUID(), grantId: crypto.randomUUID(), epoch: 0,
+      turnBudget: { used: 0, max: 4 },
+    })).resolves.toEqual({ status: "rejected", reason: "session_cap" });
+  });
+
+  it("records subtask checkpoint roles and parent lineage", async () => {
+    const checkpoints: any[] = [];
+    const sessions = await manager(new FixtureFactoryAdapter(), {
+      onTurnComplete: async (checkpoint) => { checkpoints.push(checkpoint); },
+    });
+    const investigationId = crypto.randomUUID();
+    const environmentId = crypto.randomUUID();
+    const parent = await sessions.createSession({ investigationId, environmentId });
+    await sessions.runSubtask({ prompt: "analyze", purpose: "focused analysis" }, {
+      investigationId, environmentId, sessionId: parent.sessionId,
+      attemptId: crypto.randomUUID(), grantId: crypto.randomUUID(), epoch: 0, jobId: crypto.randomUUID(),
+      turnBudget: { used: 0, max: 4 },
+    });
+    expect(checkpoints).toHaveLength(1);
+    expect(checkpoints[0]).toMatchObject({ role: "subtask", parentSessionId: parent.sessionId, turnIndex: 0 });
   });
 });

@@ -45,14 +45,14 @@ export type SessionManagerOptions = {
   onTurnComplete?: (input: {
     investigationId: string; environmentId: string; sessionId: string; vendorSessionId: string;
     attemptId: string; epoch: number; jobId: string; turnIndex: number; parentSessionId?: string;
-    revisionHeadId?: string; tokenUsage: TokenUsage | null;
+    role: "primary" | "subtask"; revisionHeadId?: string; tokenUsage: TokenUsage | null;
   }) => Promise<void>;
 };
 
 type RunTurnOptions = {
   abortSignal?: AbortSignal;
   nonBlocking?: boolean;
-  toolContext?: Partial<Pick<ToolCallContext, "attemptId" | "grantId" | "epoch" | "turnBudget" | "revisionState" | "jobId" | "turnIndex" | "parentSessionId">>;
+  toolContext?: Partial<Pick<ToolCallContext, "attemptId" | "grantId" | "epoch" | "turnBudget" | "revisionState" | "jobId" | "turnIndex" | "parentSessionId" | "role">>;
 };
 
 type ManagedSession = {
@@ -247,6 +247,7 @@ export class SessionManager {
           attemptId: context.attemptId, epoch: context.epoch, jobId: context.jobId,
           turnIndex: context.turnIndex,
           ...((context.parentSessionId ?? session.replacesSessionId) ? { parentSessionId: context.parentSessionId ?? session.replacesSessionId } : {}),
+          role: context.role ?? "primary",
           ...(context.revisionState?.headRevisionId ? { revisionHeadId: context.revisionState.headRevisionId } : {}),
           tokenUsage,
         }).catch(() => undefined);
@@ -288,6 +289,7 @@ export class SessionManager {
           epoch: parentContext.epoch, turnBudget, revisionState: parentContext.revisionState,
           jobId: parentContext.jobId, turnIndex: turnBudget.used - 1,
           parentSessionId: parentContext.sessionId,
+          role: "subtask",
         },
       });
       if (!turn) {

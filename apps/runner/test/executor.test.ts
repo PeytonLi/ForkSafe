@@ -10,12 +10,12 @@ import { RunnerExecutor } from "../src/executor.js";
 import { sampleLease } from "./helpers.js";
 
 const dirs: string[] = [];
-async function setup(adapter = new FixtureFactoryAdapter()) {
+async function setup(adapter = new FixtureFactoryAdapter(), onTurnComplete?: ConstructorParameters<typeof SessionManager>[0]["onTurnComplete"]) {
   const dir = await mkdtemp(join(tmpdir(), "forksafe-executor-"));
   dirs.push(dir);
   const manager = new SessionManager({
     adapter, ledger: new UsageLedger(), workspaceRoot: join(dir, "workspaces"),
-    toolBackend: new LocalToolBackend(join(dir, "local")), log: new ActivityLog(),
+    toolBackend: new LocalToolBackend(join(dir, "local")), log: new ActivityLog(), onTurnComplete,
   });
   return { dir, manager };
 }
@@ -176,6 +176,65 @@ describe("RunnerExecutor", () => {
     expect(operationIds[0]).toMatch(/^[\da-f-]{36}$/);
     expect(operationIds[1]).toBe(operationIds[0]);
     expect(delays).toEqual([250]);
+  });
+
+  it("resumes only from the primary checkpoint and continues the shared four-turn budget", async () => {
+    const checkpoints: any[] = [];
+    let turns = 0;
+    const adapter = new FixtureFactoryAdapter({ gate: async () => {
+      turns += 1;
+      if (turns === 2) throw new Error("temporary infrastructure failure");
+    } });
+    Object.defineProperty(adapter, "mode", { value: "live" });
+    const { manager } = await setup(adapter, async (checkpoint) => { checkpoints.push(checkpoint); });
+    const createSpy = vi.spyOn(adapter, "createSession");
+    const resumeSpy = vi.spyOn(adapter, "resumeSession");
+    const lease = sampleLease();
+    const completions: any[] = [];
+    const source = {
+      heartbeat: vi.fn(async () => ({ ok: true as const, leasedUntilMs: Date.now() + 30_000, epoch: 0 })),
+      complete: vi.fn(async (completion: any) => { completions.push(completion); return { accepted: true }; }),
+    };
+    const executor = new RunnerExecutor({ sessions: manager, source: source as never, log: new ActivityLog() });
+    await expect(executor.execute(lease)).resolves.toMatchObject({ accepted: true });
+    expect(completions[0]).toMatchObject({ outcome: "infra_failed" });
+    expect(checkpoints).toHaveLength(1);
+    expect(checkpoints[0]).toMatchObject({ role: "primary", turnIndex: 0 });
+
+    const resumed = structuredClone(lease);
+    resumed.attempt.id = crypto.randomUUID();
+    resumed.attempt.jobId = resumed.job.id;
+    resumed.grant.attemptId = resumed.attempt.id;
+    resumed.job.payload.resume = checkpoints[0];
+    const turnSpy = vi.spyOn(manager, "runTurn");
+    await expect(executor.execute(resumed)).resolves.toMatchObject({ accepted: true });
+    expect(resumeSpy).toHaveBeenCalledWith(checkpoints[0].vendorSessionId, expect.any(Object));
+    expect(createSpy).toHaveBeenCalledOnce();
+    expect(turnSpy.mock.calls[1]?.[1]).toContain("Continue from the latest revision head");
+    expect(checkpoints.map((checkpoint) => checkpoint.turnIndex)).toEqual([0, 1, 2, 3]);
+  });
+
+  it("replaces a missing checkpoint vendor session while preserving lineage", async () => {
+    const checkpoints: any[] = [];
+    const adapter = new FixtureFactoryAdapter();
+    const { manager } = await setup(adapter, async (checkpoint) => { checkpoints.push(checkpoint); });
+    const lease = sampleLease();
+    const completions: any[] = [];
+    const source = {
+      heartbeat: vi.fn(async () => ({ ok: true as const, leasedUntilMs: Date.now() + 30_000, epoch: 0 })),
+      complete: vi.fn(async (completion: any) => { completions.push(completion); return { accepted: true }; }),
+    };
+    const executor = new RunnerExecutor({ sessions: manager, source: source as never, log: new ActivityLog(), maxTurns: 1 });
+    await executor.execute(lease);
+    await manager.closeAll();
+    (adapter as unknown as { sessions: Set<string> }).sessions.clear();
+    const resumed = structuredClone(lease);
+    resumed.attempt.id = crypto.randomUUID();
+    resumed.grant.attemptId = resumed.attempt.id;
+    resumed.job.payload.resume = checkpoints[0];
+    await executor.execute(resumed);
+    const replacementSessionId = completions[1]?.sessions[0]?.id;
+    expect(manager.replacesSessionId(replacementSessionId)).toBe(checkpoints[0].sessionId);
   });
   it("reports a non-cap session-open failure as infra_failed instead of letting the lease expire", async () => {
     const lease = sampleLease();

@@ -21,6 +21,7 @@ export type ToolCallContext = {
   jobId?: string;
   turnIndex?: number;
   parentSessionId?: string;
+  role?: "primary" | "subtask";
 };
 
 export interface ForkSafeToolBackend {

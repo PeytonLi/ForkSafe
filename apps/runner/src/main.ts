@@ -78,6 +78,7 @@ export async function main(): Promise<void> {
             investigationId: checkpoint.investigationId, environmentId: checkpoint.environmentId,
             jobId: checkpoint.jobId, attemptId: checkpoint.attemptId, epoch: checkpoint.epoch,
             sessionId: checkpoint.sessionId, vendorSessionId: checkpoint.vendorSessionId,
+            role: checkpoint.role,
             turnIndex: checkpoint.turnIndex, tokenUsage: checkpoint.tokenUsage,
             ...(checkpoint.parentSessionId ? { parentSessionId: checkpoint.parentSessionId } : {}),
             ...(checkpoint.revisionHeadId ? { revisionHeadId: checkpoint.revisionHeadId } : {}),

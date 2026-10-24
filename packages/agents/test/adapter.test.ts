@@ -6,19 +6,32 @@ function info(id: string, source: ToolInfoLike["source"], allowed: boolean, serv
   return { id, source, allowed, ...(serverName ? { serverName } : {}) };
 }
 
+const liveMcpToolFixture: ToolInfoLike = {
+  displayName: "inspect_failure", description: "Inspect the failure",
+  category: "read", defaultAllowed: true, id: "forksafe___inspect_failure", allowed: true,
+};
+
 describe("Factory tool surface", () => {
   it("disables all built-ins and foreign MCP tools while preserving ForkSafe MCP tools", () => {
     const tools = [
       info("Script", "native", true),
       info("ToolSearch", "native", true),
       info("NewThing", "native", true),
-      info("mcp__forksafe__inspect_failure", "mcp", true, "forksafe"),
-      info("mcp__forksafe__read_source", "mcp", true, "forksafe"),
-      info("mcp__foreign__read", "mcp", true, "foreign"),
+      { ...liveMcpToolFixture, id: "forksafe___inspect_failure" },
+      { ...liveMcpToolFixture, id: "forksafe___read_source" },
+      { ...liveMcpToolFixture, id: "foreign___read" },
     ];
     expect(computeDisabledToolIds(tools)).toEqual([
-      "Script", "ToolSearch", "NewThing", "mcp__foreign__read",
+      "Script", "ToolSearch", "NewThing", "foreign___read",
     ]);
+  });
+
+  it("identifies ForkSafe tools from the live SDK tool ID shape", () => {
+    expect(computeDisabledToolIds([
+      { id: "Script", allowed: true, category: "builtin" },
+      liveMcpToolFixture,
+      { id: "other___read", allowed: true, category: "mcp" },
+    ])).toEqual(["Script", "other___read"]);
   });
 
   it("fails closed when Script remains enabled after applying tool restrictions", async () => {
@@ -36,8 +49,9 @@ describe("Factory tool surface", () => {
     });
 
     await expect(adapter.createSession({ cwd: "/workspace" })).rejects.toBeInstanceOf(ToolSurfaceError);
-    expect(session.updateSettings).toHaveBeenCalledOnce();
+    expect(session.updateSettings).not.toHaveBeenCalled();
+    expect(createSession).toHaveBeenCalledTimes(2);
     expect(session.listTools).toHaveBeenCalledTimes(2);
-    expect(session.close).toHaveBeenCalledOnce();
+    expect(session.close).toHaveBeenCalledTimes(2);
   });
 });

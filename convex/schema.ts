@@ -532,6 +532,7 @@ export default defineSchema({
 
   sessionCheckpoints: defineTable({
     investigationId: uuid, environmentId: uuid, jobId: uuid, attemptId: uuid, epoch: v.number(),
+    role: v.union(v.literal("primary"), v.literal("subtask")),
     sessionId: uuid, parentSessionId: v.optional(uuid), vendorSessionId: v.string(), turnIndex: v.number(),
     revisionHeadId: v.optional(uuid), tokenUsage: v.optional(v.any()), createdAtMs: v.number(),
   }).index("by_session_turn", ["sessionId", "turnIndex"])

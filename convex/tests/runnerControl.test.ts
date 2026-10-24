@@ -55,6 +55,29 @@ describe("runner control plane", () => {
     await expect(t.mutation(internal.runnerControl.claim, { credentialId: credential.credentialId, workerId: "w1" })).rejects.toThrow(/unauthorized/);
   });
 
+  it("resumes only the latest primary checkpoint", async () => {
+    const t = createTest();
+    const { investigationId, environmentId, credential } = await startedInvestigation(t);
+    const ids = {
+      subtask: { sessionId: crypto.randomUUID(), vendorSessionId: "subtask-vendor", turnIndex: 99 },
+      primaryOld: { sessionId: crypto.randomUUID(), vendorSessionId: "primary-old", turnIndex: 1 },
+      primaryLatest: { sessionId: crypto.randomUUID(), vendorSessionId: "primary-latest", turnIndex: 3 },
+    };
+    await t.run(async (ctx: any) => {
+      const job = (await ctx.db.query("jobs").collect())[0]!;
+      for (const [role, value] of [
+        ["subtask", ids.subtask], ["primary", ids.primaryOld], ["primary", ids.primaryLatest],
+      ] as const) {
+        await ctx.db.insert("sessionCheckpoints", {
+          investigationId, environmentId, jobId: job.appId, attemptId: crypto.randomUUID(), epoch: 0,
+          role, ...value, createdAtMs: value.turnIndex,
+        });
+      }
+    });
+    const claimed = await t.mutation(internal.runnerControl.claim, { credentialId: credential.credentialId, workerId: "w1" });
+    expect(claimed!.checkpoint).toMatchObject({ role: "primary", vendorSessionId: "primary-latest", turnIndex: 3 });
+  });
+
   it("walks the handoff stages and completes with sessions recorded", async () => {
     const t = createTest();
     const { investigationId, environmentId, credential } = await startedInvestigation(t);

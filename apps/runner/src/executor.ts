@@ -59,6 +59,7 @@ export class RunnerExecutor {
     keeper.start();
     let turn: TurnOutcome | undefined;
     let failure: string | undefined;
+    let infrastructureFailure = false;
     const turns: TurnOutcome[] = [];
     try {
       await this.options.source.start?.({ attemptId: lease.attempt.id, epoch: lease.attempt.epoch }).catch(() => undefined);
@@ -106,6 +107,7 @@ export class RunnerExecutor {
         return null;
       }
       failure = error instanceof Error ? error.message : String(error);
+      infrastructureFailure = !(error instanceof Error && error.name === "BudgetExceededError");
     } finally {
       keeper.stop();
     }
@@ -125,7 +127,8 @@ export class RunnerExecutor {
       attemptId: lease.attempt.id,
       grantId: lease.grant.id,
       epoch: lease.attempt.epoch,
-      outcome: turn?.success && !failure ? "succeeded" as const : "failed" as const,
+      outcome: failure && infrastructureFailure ? "infra_failed" as const
+        : turn?.success && !failure ? "succeeded" as const : "failed" as const,
       result: turn ? { ...summarize(turn), turns: turns.length, candidateSubmitted: turns.some(submittedCandidate) } : { error: failure ?? "turn did not produce a result" },
       usage: session.tokenUsage,
       sessions: [{ ...session, turns: turns.length }],

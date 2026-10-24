@@ -10,6 +10,7 @@ import {
   type ToolInfo,
 } from "@factory/droid-sdk/node";
 import type { TokenUsage } from "./usage.js";
+import { FORKSAFE_TOOL_NAMES } from "./tools.js";
 
 export type StreamMsg =
   | { type: "assistant"; text: string }
@@ -55,9 +56,11 @@ export const DISABLED_BUILTIN_TOOL_IDS = [
   "TaskOutput",
   "TaskStop",
   "TodoWrite",
+  "ToolSearch",
   "WaitForScript",
   "WebSearch",
 ] as const;
+const ALLOWED_FORKSAFE_TOOL_IDS = FORKSAFE_TOOL_NAMES.map((name) => `forksafe___${name}`);
 
 export type AdapterSessionOptions = {
   cwd: string;
@@ -90,7 +93,12 @@ export class SessionMissingError extends Error {
   }
 }
 
-export type ToolInfoLike = Pick<ToolInfo, "id" | "source" | "allowed"> & {
+export type ToolInfoLike = Pick<ToolInfo, "id" | "allowed"> & {
+  source?: ToolInfo["source"];
+  category?: string;
+  displayName?: string;
+  description?: string;
+  defaultAllowed?: boolean;
   serverName?: string;
   mcpServerName?: string;
   mcp?: { serverName?: string };
@@ -98,7 +106,7 @@ export type ToolInfoLike = Pick<ToolInfo, "id" | "source" | "allowed"> & {
 
 export function computeDisabledToolIds(tools: ToolInfoLike[], allowedMcpServer = "forksafe"): string[] {
   return [...new Set(tools
-    .filter((tool) => tool.source !== "mcp" || (tool.serverName ?? tool.mcpServerName ?? tool.mcp?.serverName) !== allowedMcpServer)
+    .filter((tool) => !tool.id.startsWith(`${allowedMcpServer}___`))
     .map((tool) => tool.id))];
 }
 
@@ -159,17 +167,21 @@ export class LiveFactoryAdapter implements FactoryAdapter {
   ) {}
 
   async createSession(opts: AdapterSessionOptions): Promise<AdapterSession> {
-    const create = (disabledToolIds: string[]) => this.sessionApi.createSession({
-      cwd: opts.cwd,
-      modelId: opts.modelId ?? this.options.modelId ?? process.env.FACTORY_MODEL,
-      autonomyLevel: opts.autonomyLevel ?? this.options.autonomyLevel ?? AutonomyLevel.Low,
-      disabledToolIds,
-      mcpServers: opts.mcpServers,
-      permissionHandler: opts.permissionHandler as never,
-      systemPrompt: opts.systemPrompt,
-      apiKey: opts.apiKey ?? this.options.apiKey,
-      execPath: this.options.execPath,
-    });
+    const create = (disabledToolIds: string[]) => {
+      const createOptions = {
+        cwd: opts.cwd,
+        modelId: opts.modelId ?? this.options.modelId ?? process.env.FACTORY_MODEL,
+        autonomyLevel: opts.autonomyLevel ?? this.options.autonomyLevel ?? AutonomyLevel.Low,
+        disabledToolIds,
+        restrictToolIds: ALLOWED_FORKSAFE_TOOL_IDS,
+        mcpServers: opts.mcpServers,
+        permissionHandler: opts.permissionHandler as never,
+        systemPrompt: opts.systemPrompt,
+        apiKey: opts.apiKey ?? this.options.apiKey,
+        execPath: this.options.execPath,
+      };
+      return this.sessionApi.createSession(createOptions as Parameters<typeof createSession>[0]);
+    };
     return this.secureSession(await create([...DISABLED_BUILTIN_TOOL_IDS]), create);
   }
 
@@ -183,17 +195,21 @@ export class LiveFactoryAdapter implements FactoryAdapter {
         execPath: this.options.execPath,
       });
       const session = await resume([...DISABLED_BUILTIN_TOOL_IDS]);
-      return await this.secureSession(session, (disabledToolIds) => this.sessionApi.createSession({
-        cwd: opts.cwd,
-        modelId: opts.modelId ?? this.options.modelId ?? process.env.FACTORY_MODEL,
-        autonomyLevel: opts.autonomyLevel ?? this.options.autonomyLevel ?? AutonomyLevel.Low,
-        disabledToolIds,
-        mcpServers: opts.mcpServers,
-        permissionHandler: opts.permissionHandler as never,
-        systemPrompt: opts.systemPrompt,
-        apiKey: opts.apiKey ?? this.options.apiKey,
-        execPath: this.options.execPath,
-      }));
+      return await this.secureSession(session, (disabledToolIds) => {
+        const createOptions = {
+          cwd: opts.cwd,
+          modelId: opts.modelId ?? this.options.modelId ?? process.env.FACTORY_MODEL,
+          autonomyLevel: opts.autonomyLevel ?? this.options.autonomyLevel ?? AutonomyLevel.Low,
+          disabledToolIds,
+          restrictToolIds: ALLOWED_FORKSAFE_TOOL_IDS,
+          mcpServers: opts.mcpServers,
+          permissionHandler: opts.permissionHandler as never,
+          systemPrompt: opts.systemPrompt,
+          apiKey: opts.apiKey ?? this.options.apiKey,
+          execPath: this.options.execPath,
+        };
+        return this.sessionApi.createSession(createOptions as Parameters<typeof createSession>[0]);
+      });
     } catch (error) {
       if (error instanceof ToolSurfaceError) throw error;
       if (error instanceof Error && error.name === "SessionNotFoundError") throw new SessionMissingError(vendorId, { cause: error });
@@ -220,24 +236,11 @@ export class LiveFactoryAdapter implements FactoryAdapter {
       tool.allowed && computeDisabledToolIds([tool]).length > 0,
     );
     if (hasEnabledForbiddenTool) {
-      if (typeof session.updateSettings === "function") {
-        try {
-          await session.updateSettings({ disabledToolIds: restrictedToolIds });
-        } catch {
-          await session.close().catch(() => undefined);
-          try {
-            session = await recreate(restrictedToolIds);
-          } catch (error) {
-            throw new ToolSurfaceError("Factory tool restrictions could not be applied", { cause: error });
-          }
-        }
-      } else {
-        await session.close().catch(() => undefined);
-        try {
-          session = await recreate(restrictedToolIds);
-        } catch (error) {
-          throw new ToolSurfaceError("Factory session could not be recreated with restricted tools", { cause: error });
-        }
+      await session.close().catch(() => undefined);
+      try {
+        session = await recreate(restrictedToolIds);
+      } catch (error) {
+        throw new ToolSurfaceError("Factory tool restrictions could not be applied", { cause: error });
       }
       try {
         tools = await session.listTools();
@@ -247,10 +250,12 @@ export class LiveFactoryAdapter implements FactoryAdapter {
       }
     }
 
-    const enabledToolIds = tools.filter((tool) => tool.allowed).map((tool) => tool.id);
-    if (tools.some((tool) => tool.allowed && computeDisabledToolIds([tool]).length > 0)) {
+    const enabledToolIds = ALLOWED_FORKSAFE_TOOL_IDS.filter((id) =>
+      tools.some((tool) => tool.id === id && tool.allowed),
+    );
+    if (enabledToolIds.length !== ALLOWED_FORKSAFE_TOOL_IDS.length) {
       await session.close().catch(() => undefined);
-      throw new ToolSurfaceError("Factory exposed an enabled tool outside the ForkSafe MCP server");
+      throw new ToolSurfaceError("Factory did not expose the complete ForkSafe tool surface");
     }
     return liveSession(session, enabledToolIds);
   }

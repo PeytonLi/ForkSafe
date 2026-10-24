@@ -83,7 +83,8 @@ export const claim = internalMutation({
         const environment = await byAppId(ctx, "environments", job.environmentId!);
         const checkpoints = await ctx.db.query("sessionCheckpoints").withIndex("by_environment_job", (q) =>
           q.eq("environmentId", job.environmentId!).eq("jobId", job.appId)).collect();
-        const checkpoint = checkpoints.sort((a, b) => b.turnIndex - a.turnIndex || b.createdAtMs - a.createdAtMs)[0];
+        const checkpoint = checkpoints.filter((row) => row.role === "primary")
+          .sort((a, b) => b.turnIndex - a.turnIndex || b.createdAtMs - a.createdAtMs)[0];
         return {
           claimed,
           job: { ...job, attemptsUsed: job.attemptsUsed + 1, epoch: claimed.epoch, activeAttemptId: claimed.attemptId, state: "grant_pending" },
@@ -200,6 +201,7 @@ export const checkpoint = internalMutation({
     checkpoint: v.object({
       investigationId: v.string(), environmentId: v.string(), jobId: v.string(), attemptId: v.string(),
       epoch: v.number(), sessionId: v.string(), vendorSessionId: v.string(), turnIndex: v.number(),
+      role: v.union(v.literal("primary"), v.literal("subtask")),
       parentSessionId: v.optional(v.string()), revisionHeadId: v.optional(v.string()), tokenUsage: v.optional(v.any()),
     }),
   },

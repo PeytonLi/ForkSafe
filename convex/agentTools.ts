@@ -73,7 +73,10 @@ export const recordFindingReads = internalMutation({
       if (!finding || finding.investigationId !== args.investigationId) continue;
       const existing = await ctx.db.query("findingReads").withIndex("by_environment_finding", (q) =>
         q.eq("environmentId", args.environmentId).eq("findingId", findingId)).unique();
-      if (!existing) await ctx.db.insert("findingReads", { ...args, findingId, atMs: now });
+      if (!existing) await ctx.db.insert("findingReads", {
+        investigationId: args.investigationId, environmentId: args.environmentId,
+        sessionId: args.sessionId, findingId, atMs: now,
+      });
     }
     return { ok: true };
   },
@@ -105,19 +108,33 @@ async function authorize(ctx: any, args: ToolCtx): Promise<any> {
   });
 }
 
-async function validateBasedOnFindings(ctx: any, args: ToolCtx, ids: string[]) {
-  const findings = [];
-  for (const findingId of [...new Set(ids)]) {
-    const finding = await ctx.db.query("findings").withIndex("by_appId", (q: any) => q.eq("appId", findingId)).unique();
-    if (!finding || finding.investigationId !== args.investigationId) throw new ConvexError("finding_not_in_investigation");
-    if (finding.environmentId !== args.environmentId) {
-      const read = await ctx.db.query("findingReads").withIndex("by_environment_finding", (q: any) =>
-        q.eq("environmentId", args.environmentId).eq("findingId", findingId)).unique();
-      if (!read) throw new ConvexError("finding_not_read");
+export const checkCitedFindings = internalQuery({
+  args: { investigationId: v.string(), environmentId: v.string(), findingIds: v.array(v.string()) },
+  handler: async (ctx, args): Promise<
+    { status: "ok"; findings: any[] }
+    | { status: "rejected"; reason: "finding_not_read" | "finding_not_in_investigation" }
+  > => {
+    const findings = [];
+    for (const findingId of [...new Set(args.findingIds)]) {
+      const finding = await ctx.db.query("findings").withIndex("by_appId", (q: any) => q.eq("appId", findingId)).unique();
+      if (!finding || finding.investigationId !== args.investigationId) {
+        return { status: "rejected", reason: "finding_not_in_investigation" };
+      }
+      if (finding.environmentId !== args.environmentId) {
+        const read = await ctx.db.query("findingReads").withIndex("by_environment_finding", (q: any) =>
+          q.eq("environmentId", args.environmentId).eq("findingId", findingId)).unique();
+        if (!read) return { status: "rejected", reason: "finding_not_read" };
+      }
+      findings.push(finding);
     }
-    findings.push(finding);
-  }
-  return findings;
+    return { status: "ok", findings };
+  },
+});
+
+async function validateBasedOnFindings(ctx: any, args: ToolCtx, ids: string[]) {
+  return await ctx.runQuery(internal.agentTools.checkCitedFindings, {
+    investigationId: args.investigationId, environmentId: args.environmentId, findingIds: ids,
+  });
 }
 
 async function commitFindingUses(ctx: any, args: ToolCtx, findings: any[], target: { experimentId?: string; candidateId?: string }) {
@@ -296,7 +313,9 @@ export const runExperiment = internalAction({
   args: { ...toolContext, caseId: v.string(), seed: v.number(), revisionId: v.optional(v.string()), hypothesis: v.string(), basedOnFindings: v.optional(v.array(v.string())) },
   handler: async (ctx, args): Promise<Record<string, unknown>> => {
     const access = await authorize(ctx, args);
-    const citedFindings = await validateBasedOnFindings(ctx, args, args.basedOnFindings ?? []);
+    const citations = await validateBasedOnFindings(ctx, args, args.basedOnFindings ?? []);
+    if (citations.status === "rejected") return citations;
+    const citedFindings = citations.findings;
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(args.caseId) || args.caseId.startsWith("withheld")) {
       return { status: "rejected", reason: "case_not_public", detail: "development experiments may only use public manifest cases" };
     }
@@ -429,7 +448,8 @@ export const applyPatch = internalAction({
   },
   handler: async (ctx, args): Promise<Record<string, unknown>> => {
     await authorize(ctx, args);
-    await validateBasedOnFindings(ctx, args, args.basedOnFindings ?? []);
+    const citations = await validateBasedOnFindings(ctx, args, args.basedOnFindings ?? []);
+    if (citations.status === "rejected") return citations;
     const head = await ctx.runQuery(internal.evidence.environmentHead, { environmentId: args.environmentId });
     if ((head?.appId ?? null) !== args.expectedHeadRevisionId) return { status: "rejected", reason: "stale_head" };
     const current = await resolveController(ctx, args, head?.appId);
@@ -451,7 +471,9 @@ export const forkCandidate = internalAction({
   args: { ...toolContext, candidateId: v.string(), rationale: v.string(), basedOnFindings: v.optional(v.array(v.string())) },
   handler: async (ctx, args): Promise<Record<string, unknown>> => {
     await authorize(ctx, args);
-    const citedFindings = await validateBasedOnFindings(ctx, args, args.basedOnFindings ?? []);
+    const citations = await validateBasedOnFindings(ctx, args, args.basedOnFindings ?? []);
+    if (citations.status === "rejected") return citations;
+    const citedFindings = citations.findings;
     const candidate = await ctx.runQuery(internal.agentTools.getCandidateForFork, {
       candidateId: args.candidateId, investigationId: args.investigationId,
     });
@@ -481,7 +503,9 @@ export const submitCandidate = internalAction({
   args: { ...toolContext, revisionId: v.string(), rationale: v.string(), basedOnFindings: v.array(v.string()) },
   handler: async (ctx, args): Promise<Record<string, unknown>> => {
     await authorize(ctx, args);
-    const citedFindings = await validateBasedOnFindings(ctx, args, args.basedOnFindings);
+    const citations = await validateBasedOnFindings(ctx, args, args.basedOnFindings);
+    if (citations.status === "rejected") return citations;
+    const citedFindings = citations.findings;
     const candidateId = appId();
     let inserted;
     try {
