@@ -9,6 +9,7 @@ import { checks } from "../chaos/lib/check.mjs";
 import { redactSecrets } from "../chaos/lib/convex.mjs";
 import { selectCleanupInvestigations } from "../chaos/lib/cleanup.mjs";
 import { activeTurnsAt } from "../chaos/lib/runners.mjs";
+import { rejectedStaleHeartbeat, scale10Provisioning } from "../chaos/lib/resiliencePredicates.mjs";
 import { postRunner, sign } from "../chaos/lib/runnerHttp.mjs";
 import { parseArgs } from "../chaos/run.mjs";
 
@@ -75,6 +76,54 @@ test("active turn folding handles unmatched releases, time cutoffs, and multiple
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("stale heartbeat predicate accepts the F5 response and legacy rejection shape", () => {
+  assert.equal(rejectedStaleHeartbeat({ status: 409, json: { error: "stale_epoch" } }), true);
+  assert.equal(rejectedStaleHeartbeat({ status: 200, json: { ok: false } }), true);
+  assert.equal(rejectedStaleHeartbeat({ status: 409, json: { error: "other" } }), false);
+});
+
+test("scale10 provisioning allows active environments without runner sandbox ops only in external mode", () => {
+  const environments = [{ appId: "env-1" }, { appId: "env-2" }];
+  const external = scale10Provisioning({
+    environments,
+    expectedEnvironmentCount: 2,
+    everActive: ["env-1", "env-2"],
+    runnerOpsSeen: [],
+    runnerOpsCount: 0,
+  });
+  assert.deepEqual(external, {
+    externalMode: true,
+    runnerOpsCount: 0,
+    allEnvironmentsProvisioned: true,
+  });
+  assert.equal(scale10Provisioning({
+    environments,
+    expectedEnvironmentCount: 2,
+    everActive: ["env-1"],
+    runnerOpsSeen: [],
+    runnerOpsCount: 0,
+  }).allEnvironmentsProvisioned, false);
+  const sandbox = scale10Provisioning({
+    environments,
+    expectedEnvironmentCount: 2,
+    everActive: ["env-1", "env-2"],
+    runnerOpsSeen: ["env-1", "env-2"],
+    runnerOpsCount: 2,
+  });
+  assert.deepEqual(sandbox, {
+    externalMode: false,
+    runnerOpsCount: 2,
+    allEnvironmentsProvisioned: true,
+  });
+  assert.equal(scale10Provisioning({
+    environments,
+    expectedEnvironmentCount: 2,
+    everActive: ["env-1", "env-2"],
+    runnerOpsSeen: ["env-1"],
+    runnerOpsCount: 1,
+  }).allEnvironmentsProvisioned, false);
 });
 
 test("check collector distinguishes pass, fail, and not reached", () => {

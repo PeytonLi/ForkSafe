@@ -1,5 +1,6 @@
 import { activeTurnsAt, startRunner } from "../lib/runners.mjs";
 import { capture, credentialFor, snapshot } from "../lib/investigation.mjs";
+import { scale10Provisioning } from "../lib/resiliencePredicates.mjs";
 import { preflight } from "../lib/scenario.mjs";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -182,8 +183,15 @@ export async function run(ctx) {
     item.sandboxOps.filter((op) => op.status === "error"));
   const observedEnvironmentErrors = snapshotSummaries.flatMap((item) =>
     item.environments.filter((environment) => environment.state === "error"));
-  const allEnvironmentsProvisioned = latestSnapshot.environments.length === envs
-    && latestSnapshot.environments.every((environment) => runnerOpsSeen.has(environment.appId) && everActive.has(environment.appId));
+  const runnerOpsCount = latestSnapshot.sandboxOps.filter((op) => op.purpose === "runner").length;
+  const provisioning = scale10Provisioning({
+    environments: latestSnapshot.environments,
+    expectedEnvironmentCount: envs,
+    everActive,
+    runnerOpsSeen,
+    runnerOpsCount,
+  });
+  const { externalMode, allEnvironmentsProvisioned } = provisioning;
   ctx.checks.check(
     "S4",
     "provisioning queues without errors, stalls, or missing active runner environments",
@@ -207,6 +215,8 @@ export async function run(ctx) {
       observedEnvironmentErrors,
       environments: latestSnapshot.environments.map(({ appId, state, lastError }) => ({ appId, state, lastError })),
       runnerOpsSeen: [...runnerOpsSeen],
+      externalMode,
+      runnerOpsCount,
       everActive: [...everActive],
       stall,
       workflowId: latestSnapshot.investigation?.workflowId ?? ctx.captureResponse?.workflowId ?? null,

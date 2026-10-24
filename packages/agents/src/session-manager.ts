@@ -217,20 +217,11 @@ export class SessionManager {
     if (session.active) throw new TurnInProgressError("A turn is already active for this session");
     session.active = true;
     Object.assign(session.toolContext, options.toolContext ?? {});
-    let preAcquired = false;
-    if (options.nonBlocking) {
-      if (!this.tryAcquire()) {
-        session.active = false;
-        return null;
-      }
-      preAcquired = true;
-    }
     let reservation: string;
     try {
       reservation = this.options.ledger.reserve(session.id);
     } catch (error) {
       session.active = false;
-      if (preAcquired) this.release();
       if (error instanceof BudgetExceededError) session.state = "budget_exhausted";
       throw error;
     }
@@ -248,18 +239,35 @@ export class SessionManager {
         sessionId: session.id, turnKey: `${context.attemptId}:${session.id}:${context.turnIndex}`,
       }
       : undefined;
+    const releaseGate = async () => {
+      if (!gateAcquired || !this.options.turnGate || !gateInput) return;
+      gateAcquired = false;
+      await Promise.resolve()
+        .then(() => this.options.turnGate!.release(gateInput))
+        .catch(() => undefined);
+    };
     try {
-      if (!preAcquired) await this.acquire(options.abortSignal);
-      acquired = true;
       if (this.options.turnGate && gateInput) {
         gateAcquired = options.nonBlocking
           ? await this.options.turnGate.tryAcquire(gateInput)
           : await this.options.turnGate.acquire(gateInput, options.abortSignal);
         if (!gateAcquired) {
-          session.active = false;
           this.options.ledger.release(reservation);
+          reservation = "";
           return null;
         }
+      }
+      if (options.nonBlocking) {
+        acquired = this.tryAcquire();
+        if (!acquired) {
+          await releaseGate();
+          this.options.ledger.release(reservation);
+          reservation = "";
+          return null;
+        }
+      } else {
+        await this.acquire(options.abortSignal);
+        acquired = true;
       }
       session.state = "streaming";
       started = true;
@@ -316,9 +324,7 @@ export class SessionManager {
       throw error;
     } finally {
       if (acquired) this.release();
-      if (gateAcquired && this.options.turnGate && gateInput) {
-        await this.options.turnGate.release(gateInput).catch(() => undefined);
-      }
+      await releaseGate();
       session.active = false;
     }
   }

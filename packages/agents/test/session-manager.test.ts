@@ -123,7 +123,7 @@ describe("SessionManager", () => {
     await expect(sessions.runTurn(waiting.sessionId, "after abort", { nonBlocking: true })).resolves.not.toBeNull();
   });
 
-  it("releases the local slot when the global turn gate denies acquisition", async () => {
+  it("releases the global reservation when local non-blocking capacity is unavailable", async () => {
     let release!: () => void;
     let entered!: () => void;
     const hold = new Promise<void>((resolve) => { release = resolve; });
@@ -152,13 +152,71 @@ describe("SessionManager", () => {
     await expect(sessions.runTurn(second.sessionId, "at cap", {
       nonBlocking: true, toolContext: { ...toolContext, turnIndex: 2 },
     })).resolves.toBeNull();
-    expect(turnGate.tryAcquire).toHaveBeenCalledTimes(2);
+    expect(turnGate.tryAcquire).toHaveBeenCalledTimes(3);
     release();
     await expect(activeTurn).resolves.toMatchObject({ success: true });
     await expect(sessions.runTurn(second.sessionId, "later", {
       nonBlocking: true, toolContext: { ...toolContext, turnIndex: 3 },
     })).resolves.not.toBeNull();
-    expect(turnGate.release).toHaveBeenCalledTimes(2);
+    expect(turnGate.release).toHaveBeenCalledTimes(3);
+  });
+
+  it("acquires global turn capacity before local turn slots", async () => {
+    let globalHeld = false;
+    const waiters: (() => void)[] = [];
+    const turnGate = {
+      acquire: vi.fn(async () => {
+        if (globalHeld) await new Promise<void>((resolve) => waiters.push(resolve));
+        globalHeld = true;
+        return true;
+      }),
+      tryAcquire: vi.fn(async () => {
+        if (globalHeld) return false;
+        globalHeld = true;
+        return true;
+      }),
+      release: vi.fn(async () => {
+        const next = waiters.shift();
+        if (next) next();
+        else globalHeld = false;
+      }),
+    };
+    let releaseAdapter!: () => void;
+    let markFirstEntered!: () => void;
+    let markSecondEntered!: () => void;
+    const adapterHold = new Promise<void>((resolve) => { releaseAdapter = resolve; });
+    const firstEntered = new Promise<void>((resolve) => { markFirstEntered = resolve; });
+    const secondEntered = new Promise<void>((resolve) => { markSecondEntered = resolve; });
+    let streamCount = 0;
+    const adapter = new FixtureFactoryAdapter({ gate: async () => {
+      streamCount += 1;
+      if (streamCount === 1) markFirstEntered();
+      else markSecondEntered();
+      await adapterHold;
+    } });
+    const sessions = await manager(adapter, { maxActiveTurns: 2, turnGate });
+    const first = await sessions.createSession({ investigationId: crypto.randomUUID(), environmentId: crypto.randomUUID() });
+    const second = await sessions.createSession({ investigationId: crypto.randomUUID(), environmentId: crypto.randomUUID() });
+    const local = sessions as unknown as { acquire(signal?: AbortSignal): Promise<void> };
+    const originalAcquire = local.acquire.bind(sessions);
+    const acquireSpy = vi.spyOn(local, "acquire").mockImplementation(async (signal) => {
+      expect(globalHeld).toBe(true);
+      await originalAcquire(signal);
+    });
+    const toolContext = { attemptId: crypto.randomUUID(), grantId: crypto.randomUUID(), epoch: 0, turnIndex: 0 };
+
+    const firstTurn = sessions.runTurn(first.sessionId, "first", { toolContext });
+    await firstEntered;
+    const secondTurn = sessions.runTurn(second.sessionId, "second", {
+      toolContext: { ...toolContext, turnIndex: 1 },
+    });
+    expect(turnGate.acquire).toHaveBeenCalledTimes(2);
+    expect(acquireSpy).toHaveBeenCalledTimes(1);
+
+    releaseAdapter();
+    await secondEntered;
+    await Promise.all([firstTurn, secondTurn]);
+    expect(acquireSpy).toHaveBeenCalledTimes(2);
   });
 
   it("returns retry_later instead of waiting when all active turn slots are occupied", async () => {
