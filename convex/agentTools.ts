@@ -5,6 +5,7 @@ import { changedFunctions, sha256Hex } from "./lib/controllerDiff.js";
 import { appId } from "./lib/validators.js";
 import { applyUnifiedDiff } from "./lib/unifiedDiff.js";
 import publicManifest from "../evaluation/public/manifest.json";
+import pushGapManifest from "../evaluation/push_gap/manifest.json";
 
 /** Agent tool backends. Every call is fenced by runnerControl.authorizeTool
  *  (credential → environment, attempt + epoch + grant, live lease, not
@@ -288,7 +289,14 @@ export const readSource = internalQuery({
   args: { ...toolContext, path: v.string(), revisionId: v.optional(v.string()) },
   handler: async (ctx, args): Promise<Record<string, unknown>> => {
     await authorize(ctx, args);
-    if (args.path === "evaluation/public/manifest.json") return { mode: "live", path: args.path, source: JSON.stringify(publicManifest).slice(0, 200_000) };
+    if (args.path === "evaluation/public/manifest.json") {
+      const investigation = await ctx.db.query("investigations").withIndex("by_appId", (q) => q.eq("appId", args.investigationId)).unique();
+      const manifest = investigation?.taskFamily === "push_through_gap" ? pushGapManifest : publicManifest;
+      return { mode: "live", path: args.path, source: JSON.stringify(manifest).slice(0, 200_000) };
+    }
+    if (args.path === "evaluation/push_gap/manifest.json") {
+      return { mode: "live", path: args.path, source: JSON.stringify(pushGapManifest).slice(0, 200_000) };
+    }
     if (args.path !== "task_controller.py" || args.path.includes("..") || args.path.startsWith("/")) {
       return { status: "rejected", reason: "path_not_allowed" };
     }

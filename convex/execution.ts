@@ -9,7 +9,7 @@ import { internalAction } from "./_generated/server.js";
 import { caseJsonFor } from "./lib/caseJson.js";
 import { classifyExperiment } from "./lib/experimentStatus.js";
 import { signedCaseCommand } from "./lib/evaluatorBackend.js";
-import { FIND_FAILURE_BUDGET, pickFirstFailure, type FailureSearchResult, type FuzzGrid } from "./lib/sceneSearch.js";
+import { FIND_FAILURE_BUDGET, fuzzSearchFlags, pickFirstFailure, type FailureSearchResult, type FuzzGrid } from "./lib/sceneSearch.js";
 import { ensureExecutionSandbox } from "./capture.js";
 import { isStreamFlagUnsupported, LIVE_CHUNK_READER_PYTHON, parseChunkLines } from "./lib/liveRelay.js";
 import withheldManifest from "../evaluation/withheld/manifest.json";
@@ -468,8 +468,14 @@ export const runFuzz = internalAction({
     taskFamily: v.string(),
     seed: v.number(),
     controllerSource: v.string(),
+    centerOverrides: v.optional(v.record(v.string(), v.number())),
   },
   handler: async (ctx, args): Promise<FailureSearchResult> => {
+    const built = fuzzSearchFlags({
+      seed: args.seed,
+      ...(args.centerOverrides !== undefined ? { centerOverrides: args.centerOverrides } : {}),
+    });
+    if (!built.ok) throw new ConvexError(built.reason);
     const scratchInvestigationId = args.searchId;
     try {
       const family = args.taskFamily;
@@ -505,7 +511,7 @@ export const runFuzz = internalAction({
       await putSmallFile(daytona, ref, `${runDir}/controller/task_controller.py`, new TextEncoder().encode(args.controllerSource), FIND_FAILURE_BUDGET.controllerUploadSec);
       const outputPath = `${runDir}/fuzz.json`;
       const fuzz = await boundedExec(daytona, ref, {
-        command: `python3 -m simulator.fuzz --controller ${runDir}/controller --around ${baseCaseId} --n ${FIND_FAILURE_BUDGET.fuzzSamples} --workers ${FIND_FAILURE_BUDGET.fuzzWorkers} --out ${outputPath} --timeout-sec ${FIND_FAILURE_BUDGET.fuzzCaseTimeoutSec}`,
+        command: `python3 -m simulator.fuzz --controller ${runDir}/controller --around ${baseCaseId} --n ${FIND_FAILURE_BUDGET.fuzzSamples} --workers ${FIND_FAILURE_BUDGET.fuzzWorkers} --out ${outputPath} --timeout-sec ${FIND_FAILURE_BUDGET.fuzzCaseTimeoutSec} ${built.flags}`,
         cwd: SIM_ROOT,
         env: { PYTHONPATH: SIM_PYTHONPATH, PYTHONDONTWRITEBYTECODE: "1" },
         timeoutSec: FIND_FAILURE_BUDGET.fuzzExecSec,
