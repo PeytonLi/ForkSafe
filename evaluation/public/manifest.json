@@ -1,0 +1,176 @@
+{
+  "version": "1",
+  "generatorSeed": 20260415,
+  "domain": {
+    "cubeDx": [
+      -0.02,
+      0.02
+    ],
+    "cubeDy": [
+      -0.02,
+      0.02
+    ],
+    "targetDx": [
+      -0.02,
+      0.02
+    ],
+    "targetDy": [
+      -0.02,
+      0.02
+    ],
+    "dividerDx": [
+      -0.03,
+      0.03
+    ],
+    "dividerDy": [
+      -0.03,
+      0.03
+    ],
+    "dividerHeight": [
+      0.08,
+      0.12
+    ],
+    "speedScale": [
+      0.8,
+      1.2
+    ]
+  },
+  "cases": [
+    {
+      "caseId": "original-divider-collision",
+      "suite": "original",
+      "seed": 0,
+      "sceneOverrides": {},
+      "description": "Default scene baseline failure reproduction."
+    },
+    {
+      "caseId": "nominal",
+      "suite": "public",
+      "seed": 701104667,
+      "sceneOverrides": {
+        "dividerDx": 0.3
+      },
+      "description": "Divider moved out of the cube path."
+    },
+    {
+      "caseId": "public-01",
+      "suite": "public",
+      "seed": 1541904221,
+      "sceneOverrides": {
+        "cubeDx": -0.00014,
+        "cubeDy": 0.01688,
+        "targetDx": -0.00261,
+        "targetDy": -0.01441,
+        "dividerDx": -0.02366,
+        "dividerDy": 0.0267,
+        "dividerHeight": 0.0808,
+        "speedScale": 1.04025
+      }
+    },
+    {
+      "caseId": "public-02",
+      "suite": "public",
+      "seed": 1534983485,
+      "sceneOverrides": {
+        "cubeDx": -0.01573,
+        "cubeDy": 0.00978,
+        "targetDx": 0.01866,
+        "targetDy": 0.01975,
+        "dividerDx": 0.02795,
+        "dividerDy": 0.00425,
+        "dividerHeight": 0.08175,
+        "speedScale": 1.17441
+      }
+    },
+    {
+      "caseId": "public-03",
+      "suite": "public",
+      "seed": 589279481,
+      "sceneOverrides": {
+        "cubeDx": 0.01095,
+        "cubeDy": -0.01963,
+        "targetDx": 0.00504,
+        "targetDy": -0.00525,
+        "dividerDx": -0.00277,
+        "dividerDy": 0.02062,
+        "dividerHeight": 0.08424,
+        "speedScale": 0.96205
+      }
+    },
+    {
+      "caseId": "public-04",
+      "suite": "public",
+      "seed": 451055785,
+      "sceneOverrides": {
+        "cubeDx": 0.01104,
+        "cubeDy": 0.00373,
+        "targetDx": 0.01323,
+        "targetDy": -0.00287,
+        "dividerDx": 0.00097,
+        "dividerDy": -0.02716,
+        "dividerHeight": 0.10711,
+        "speedScale": 1.17567
+      }
+    },
+    {
+      "caseId": "public-05",
+      "suite": "public",
+      "seed": 1526941823,
+      "sceneOverrides": {
+        "cubeDx": 0.01078,
+        "cubeDy": 0.0107,
+        "targetDx": 0.01091,
+        "targetDy": -0.01142,
+        "dividerDx": -0.02076,
+        "dividerDy": -0.01184,
+        "dividerHeight": 0.09388,
+        "speedScale": 0.9941
+      }
+    },
+    {
+      "caseId": "public-06",
+      "suite": "public",
+      "seed": 600197184,
+      "sceneOverrides": {
+        "cubeDx": 0.01985,
+        "cubeDy": -0.00182,
+        "targetDx": -0.01967,
+        "targetDy": -0.00376,
+        "dividerDx": 0.02819,
+        "dividerDy": -0.00985,
+        "dividerHeight": 0.10925,
+        "speedScale": 1.19547
+      }
+    },
+    {
+      "caseId": "public-07",
+      "suite": "public",
+      "seed": 140088517,
+      "sceneOverrides": {
+        "cubeDx": 0.00457,
+        "cubeDy": -0.00702,
+        "targetDx": 0.01647,
+        "targetDy": -0.00252,
+        "dividerDx": 0.01612,
+        "dividerDy": 0.00132,
+        "dividerHeight": 0.09715,
+        "speedScale": 0.88119
+      }
+    },
+    {
+      "caseId": "public-08",
+      "suite": "public",
+      "seed": 46490753,
+      "sceneOverrides": {
+        "cubeDx": -0.00568,
+        "cubeDy": -0.01126,
+        "targetDx": 0.01893,
+        "targetDy": -0.00127,
+        "dividerDx": -0.01941,
+        "dividerDy": -0.01973,
+        "dividerHeight": 0.11633,
+        "speedScale": 1.18965
+      }
+    }
+  ]
+}

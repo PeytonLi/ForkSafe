@@ -1,0 +1,8 @@
+{
+  "cubeStart": [0.5, -0.15, 0.02],
+  "target": [0.5, 0.15, 0.02],
+  "dividerCenter": [0.5, 0.0],
+  "dividerHalfLength": 0.1,
+  "dividerHalfThickness": 0.01,
+  "dividerHeight": 0.1
+}
