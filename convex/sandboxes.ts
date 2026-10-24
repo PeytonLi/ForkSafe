@@ -143,6 +143,25 @@ export const updateSandboxOp = internalMutation({
   },
 });
 
+export const markBundleReady = internalMutation({
+  args: { sandboxOpId: v.string(), bundleSha256: v.string() },
+  handler: async (ctx, args) => {
+    const op = await ctx.db.query("sandboxOps").withIndex("by_appId", (q) => q.eq("appId", args.sandboxOpId)).unique();
+    if (!op) throw new ConvexError("sandbox_operation_not_found");
+    await ctx.db.patch(op._id, { bundleSha256: args.bundleSha256, updatedAtMs: Date.now() });
+    return { updated: true };
+  },
+});
+
+export const readyOperationFor = internalQuery({
+  args: { investigationId: v.string(), purpose: v.union(v.literal("runner"), v.literal("execution"), v.literal("evaluator"), v.literal("bridge")), environmentId: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const ops = await ctx.db.query("sandboxOps").withIndex("by_investigation", (q) => q.eq("investigationId", args.investigationId)).collect();
+    return ops.find((op) => op.purpose === args.purpose && (args.environmentId === undefined || op.environmentId === args.environmentId)
+      && !["terminated", "terminating", "ambiguous_terminate", "error"].includes(op.status)) ?? null;
+  },
+});
+
 export const listOperations = internalQuery({
   args: {},
   handler: async (ctx) => await ctx.db.query("sandboxOps").collect(),

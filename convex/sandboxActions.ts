@@ -70,7 +70,7 @@ export const provision = internalAction({
         status: "ready",
         sandbox: handle.ref,
       });
-      if (op.environmentId) {
+      if (op.environmentId && op.purpose !== "runner") {
         await ctx.runMutation(internal.sandboxes.markEnvironmentReady, {
           environmentId: op.environmentId,
           sandbox: handle.ref,

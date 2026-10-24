@@ -126,6 +126,21 @@ export const tick = internalMutation({
         expiredModelTurns += 1;
       }
     }
+    const grantRows = await ctx.db.query("grants").withIndex("by_pending_revoke", (q) => q.eq("spacetimeRevoked", false)).take(100);
+    let revocationsScheduled = 0;
+    for (const grant of grantRows) {
+      const attempt = await ctx.db.query("attempts").withIndex("by_appId", (q) => q.eq("appId", grant.attemptId)).unique();
+      const leaseDead = !attempt || ["expired", "fenced", "failed", "succeeded"].includes(attempt.state) || attempt.leasedUntilMs + 30_000 < now;
+      if (grant.revokedAtMs === undefined && (leaseDead || grant.expiresAtMs <= now)) {
+        await ctx.db.patch(grant._id, { revokedAtMs: now, revokeReason: !attempt ? "attempt_missing" : attempt.state === "succeeded" ? "completed" : "lease_expired" });
+      }
+      if ((grant.revokedAtMs !== undefined || leaseDead || grant.expiresAtMs <= now) && grant.spacetimeInstalled && revocationsScheduled < 20) {
+        await ctx.scheduler.runAfter(0, internal.bridge.revokeGrant, { grantId: grant.appId, reason: grant.revokeReason ?? "lease_expired" });
+        revocationsScheduled += 1;
+      } else if (!grant.spacetimeInstalled && (grant.revokedAtMs !== undefined || leaseDead)) {
+        await ctx.db.patch(grant._id, { spacetimeRevoked: true });
+      }
+    }
     const cancelling = await ctx.db.query("investigations")
       .withIndex("by_cancel_status", (q) => q.eq("cancelStatus", "cancel_requested"))
       .take(100);
@@ -146,7 +161,7 @@ export const tick = internalMutation({
       }
     }
     if (args.scheduleNext) await ctx.scheduler.runAfter(5_000, internal.reconcile.tick, { scheduleNext: true });
-    return { expired, acknowledged, expiredModelTurns, finalizedCancellations, checkedAtMs: now };
+    return { expired, acknowledged, expiredModelTurns, finalizedCancellations, revocationsScheduled, checkedAtMs: now };
   },
 });
 
