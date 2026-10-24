@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "daytona:prepare": "tsx scripts/prepare.ts",
+    "daytona:egress-probe": "tsx scripts/egress-probe.ts",
     "daytona:smoke": "tsx scripts/smoke.ts",
     "daytona:cleanup": "tsx scripts/cleanup.ts"
   },

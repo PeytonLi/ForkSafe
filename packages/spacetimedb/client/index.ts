@@ -145,6 +145,10 @@ export function subscribeInvestigation(conn: DbConnectionType, investigationId: 
             tables.evaluation.where((row) => row.investigationId.eq(investigationId)),
             tables.humanReview,
             tables.experiment.where((row) => row.investigationId.eq(investigationId)),
+            tables.baseline,
+            tables.baselineRequirement,
+            tables.experimentIdentity.where((row) => row.investigationId.eq(investigationId)),
+            tables.findingUse.where((row) => row.findingInvestigationId.eq(investigationId)),
             tables.executionGrant,
             tables.revisionHead,
             tables.controllerRevision,
@@ -206,8 +210,20 @@ export class ForkSafeReducers {
     return this.conn.reducers.recordExperiment(args);
   }
 
+  registerBaseline(args: Parameters<DbConnectionType["reducers"]["registerBaseline"]>[0]) {
+    return this.conn.reducers.registerBaseline(args);
+  }
+
+  commitExperiment(args: Parameters<DbConnectionType["reducers"]["commitExperiment"]>[0]) {
+    return this.conn.reducers.commitExperiment(args);
+  }
+
   recordFinding(args: Parameters<DbConnectionType["reducers"]["recordFinding"]>[0]) {
     return this.conn.reducers.recordFinding(args);
+  }
+
+  recordFindingUse(args: Parameters<DbConnectionType["reducers"]["recordFindingUse"]>[0]) {
+    return this.conn.reducers.recordFindingUse(args);
   }
 
   submitCandidate(args: Parameters<DbConnectionType["reducers"]["submitCandidate"]>[0]) {

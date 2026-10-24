@@ -14,6 +14,7 @@ import {
 import { requireServiceToken } from "./lib/auth.js";
 import { LOG_TAIL_MAX_BYTES } from "./lib/constants.js";
 import { assertUUID } from "./lib/validators.js";
+import { evaluatorSandboxEnv } from "./lib/evaluatorBackend.js";
 
 function createCloudProvider(): CloudDaytonaProvider {
   const config = loadDaytonaConfig();
@@ -48,6 +49,7 @@ export const provision = internalAction({
     try {
       const provider = createCloudProvider();
       const found = await provider.findByOperation(op.appId);
+      const signingEnv = evaluatorSandboxEnv(op.purpose, op.snapshot);
       const handle = found ?? await provider.create({
         operationId: op.appId,
         purpose: op.purpose,
@@ -59,6 +61,7 @@ export const provision = internalAction({
           attemptId: op.attemptId,
         }),
         snapshot: op.snapshot,
+        ...(signingEnv ? { envVars: signingEnv } : {}),
         resources: op.resources,
         reservedSandboxCount: op.reservedSandboxCount ?? 0,
         autoStopMinutes: loadDaytonaConfig().defaults[op.purpose as SandboxPurpose].autoStopMinutes,
@@ -77,7 +80,8 @@ export const provision = internalAction({
         });
       }
       return { sandboxOpId: op.appId, ref: handle.ref };
-    } catch {
+    } catch (error) {
+      console.log("sandbox:create_failed", op.purpose, error instanceof Error ? `${error.name}:${error.message.replace(/[A-Za-z0-9+/=_-]{32,}/g, "[redacted]").slice(0, 160)}` : typeof error);
       await ctx.runMutation(internal.sandboxes.updateSandboxOp, {
         sandboxOpId: op.appId,
         status: "ambiguous_create",

@@ -10,8 +10,8 @@ import { v } from "convex/values";
 import { createElasticClient, elasticReadiness, resolveConfig } from "../../packages/integrations/elastic/src/config.js";
 import { ElasticIndexer } from "../../packages/integrations/elastic/src/indexer.js";
 import { internal } from "../_generated/api.js";
-import { internalAction, internalMutation } from "../_generated/server.js";
-import { SpacetimeClient, SpacetimeRejected } from "./spacetime.js";
+import { internalAction } from "../_generated/server.js";
+import { SpacetimeClient, spacetimeEnvironment, SpacetimeRejected } from "./spacetime.js";
 import { ZodError } from "zod";
 
 type RecordKind = "finding" | "experiment_result" | "candidate" | "evaluation";
@@ -126,7 +126,7 @@ async function resolvePayload(
       return { kind, record: {} as RecordValue, key, sourceKind: kind, sourceId: id };
     }
     const record = await getByKind(spacetime, kind, id);
-    if (!record) throw new Error("canonical_record_missing");
+    if (!record) throw new SpacetimeRejected("canonical_record_missing");
     return { kind, record, key, sourceKind: kind, sourceId: id };
   }
 
@@ -190,20 +190,6 @@ export function elasticIdempotencyKey(payload: unknown): string | undefined {
   return undefined;
 }
 
-export const deadLetter = internalMutation({
-  args: { idempotencyKey: v.string(), errorCode: v.string() },
-  handler: async (ctx, args) => {
-    const entry = await ctx.db.query("outbox")
-      .withIndex("by_idempotencyKey", (q) => q.eq("idempotencyKey", args.idempotencyKey))
-      .unique();
-    if (!entry || entry.status === "delivered") return { updated: false };
-    if (entry.status === "pending") {
-      await ctx.db.patch(entry._id, { status: "dead", lastError: args.errorCode });
-    }
-    return { updated: true };
-  },
-});
-
 export const dispatch = internalAction({
   args: { payload: v.any() },
   handler: async (ctx, args): Promise<DeliveryResult> => {
@@ -213,14 +199,15 @@ export const dispatch = internalAction({
     const client = createElasticClient(env);
     if (!client) return { delivered: false, mode: "blocked", reason: "elastic_not_configured" };
     const indexer = new ElasticIndexer(mode, client);
-    const spacetime = new SpacetimeClient();
+    const bridgeToken = await ctx.runAction(internal.bridge.sharedBridgeToken, {});
+    const spacetime = new SpacetimeClient(spacetimeEnvironment(bridgeToken));
     try {
       return await deliverElasticPayload(args.payload, {
         mode,
         indexer,
         spacetime,
         deadLetter: async (key, errorCode) => {
-          const result = await ctx.runMutation(internal.dispatchers.elastic.deadLetter, { idempotencyKey: key, errorCode });
+          const result = await ctx.runMutation(internal.dispatchers.elasticData.deadLetter, { idempotencyKey: key, errorCode });
           return result.updated;
         },
       });

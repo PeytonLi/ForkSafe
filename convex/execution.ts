@@ -7,6 +7,9 @@ import { CloudDaytonaProvider, loadDaytonaConfig } from "@forksafe/daytona";
 import { internal } from "./_generated/api.js";
 import { internalAction } from "./_generated/server.js";
 import { classifyExperiment } from "./lib/experimentStatus.js";
+import { signedCaseCommand } from "./lib/evaluatorBackend.js";
+import withheldManifest from "../evaluation/withheld/manifest.json";
+import manifestsLock from "../evaluation/manifests.lock.json";
 
 /** Runs simulator cases inside Daytona execution sandboxes. Convex never runs
  *  physics itself; it ships the pinned simulator bundle plus one controller
@@ -53,6 +56,8 @@ async function trustedExec(trusted: TrustedSandbox, command: string, timeoutSec:
 
 async function putSmallFile(_daytona: unknown, ref: VendorRef, remotePath: string, bytes: Uint8Array): Promise<void> {
   if (bytes.byteLength > 96_000) throw new ConvexError("file_too_large_for_inline_transfer");
+  // The inline writer takes the payload as argv; an empty payload drops the argument and fails remotely.
+  if (bytes.byteLength === 0) throw new ConvexError("file_transfer_empty");
   const encoded = Buffer.from(bytes).toString("base64");
   if (!SAFE_REMOTE_PATH.test(remotePath) || !SAFE_BASE64.test(encoded)) throw new ConvexError("file_transfer_input_rejected");
   const trusted = await trustedSandbox(ref);
@@ -127,7 +132,12 @@ export const ensureSimBundle = internalAction({
     if (!bundleUrl) throw new ConvexError("simulator_bundle_missing");
     const daytona = provider();
     await fetchToFile(daytona, ref, bundleUrl, "/workspace/sim.tar");
-    const extract = await daytona.exec(ref, { command: `python3 -m tarfile -e /workspace/sim.tar ${SIM_ROOT}`, cwd: "/workspace", timeoutSec: 120 });
+    // Extraction is idempotent, so one retry absorbs a transient sandbox exec failure.
+    let extract = await daytona.exec(ref, { command: `python3 -m tarfile -e /workspace/sim.tar ${SIM_ROOT}`, cwd: "/workspace", timeoutSec: 120 });
+    if (extract.exitCode !== 0) {
+      console.log("ensureSimBundle:extract_retry", extract.exitCode, extract.output.slice(-160));
+      extract = await daytona.exec(ref, { command: `python3 -m tarfile -e /workspace/sim.tar ${SIM_ROOT}`, cwd: "/workspace", timeoutSec: 120 });
+    }
     if (extract.exitCode !== 0) throw new ConvexError("simulator_bundle_extract_failed");
     // forksafe-exec-v1 ships mujoco+numpy only; the simulator also imports pydantic, so install it into
     // a bundle-local target dir (deterministic regardless of HOME) until the execution image adds it.
@@ -340,5 +350,56 @@ export const runnerLogTail = internalAction({
     const { ref } = await readyRef(ctx, args.sandboxOpId);
     const result = await provider().pollCommand(ref, args.handle, { maxBytes: 16_384 });
     return { done: result.done, ...(result.exitCode === undefined ? {} : { exitCode: result.exitCode }), logs: result.logs };
+  },
+});
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const CASE_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** The withheld manifest is not baked into the image; it is uploaded per run and
+ *  consumed (deleted) by run_candidate once read. Bytes must match the lock. */
+async function withheldManifestBytes(): Promise<Uint8Array> {
+  const bytes = new TextEncoder().encode(`${JSON.stringify(withheldManifest, null, 2)}\n`);
+  if (await sha256(bytes) !== manifestsLock.withheld) throw new ConvexError("withheld_manifest_lock_mismatch");
+  return bytes;
+}
+
+/** Runs one case through PR #13's `evaluator.run_candidate` inside a v3 evaluator
+ *  sandbox. The sandbox signs the result with the seed injected at create time;
+ *  this action only returns the document, Convex verifies before scoring. */
+export const runSignedCase = internalAction({
+  args: {
+    sandboxOpId: v.string(), investigationId: v.string(), candidateId: v.string(), attemptId: v.string(),
+    caseId: v.string(), suite: v.union(v.literal("public"), v.literal("withheld")),
+    controllerSource: v.string(), controllerSha256: v.string(),
+  },
+  handler: async (ctx, args): Promise<{ exitCode: number; document: unknown; logTail: string; wallMs: number }> => {
+    const started = Date.now();
+    for (const id of [args.investigationId, args.candidateId, args.attemptId]) {
+      if (!UUID_RE.test(id)) throw new ConvexError("signed_case_input_rejected");
+    }
+    if (!CASE_ID_RE.test(args.caseId) || !/^[0-9a-f]{64}$/.test(args.controllerSha256)) throw new ConvexError("signed_case_input_rejected");
+    const { ref } = await readyRef(ctx, args.sandboxOpId);
+    const daytona = provider();
+    const runDir = `${RUN_ROOT}/eval-${args.attemptId}/${args.caseId}`;
+    await putSmallFile(daytona, ref, `${runDir}/controller/task_controller.py`, new TextEncoder().encode(args.controllerSource));
+    if (args.suite === "withheld") await putSmallFile(daytona, ref, `${runDir}/withheld-manifest.json`, await withheldManifestBytes());
+    await putSmallFile(daytona, ref, `${runDir}/work/.keep`, new Uint8Array([10]));
+    const command = signedCaseCommand({ ...args, runDir });
+    let run: { exitCode: number; output: string };
+    try {
+      run = await daytona.exec(ref, { command, cwd: "/workspace", timeoutSec: 300 });
+    } catch (error) {
+      run = { exitCode: -1, output: `exec_failed:${error instanceof Error ? `${error.name}:${error.message.slice(0, 120)}` : "unknown"}` };
+      console.log("runSignedCase:exec_failed", args.caseId, run.output);
+    }
+    let document: unknown = null;
+    try {
+      const bytes = await pullFile(ctx, daytona, ref, `${runDir}/result.json`);
+      if (bytes.byteLength <= 2 * 1024 * 1024) document = JSON.parse(new TextDecoder().decode(bytes));
+    } catch {
+      document = null;
+    }
+    return { exitCode: run.exitCode, document, logTail: run.output.slice(-600), wallMs: Date.now() - started };
   },
 });

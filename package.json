@@ -10,6 +10,7 @@
     "dev": "node scripts/dev.mjs",
     "seed:demo": "node scripts/seed-demo.mjs",
     "build": "pnpm -r --if-present build",
+    "deploy:web": "VITE_CONVEX_URL=https://giant-jellyfish-684.convex.cloud VITE_FORKSAFE_DATA=convex pnpm --filter @forksafe/web build && pnpm --filter @forksafe/convex exec convex deploy && pnpm --filter @forksafe/convex exec npx @convex-dev/static-hosting upload --dist ../apps/web/dist --component staticHosting --spa",
     "typecheck": "pnpm -r --if-present typecheck",
     "lint": "pnpm -r --if-present lint",
     "test": "pnpm -r --if-present test && node scripts/pytest.mjs",
@@ -17,8 +18,10 @@
     "test:e2e": "pnpm --filter @forksafe/web test:e2e",
     "benchmark": "node scripts/benchmark.mjs",
     "daytona:prepare": "node scripts/daytona-prepare.mjs",
+    "daytona:egress-probe": "pnpm --filter @forksafe/daytona daytona:egress-probe",
     "smoke:hosted": "node scripts/smoke-hosted.mjs",
-    "cleanup:sandboxes": "node scripts/cleanup-sandboxes.mjs"
+    "cleanup:sandboxes": "node scripts/cleanup-sandboxes.mjs",
+    "release:check": "node scripts/release-check.mjs"
   },
   "devDependencies": {
     "typescript": "~5.9.3",

@@ -15,6 +15,7 @@ import {
   type ForkSafeToolBackend,
   type ToolCallContext,
 } from "./tools.js";
+import { REPAIR_AGENT_SYSTEM_PROMPT } from "./prompts.js";
 import { ActivityLog } from "./activity-log.js";
 import type { AdapterSession, FactoryAdapter, StreamMsg } from "./adapter.js";
 import { SessionMissingError } from "./adapter.js";
@@ -22,6 +23,7 @@ import { BudgetExceededError, UsageLedger, type TokenUsage } from "./usage.js";
 
 export class SessionCapError extends Error {}
 export class TurnInProgressError extends Error {}
+export class SessionRegistrationError extends Error {}
 
 export type TurnOutcome = {
   sessionId: string;
@@ -42,6 +44,43 @@ export type SessionManagerOptions = {
   maxActiveTurns?: number;
   toolBackend: ForkSafeToolBackend;
   log: ActivityLog;
+  onSessionReady?: (input: { attemptId: string; epoch: number; session: AgentSessionType }) => Promise<unknown>;
+  onTurnComplete?: (input: {
+    investigationId: string; environmentId: string; sessionId: string; vendorSessionId: string;
+    attemptId: string; epoch: number; jobId: string; turnIndex: number; parentSessionId?: string;
+    role: "primary" | "subtask"; revisionHeadId?: string; tokenUsage: TokenUsage | null;
+  }) => Promise<void>;
+};
+
+function permissionAuditDetails(params: PermissionParams): Record<string, unknown>[] {
+  return params.toolUses.map((use) => {
+    const details = use.details;
+    const calls = Array.isArray(details.calls)
+      ? details.calls.flatMap((call) => {
+        if (typeof call !== "object" || call === null || Array.isArray(call)) return [];
+        const nested = call as Record<string, unknown>;
+        const confirmation = nested.confirmation;
+        if (typeof nested.toolName !== "string" || typeof confirmation !== "object" || confirmation === null || Array.isArray(confirmation)) return [];
+        const type = (confirmation as Record<string, unknown>).type;
+        return typeof type === "string" ? [{ toolName: nested.toolName, type }] : [];
+      })
+      : undefined;
+    const toolName = typeof details.toolName === "string" ? details.toolName : use.name;
+    const serverName = details.serverName ?? details.server;
+    return {
+      type: typeof details.type === "string" ? details.type : use.confirmationType,
+      ...(typeof toolName === "string" ? { toolName } : {}),
+      ...(typeof serverName === "string" ? { serverName } : {}),
+      ...(typeof details.actualToolName === "string" ? { actualToolName: details.actualToolName } : {}),
+      ...(calls ? { calls } : {}),
+    };
+  });
+}
+
+type RunTurnOptions = {
+  abortSignal?: AbortSignal;
+  nonBlocking?: boolean;
+  toolContext?: Partial<Pick<ToolCallContext, "attemptId" | "grantId" | "epoch" | "turnBudget" | "revisionState" | "jobId" | "turnIndex" | "parentSessionId" | "role">>;
 };
 
 type ManagedSession = {
@@ -60,6 +99,7 @@ type ManagedSession = {
 
 export class SessionManager {
   private readonly sessions = new Map<string, ManagedSession>();
+  private readonly sessionRegistrationErrors = new Map<string, SessionRegistrationError>();
   private readonly sessionsPerEnvironment: number;
   private readonly maxActiveTurns: number;
   private activeTurns = 0;
@@ -71,7 +111,9 @@ export class SessionManager {
     if (this.sessionsPerEnvironment > 3) throw new RangeError("sessionsPerEnvironment cannot exceed 3");
   }
 
-  async createSession(input: { investigationId: string; environmentId: string }): Promise<{ sessionId: string; vendorRef: VendorRef }> {
+  async createSession(input: {
+    investigationId: string; environmentId: string; vendorSessionId?: string; sessionId?: string;
+  }): Promise<{ sessionId: string; vendorRef: VendorRef }> {
     const { investigationId, environmentId } = input;
     if (!isUuid(investigationId) || !isUuid(environmentId)) throw new TypeError("Investigation and environment IDs must be UUIDs");
     const open = [...this.sessions.values()].filter((session) =>
@@ -82,20 +124,23 @@ export class SessionManager {
     const rel = relative(resolve(this.options.workspaceRoot), cwd);
     if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new TypeError("Workspace path escaped root");
     await mkdir(cwd, { recursive: true });
-    const id = crypto.randomUUID();
+    let id = input.sessionId ?? crypto.randomUUID();
+    let replacesSessionId: string | undefined;
     const toolContext: ToolCallContext = {
       investigationId, environmentId, sessionId: id,
       attemptId: crypto.randomUUID(), grantId: crypto.randomUUID(), epoch: 0,
+      revisionState: {},
     };
-    const policy: PermissionPolicy = { workspaceRoot: cwd, mcpServerName: "forksafe", allowedMcpTools: ["read_findings", "request_evidence", "run_experiment", "propose_controller_revision", "submit_candidate", "write_finding"] };
+    const policy: PermissionPolicy = { workspaceRoot: cwd, mcpServerName: "forksafe", allowedMcpTools: ["inspect_failure", "read_source", "apply_patch", "fork_candidate", "request_subtask", "read_findings", "request_evidence", "run_experiment", "propose_controller_revision", "submit_candidate", "write_finding"] };
     const mcpServer = createForkSafeMcpServer(
       this.options.toolBackend,
       toolContext,
       this.options.log,
     );
-    const adapterSession = await this.options.adapter.createSession({
+    const adapterOptions = {
       cwd,
       mcpServers: [mcpServer],
+      systemPrompt: REPAIR_AGENT_SYSTEM_PROMPT,
       permissionHandler: async (params: unknown) => {
         const decision = decidePermission(params as PermissionParams, policy);
         await this.options.log.record({
@@ -107,35 +152,80 @@ export class SessionManager {
           summary: decision.allowed ? "permission allowed" : "permission denied",
           data: {
             toolNames: (params as PermissionParams).toolUses.map((use) => use.name ?? use.confirmationType),
+            details: permissionAuditDetails(params as PermissionParams),
             allowed: decision.allowed,
             reasons: decision.reasons,
           },
         });
         return decision.outcome;
       },
-    });
+    };
+    let adapterSession: AdapterSession;
+    if (input.vendorSessionId) {
+      try {
+        adapterSession = await this.options.adapter.resumeSession(input.vendorSessionId, adapterOptions);
+      } catch (error) {
+        if (!(error instanceof SessionMissingError)) throw error;
+        replacesSessionId = input.sessionId ?? id;
+        id = crypto.randomUUID();
+        adapterSession = await this.options.adapter.createSession(adapterOptions);
+      }
+    } else {
+      adapterSession = await this.options.adapter.createSession(adapterOptions);
+    }
+    toolContext.sessionId = id;
     this.sessions.set(id, {
       id, investigationId, environmentId, cwd, adapterSession,
-      state: "created", createdAtMs: Date.now(), active: false, toolContext,
+      state: "created", createdAtMs: Date.now(), active: false, toolContext, ...(replacesSessionId ? { replacesSessionId } : {}),
+    });
+    await this.options.log.record({
+      atMs: Date.now(), investigationId, environmentId, sessionId: id,
+      kind: "lifecycle", summary: "enabled tools",
+      data: { toolIds: adapterSession.enabledToolIds ?? [] },
     });
     await this.lifecycle(id, "session created");
     return { sessionId: id, vendorRef: this.vendorRef(adapterSession.vendorId) };
   }
 
+  async resumeFromCheckpoint(input: {
+    investigationId: string; environmentId: string; sessionId: string; vendorSessionId: string;
+  }): Promise<{ sessionId: string; vendorRef: VendorRef }> {
+    return this.createSession(input);
+  }
+
+  revisionHeadId(sessionId: string): string | undefined {
+    return this.requireSession(sessionId).toolContext.revisionState?.headRevisionId;
+  }
+
   async runTurn(
     sessionId: string,
     prompt: string,
-    options: { abortSignal?: AbortSignal; toolContext?: Partial<Pick<ToolCallContext, "attemptId" | "grantId" | "epoch">> } = {},
-  ): Promise<TurnOutcome> {
+    options: RunTurnOptions & { nonBlocking: true },
+  ): Promise<TurnOutcome | null>;
+  async runTurn(sessionId: string, prompt: string, options?: RunTurnOptions): Promise<TurnOutcome>;
+  async runTurn(
+    sessionId: string,
+    prompt: string,
+    options: RunTurnOptions = {},
+  ): Promise<TurnOutcome | null> {
     const session = this.requireSession(sessionId);
     if (session.active) throw new TurnInProgressError("A turn is already active for this session");
     session.active = true;
     Object.assign(session.toolContext, options.toolContext ?? {});
+    let preAcquired = false;
+    if (options.nonBlocking) {
+      if (!this.tryAcquire()) {
+        session.active = false;
+        return null;
+      }
+      preAcquired = true;
+    }
     let reservation: string;
     try {
       reservation = this.options.ledger.reserve(session.id);
     } catch (error) {
       session.active = false;
+      if (preAcquired) this.release();
       if (error instanceof BudgetExceededError) session.state = "budget_exhausted";
       throw error;
     }
@@ -146,7 +236,7 @@ export class SessionManager {
     let text = "";
     let finalResult: Extract<StreamMsg, { type: "result" }> | undefined;
     try {
-      await this.acquire(options.abortSignal);
+      if (!preAcquired) await this.acquire(options.abortSignal);
       acquired = true;
       session.state = "streaming";
       started = true;
@@ -170,7 +260,7 @@ export class SessionManager {
       reservation = "";
       session.state = finalResult?.success ? "idle" : "error";
       await this.logMessage(session, "usage", tokenUsage ? "usage recorded" : "usage unknown");
-      return {
+      const outcome = {
         sessionId,
         vendorRef: this.vendorRef(session.adapterSession.vendorId),
         mode: this.options.adapter.mode,
@@ -180,6 +270,20 @@ export class SessionManager {
         tokenUsage,
         durationMs: finalResult?.durationMs ?? Date.now() - startedAt,
       };
+      const context = session.toolContext;
+      if (context.jobId && context.turnIndex !== undefined) {
+        await this.options.onTurnComplete?.({
+          investigationId: session.investigationId, environmentId: session.environmentId,
+          sessionId: session.id, vendorSessionId: session.adapterSession.vendorId,
+          attemptId: context.attemptId, epoch: context.epoch, jobId: context.jobId,
+          turnIndex: context.turnIndex,
+          ...((context.parentSessionId ?? session.replacesSessionId) ? { parentSessionId: context.parentSessionId ?? session.replacesSessionId } : {}),
+          role: context.role ?? "primary",
+          ...(context.revisionState?.headRevisionId ? { revisionHeadId: context.revisionState.headRevisionId } : {}),
+          tokenUsage,
+        }).catch(() => undefined);
+      }
+      return outcome;
     } catch (error) {
       session.state = "error";
       if (reservation) {
@@ -194,6 +298,87 @@ export class SessionManager {
     }
   }
 
+  async registerSession(
+    sessionId: string,
+    context: Pick<ToolCallContext, "attemptId" | "grantId" | "epoch" | "jobId">,
+  ): Promise<void> {
+    const session = this.requireSession(sessionId);
+    Object.assign(session.toolContext, context);
+    try {
+      const result = await this.options.onSessionReady?.({
+        attemptId: context.attemptId,
+        epoch: context.epoch,
+        session: this.toAgentSession(sessionId),
+      });
+      if (result && typeof result === "object" && "ok" in result && result.ok === false) {
+        throw new Error("session registration was rejected");
+      }
+    } catch (error) {
+      throw new SessionRegistrationError(
+        `session registration failed: ${error instanceof Error ? error.message : "unknown error"}`,
+        { cause: error },
+      );
+    }
+  }
+
+  takeSessionRegistrationError(sessionId: string): SessionRegistrationError | undefined {
+    const error = this.sessionRegistrationErrors.get(sessionId);
+    this.sessionRegistrationErrors.delete(sessionId);
+    return error;
+  }
+
+  async runSubtask(input: { prompt: string; purpose: string }, parentContext: ToolCallContext): Promise<Record<string, unknown>> {
+    const turnBudget = parentContext.turnBudget;
+    if (!turnBudget || turnBudget.used >= turnBudget.max) return { status: "retry_later", reason: "turn_cap" };
+    turnBudget.used += 1;
+    let child: { sessionId: string; vendorRef: VendorRef };
+    try {
+      child = await this.createSession({
+        investigationId: parentContext.investigationId,
+        environmentId: parentContext.environmentId,
+      });
+    } catch (error) {
+      turnBudget.used -= 1;
+      return { status: "rejected", reason: error instanceof SessionCapError ? "session_cap" : "subtask_unavailable" };
+    }
+    try {
+      try {
+        await this.registerSession(child.sessionId, {
+          attemptId: parentContext.attemptId,
+          grantId: parentContext.grantId,
+          epoch: parentContext.epoch,
+          jobId: parentContext.jobId,
+        });
+      } catch (error) {
+        if (!(error instanceof SessionRegistrationError)) throw error;
+        this.sessionRegistrationErrors.set(parentContext.sessionId, error);
+        return { status: "rejected", reason: "session_registration_failed" };
+      }
+      const turn = await this.runTurn(child.sessionId, input.prompt, {
+        nonBlocking: true,
+        toolContext: {
+          attemptId: parentContext.attemptId, grantId: parentContext.grantId,
+          epoch: parentContext.epoch, turnBudget, revisionState: parentContext.revisionState,
+          jobId: parentContext.jobId, turnIndex: turnBudget.used - 1,
+          parentSessionId: parentContext.sessionId,
+          role: "subtask",
+        },
+      });
+      if (!turn) {
+        turnBudget.used -= 1;
+        return { status: "retry_later", reason: "turn_cap" };
+      }
+      return {
+        status: turn.success ? "completed" : "failed",
+        text: turn.text.slice(0, 2000),
+        toolCalls: turn.toolCalls,
+        tokenUsage: turn.tokenUsage,
+      };
+    } finally {
+      await this.close(child.sessionId);
+    }
+  }
+
   async resume(sessionId: string): Promise<{ sessionId: string; vendorRef: VendorRef }> {
     const session = this.requireSession(sessionId);
     try {
@@ -201,6 +386,11 @@ export class SessionManager {
         cwd: session.cwd,
       });
       session.state = "idle";
+      await this.options.log.record({
+        atMs: Date.now(), investigationId: session.investigationId, environmentId: session.environmentId, sessionId,
+        kind: "lifecycle", summary: "enabled tools",
+        data: { toolIds: session.adapterSession.enabledToolIds ?? [] },
+      });
       return { sessionId, vendorRef: this.vendorRef(session.adapterSession.vendorId) };
     } catch (error) {
       if (!(error instanceof SessionMissingError)) throw error;
@@ -297,6 +487,12 @@ export class SessionManager {
       signal?.addEventListener("abort", abort, { once: true });
       this.waiters.push(waiter);
     });
+  }
+
+  private tryAcquire(): boolean {
+    if (this.activeTurns >= this.maxActiveTurns) return false;
+    this.activeTurns += 1;
+    return true;
   }
 
   private release(): void {

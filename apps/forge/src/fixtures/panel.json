@@ -20,6 +20,37 @@
     { "id": "00000000-0000-4000-8000-000000000113", "index": 2, "state": "provisioning" }
   ],
   "findingsCount": 4,
+  "findings": [
+    {
+      "id": "00000000-0000-4000-8000-000000000191",
+      "kind": "collision_frame",
+      "summary": "The approach path clips the divider before grasping.",
+      "environmentId": "00000000-0000-4000-8000-000000000111",
+      "citations": [
+        {
+          "kind": "trace_frame",
+          "artifactId": "00000000-0000-4000-8000-000000000181",
+          "experimentId": "00000000-0000-4000-8000-000000000141"
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000192",
+      "kind": "behavioral_note",
+      "summary": "The revised controller waits for the arm to clear the divider.",
+      "environmentId": "00000000-0000-4000-8000-000000000112",
+      "citations": [
+        {
+          "kind": "code_diff",
+          "artifactId": "00000000-0000-4000-8000-000000000182"
+        },
+        {
+          "kind": "metric",
+          "experimentId": "00000000-0000-4000-8000-000000000142"
+        }
+      ]
+    }
+  ],
   "candidates": [
     {
       "candidate": {
@@ -38,7 +69,18 @@
         "medianCompletionTimeSec": 12.4
       },
       "passedCases": 8,
-      "totalCases": 8
+      "totalCases": 8,
+      "suites": [
+        {
+          "evaluationId": "00000000-0000-4000-8000-000000000131",
+          "suite": "withheld",
+          "status": "passed",
+          "allRequiredPassed": true,
+          "passedCases": 7,
+          "failedCases": 1,
+          "totalCases": 8
+        }
+      ]
     },
     {
       "candidate": {
@@ -57,7 +99,19 @@
         "medianCompletionTimeSec": 14.1
       },
       "passedCases": 6,
-      "totalCases": 8
+      "totalCases": 8,
+      "suites": [
+        {
+          "evaluationId": "00000000-0000-4000-8000-000000000132",
+          "suite": "public",
+          "status": "failed",
+          "allRequiredPassed": false,
+          "passedCases": 6,
+          "failedCases": 2,
+          "totalCases": 8,
+          "failedCaseIds": ["divider-approach-b", "grasp-contact"]
+        }
+      ]
     }
   ],
   "underReview": {
@@ -75,7 +129,8 @@
   },
   "links": {
     "investigationUrl": "https://forksafe.example.invalid/investigations/00000000-0000-4000-8000-000000000101",
-    "reportUrl": "https://forksafe.example.invalid/reports/fixture-report"
+    "reportUrl": "https://forksafe.example.invalid/reports/fixture-report",
+    "evidencePackUrl": "https://forksafe.example.invalid/evidence/fixture-pack"
   },
   "fetchedAtMs": 1761200000000
 }

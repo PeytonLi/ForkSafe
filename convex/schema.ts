@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { authTables } from "@convex-dev/auth/server";
 
 const uuid = v.string();
 const vendorRef = v.object({ provider: v.string(), id: v.string() });
@@ -23,7 +24,22 @@ const attemptState = v.union(
 );
 
 export default defineSchema({
+  ...authTables,
+  forgeRequests: defineTable({
+    idempotencyKey: v.string(), payload: v.string(), requestId: uuid,
+    parentInvestigationId: uuid, followUpInvestigationId: uuid,
+    requestedBy: v.string(), note: v.string(), extraEnvironments: v.number(),
+    installationId: v.string(), createdAtMs: v.number(),
+    result: v.object({ requestId: uuid, accepted: v.boolean(), state: v.literal("admitted") }),
+  }).index("by_idempotencyKey", ["idempotencyKey"]),
+  readinessSnapshots: defineTable({
+    key: v.string(),
+    checkedAtMs: v.number(),
+    leaseUntilMs: v.number(),
+    integrations: v.any(),
+  }).index("by_key", ["key"]),
   investigations: defineTable({
+    parentInvestigationId: v.optional(uuid),
     appId: uuid,
     title: v.string(),
     state: v.union(
@@ -211,6 +227,7 @@ export default defineSchema({
   }).index("by_appId", ["appId"]).index("by_sandboxOp", ["sandboxOpId"]),
 
   artifacts: defineTable({
+    evidencePack: v.optional(v.boolean()),
     appId: uuid,
     kind: v.union(
       v.literal("trace"), v.literal("replay"), v.literal("controller_source"),
@@ -227,7 +244,7 @@ export default defineSchema({
     storageId: v.optional(v.id("_storage")),
     chunk: v.optional(v.object({ index: v.number(), total: v.number(), groupSha256: v.string() })),
     revokedAtMs: v.optional(v.number()),
-  }).index("by_appId", ["appId"]).index("by_sha_investigation", ["sha256", "investigationId"]),
+  }).index("by_appId", ["appId"]).index("by_sha_investigation", ["sha256", "investigationId"]).index("by_investigation", ["investigationId"]),
 
   outbox: defineTable({
     appId: uuid,
@@ -424,6 +441,7 @@ export default defineSchema({
     sourceArtifactId: uuid,
     changedFunctions: v.array(v.string()),
     rationale: v.optional(v.string()),
+    basedOnFindings: v.optional(v.array(uuid)),
     createdByAttemptId: uuid,
     epoch: v.number(),
     grantId: v.optional(uuid),
@@ -512,4 +530,29 @@ export default defineSchema({
     createdAtMs: v.number(),
   }).index("by_appId", ["appId"]).index("by_investigation", ["investigationId"])
     .index("by_idempotencyKey", ["idempotencyKey"]),
+
+  agentToolCalls: defineTable({
+    investigationId: uuid, environmentId: uuid, sessionId: uuid, attemptId: uuid, epoch: v.number(),
+    tool: v.string(), callId: uuid, result: v.any(), atMs: v.number(),
+  }).index("by_callId", ["callId"]).index("by_environment_tool", ["environmentId", "tool"]),
+
+  findingReads: defineTable({
+    investigationId: uuid, environmentId: uuid, sessionId: uuid, findingId: uuid, atMs: v.number(),
+  }).index("by_environment_finding", ["environmentId", "findingId"])
+    .index("by_investigation", ["investigationId"]),
+
+  findingUses: defineTable({
+    appId: uuid, findingId: uuid, findingEnvironmentId: uuid, usedByEnvironmentId: uuid,
+    experimentId: v.optional(uuid), candidateId: v.optional(uuid), crossEnvironment: v.boolean(),
+    spacetimeCommitted: v.boolean(), createdAtMs: v.number(),
+  }).index("by_target", ["findingId", "experimentId", "candidateId"])
+    .index("by_finding", ["findingId"]),
+
+  sessionCheckpoints: defineTable({
+    investigationId: uuid, environmentId: uuid, jobId: uuid, attemptId: uuid, epoch: v.number(),
+    role: v.union(v.literal("primary"), v.literal("subtask")),
+    sessionId: uuid, parentSessionId: v.optional(uuid), vendorSessionId: v.string(), turnIndex: v.number(),
+    revisionHeadId: v.optional(uuid), tokenUsage: v.optional(v.any()), createdAtMs: v.number(),
+  }).index("by_session_turn", ["sessionId", "turnIndex"])
+    .index("by_environment_job", ["environmentId", "jobId"]),
 });

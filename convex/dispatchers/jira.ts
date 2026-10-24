@@ -10,13 +10,13 @@ import { makeFunctionReference } from "convex/server";
 import { ZodError } from "zod";
 import { internal } from "../_generated/api.js";
 import { internalAction, internalMutation, internalQuery } from "../_generated/server.js";
-import { SpacetimeClient, SpacetimeRejected } from "./spacetime.js";
+import { SpacetimeClient, spacetimeEnvironment, SpacetimeRejected, SpacetimeUnavailable } from "./spacetime.js";
 
 type JiraMode = "live" | "blocked" | "not_implemented";
 type DispatchResult = { delivered: boolean; mode: JiraMode; reason?: string };
 type Snapshot = { investigation: Investigation; environments: InvestigationEnvironment[] } | null;
 
-const getInvestigationRef = makeFunctionReference<"query">("dispatchers/jira.getInvestigation");
+export const getInvestigationRef = makeFunctionReference<"query">("dispatchers/jira:getInvestigation");
 const UUID_NAMESPACE = "f8a11234-51cc-5db4-b570-7f1e480da7b7";
 
 export async function operationIdForIdempotencyKey(key: string): Promise<string> {
@@ -32,8 +32,16 @@ export async function operationIdForIdempotencyKey(key: string): Promise<string>
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+/** Error shape for logs: zod issue paths only (never values), else the error class and a short message. */
+export function failureDiagnostic(error: unknown): string {
+  if (error instanceof ZodError) return `zod:${error.issues.slice(0, 12).map((issue) => issue.path.join(".") || "(root)").join(",")}`;
+  if (error instanceof Error) return `${error.name}:${error.message.replace(/[A-Za-z0-9+/=_-]{32,}/g, "[redacted]").slice(0, 160)}`;
+  return typeof error;
+}
+
 export function classifyJiraFailure(error: unknown): { permanent: boolean; code: string } {
   if (error instanceof SpacetimeRejected) return { permanent: true, code: `spacetime_${safeCode(error.code)}` };
+  if (error instanceof SpacetimeUnavailable) return { permanent: false, code: "spacetime_unavailable" };
   if (error instanceof ZodError) return { permanent: true, code: "jira_invalid_payload" };
   if (error instanceof TypeError) return { permanent: true, code: "jira_invalid_payload" };
   if (error instanceof AtlassianHttpError) {
@@ -47,7 +55,7 @@ export async function deliverJiraPayload(
   payload: unknown,
   deps: {
     client: JiraClient;
-    spacetime: Pick<SpacetimeClient, "getReview" | "listCandidates" | "listEvaluations" | "findingsCount">;
+    spacetime: Pick<SpacetimeClient, "getReview" | "listCandidates" | "listEvaluations" | "findingsCount"> & Partial<Pick<SpacetimeClient, "listReviews">>;
     snapshot: (args: { id?: string; jiraIssueKey?: string }) => Promise<Snapshot>;
     projectKey: string;
     siteUrl: string;
@@ -91,6 +99,9 @@ export async function deliverJiraPayload(
     if (!review) throw new TypeError("review_missing");
     investigationId = review.investigationId;
     idempotencyKey = jiraIdempotencyKey(value);
+  } else if (value.kind === "awaiting_review" && typeof value.investigationId === "string") {
+    investigationId = value.investigationId;
+    idempotencyKey = jiraIdempotencyKey(value);
   } else if (explicit.success) {
     investigationId = explicit.data.investigation.id;
     idempotencyKey = typeof value.idempotencyKey === "string"
@@ -113,6 +124,8 @@ export async function deliverJiraPayload(
     deps.spacetime.findingsCount(investigationId),
   ]);
   const bestEvaluation = selectBestEvaluation(candidates, evaluations);
+  const reviews = deps.spacetime.listReviews ? await deps.spacetime.listReviews(investigationId) : [];
+  const latestReview = [...reviews].sort((left, right) => right.createdAtMs - left.createdAtMs)[0];
     const statuses = deps.readyStatuses?.filter(Boolean);
   const input = JiraSyncInput.parse({
     operationId: OperationId.parse(await operationIdForIdempotencyKey(idempotencyKey!)),
@@ -124,10 +137,38 @@ export async function deliverJiraPayload(
       candidatesCount: candidates.length,
       ...(bestEvaluation ? { bestEvaluation } : {}),
     },
+    candidateVerdicts: candidateVerdicts(candidates, evaluations),
+    ...(latestReview ? { review: { reviewId: latestReview.id, candidateId: latestReview.candidateId, decision: latestReview.decision } } : {}),
+    extraLabels: [JIRA_RUN_LABEL],
     ...(deps.webUrl ? { investigationUrl: new URL(`/investigations/${investigationId}`, deps.webUrl).toString() } : {}),
     ...(statuses?.length ? { workflow: { readyForReview: { statusNames: statuses } } } : {}),
   });
   return { input, result: await syncInvestigationToJira(deps.client, input) };
+}
+
+export const JIRA_RUN_LABEL = "forksafe-run";
+
+/** Per-candidate verdicts for the issue body. Withheld suites contribute only
+ *  their overall status: no case ids, counts, or failure detail. */
+export function candidateVerdicts(
+  candidates: Array<{ id: string; controllerSha256: string; createdAtMs?: number }>,
+  evaluations: CandidateEvaluation[],
+) {
+  const latest = (candidateId: string, suite: "public" | "withheld") => evaluations
+    .filter((evaluation) => evaluation.candidateId === candidateId && evaluation.suite === suite)
+    .sort((left, right) => right.createdAtMs - left.createdAtMs)[0];
+  return candidates.slice(0, 20).map((candidate) => {
+    const publicEvaluation = latest(candidate.id, "public");
+    const withheldEvaluation = latest(candidate.id, "withheld");
+    return {
+      candidateId: candidate.id,
+      controllerSha256: candidate.controllerSha256,
+      ...(publicEvaluation ? { publicVerdict: publicEvaluation.status } : {}),
+      publicPassed: publicEvaluation ? publicEvaluation.cases.filter((item) => item.status === "passed").length : 0,
+      publicTotal: publicEvaluation ? publicEvaluation.cases.length : 0,
+      ...(withheldEvaluation ? { withheldVerdict: withheldEvaluation.status } : {}),
+    };
+  });
 }
 
 function selectBestEvaluation(
@@ -230,7 +271,8 @@ export const dispatch = internalAction({
       email: env.ATLASSIAN_EMAIL,
       apiToken: env.ATLASSIAN_API_TOKEN,
     }));
-    const spacetime = new SpacetimeClient();
+    const bridgeToken = await ctx.runAction(internal.bridge.sharedBridgeToken, {});
+    const spacetime = new SpacetimeClient(spacetimeEnvironment(bridgeToken));
     const snapshot = (query: { id?: string; jiraIssueKey?: string }) =>
       ctx.runQuery(getInvestigationRef, query);
     const key = jiraIdempotencyKey(args.payload);
@@ -252,6 +294,7 @@ export const dispatch = internalAction({
       return { delivered: true, mode: "live" };
     } catch (error) {
       const failure = classifyJiraFailure(error);
+      console.log("jira:dispatch_failed", failure.code, failureDiagnostic(error));
       if (failure.permanent && key) {
         await ctx.runMutation(internal.dispatchers.jira.deadLetter, {
           idempotencyKey: key,
@@ -269,6 +312,7 @@ export function jiraIdempotencyKey(payload: unknown): string | undefined {
   const value = payload as Record<string, unknown>;
   if (typeof value.idempotencyKey === "string") return value.idempotencyKey;
   if (value.kind === "review" && typeof value.id === "string") return `review:${value.id}:jira_sync`;
+  if (value.kind === "awaiting_review" && typeof value.investigationId === "string") return `awaiting_review:${value.investigationId}:jira_sync`;
   if (value.kind === "review" && value.record && typeof value.record === "object" && typeof (value.record as { id?: unknown }).id === "string") {
     return `review:${(value.record as { id: string }).id}:jira_sync`;
   }

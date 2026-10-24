@@ -14,6 +14,11 @@ export class UnauthorizedError extends Error {
   }
 }
 
+export function isLocalDeployment(env: Record<string, string | undefined> = process.env): boolean {
+  try { return ["localhost", "127.0.0.1"].includes(new URL(env.CONVEX_CLOUD_URL ?? "").hostname); }
+  catch { return false; }
+}
+
 export function requireServiceToken(
   token: string | undefined,
   envSecret = process.env.INTEGRATION_SHARED_SECRET,
@@ -28,6 +33,6 @@ export function requireUiAccess(
   env: Record<string, string | undefined> = process.env,
 ): void {
   if (env.INTEGRATION_SHARED_SECRET && token && constantTimeEqual(token, env.INTEGRATION_SHARED_SECRET)) return;
-  if (env.FORKSAFE_DEV_ANONYMOUS_UI === "true") return;
+  if (env.FORKSAFE_DEV_ANONYMOUS_UI === "true" && isLocalDeployment(env)) return;
   throw new UnauthorizedError();
 }

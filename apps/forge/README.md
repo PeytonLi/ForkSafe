@@ -12,10 +12,12 @@ needed for issue context. It configures the `forksafe-backend` Forge Remote
 with `compute` and `storage` operations, and opts out of in-scope EUD storage.
 Outbound egress is limited to the declared `forksafe-backend` remote; no
 unrestricted external host is configured.
-The browser calls resolver functions through `@forge/bridge`; the resolver
-calls the remote backend using Forge Remote and its Invocation Token. Shared
-backend secrets are never sent to the browser. The backend contract paths and
-schemas are exported from `@forksafe/integrations-atlassian`.
+The browser calls `getPanel`, `getReviewDetails`, `startInvestigation`,
+`submitReview`, and `requestMoreInvestigation` through `@forge/bridge`. The
+resolver calls the remote backend using Forge Remote and its Invocation Token.
+Shared backend secrets are never sent to the browser. The backend contract
+paths and schemas, including `/forge/v1/requests`, are exported from
+`@forksafe/integrations-atlassian`.
 
 ## Registered app
 
@@ -24,10 +26,16 @@ The app is registered under Developer Space **Peyton ForkSafe** with ID
 
 ## Modes
 
-By default the Forge app uses clearly labeled deterministic fixture data.
-Set `FORKSAFE_BACKEND_MODE` to `remote` after configuring the remote to use the
-ForkSafe Convex HTTP endpoint. Other values continue to select fixture mode.
-The fixture is illustrative and is not a live Jira or ForkSafe investigation.
+The panel labels live data, local data, fixtures, and unavailable services
+separately. By default the Forge app uses clearly labeled deterministic
+fixture data. Set `FORKSAFE_BACKEND_MODE` to `remote` after configuring the
+remote to use the ForkSafe Convex HTTP endpoint. Other values continue to
+select fixture mode. The fixture is illustrative and is not a live Jira or
+ForkSafe investigation. Withheld evaluation summaries never include case IDs.
+
+The `forksafe-selfcheck` webtrigger reports the resolver names, the expected
+no-issue result, and backend mode without making a backend request or exposing
+investigation data.
 
 ## Development install
 
@@ -54,9 +62,16 @@ deployment. Deploy and install only into an authorized development site.
    environment count and an optional Confluence requirements page ID.
 4. Review environment and candidate evidence, including the requirements page
    revision and full controller SHA-256.
-5. Submit an approve/reject/needs-changes decision with notes. The resolver
-   takes reviewer identity from Forge's `context.accountId` and records the
-   review only against the exact evaluated hash.
+5. Review an exact candidate version and evaluation, then confirm an
+   approve/request-changes/reject decision with a required note. The resolver
+   takes reviewer identity from Forge's `context.accountId` and uses an
+   idempotency key when recording the review.
+6. Ask for more investigation when needed. This action reports a friendly
+   not-yet-available message until the Convex request route is deployed.
+
+For a deployment self-check, invoke the `forksafe-selfcheck` webtrigger and
+confirm that `panelWithoutIssue` is `no_issue_context`. The check deliberately
+does not contact the backend.
 
 Run `pnpm typecheck`, `pnpm test`, and the Forge CLI's `forge lint` from this
 directory during development.

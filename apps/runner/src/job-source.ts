@@ -21,6 +21,7 @@ import { LEASE_TTL_MS } from "./heartbeat.js";
 export interface JobSource {
   start?(input: { attemptId: string; epoch: number }): Promise<unknown>;
   session?(input: { attemptId: string; epoch: number; session: unknown }): Promise<unknown>;
+  checkpoint?(input: { attemptId: string; epoch: number; checkpoint: Record<string, unknown> }): Promise<unknown>;
   claim(request: z.infer<typeof ClaimRequest>): Promise<Lease | null>;
   heartbeat(heartbeat: Heartbeat): Promise<z.infer<typeof HeartbeatResponse>>;
   complete(completion: z.infer<typeof CompletionRequest>): Promise<z.infer<typeof CompletionResponse>>;
@@ -40,6 +41,10 @@ export class HttpJobSource implements JobSource {
 
   session(input: { attemptId: string; epoch: number; session: unknown }): Promise<unknown> {
     return this.post("session", input, z.unknown());
+  }
+
+  checkpoint(input: { attemptId: string; epoch: number; checkpoint: Record<string, unknown> }): Promise<unknown> {
+    return this.post("checkpoint", input, z.unknown());
   }
 
   claim(request: z.infer<typeof ClaimRequest>): Promise<Lease | null> {

@@ -81,7 +81,15 @@ export const claim = internalMutation({
         const claimed = await claimJob(ctx, job, args.workerId);
         const investigation = await byAppId(ctx, "investigations", job.investigationId);
         const environment = await byAppId(ctx, "environments", job.environmentId!);
-        return { claimed, job: { ...job, epoch: claimed.epoch, activeAttemptId: claimed.attemptId, state: "grant_pending" }, investigation, environment };
+        const checkpoints = await ctx.db.query("sessionCheckpoints").withIndex("by_environment_job", (q) =>
+          q.eq("environmentId", job.environmentId!).eq("jobId", job.appId)).collect();
+        const checkpoint = checkpoints.filter((row) => row.role === "primary")
+          .sort((a, b) => b.turnIndex - a.turnIndex || b.createdAtMs - a.createdAtMs)[0];
+        return {
+          claimed,
+          job: { ...job, attemptsUsed: job.attemptsUsed + 1, epoch: claimed.epoch, activeAttemptId: claimed.attemptId, state: "grant_pending" },
+          investigation, environment, checkpoint,
+        };
       } catch (error) {
         if (error instanceof ConvexError) continue;
         throw error;
@@ -187,6 +195,31 @@ export const upsertSession = internalMutation({
   },
 });
 
+export const checkpoint = internalMutation({
+  args: {
+    credentialId: v.string(), attemptId: v.string(), epoch: v.number(),
+    checkpoint: v.object({
+      investigationId: v.string(), environmentId: v.string(), jobId: v.string(), attemptId: v.string(),
+      epoch: v.number(), sessionId: v.string(), vendorSessionId: v.string(), turnIndex: v.number(),
+      role: v.union(v.literal("primary"), v.literal("subtask")),
+      parentSessionId: v.optional(v.string()), revisionHeadId: v.optional(v.string()), tokenUsage: v.optional(v.any()),
+    }),
+  },
+  handler: async (ctx, args) => {
+    const credential = await requireCredential(ctx, args.credentialId);
+    const { job } = await requireLease(ctx, credential, args.attemptId, args.epoch);
+    const row = args.checkpoint;
+    if (row.attemptId !== args.attemptId || row.epoch !== args.epoch || row.jobId !== job.appId
+      || row.environmentId !== credential.environmentId || row.investigationId !== credential.investigationId
+      || !Number.isInteger(row.turnIndex) || row.turnIndex < 0) throw new ConvexError("checkpoint_invalid");
+    const existing = await ctx.db.query("sessionCheckpoints").withIndex("by_session_turn", (q) =>
+      q.eq("sessionId", row.sessionId).eq("turnIndex", row.turnIndex)).unique();
+    if (existing) return { ok: true, duplicate: true };
+    await ctx.db.insert("sessionCheckpoints", { ...row, createdAtMs: Date.now() });
+    return { ok: true, duplicate: false };
+  },
+});
+
 /** artifacts_persisted → evidence_committed → completion_acknowledged in one
  *  transaction; the runner retries with the same operationId if it crashes. */
 export const complete = internalMutation({
@@ -242,7 +275,10 @@ export const complete = internalMutation({
 
 /** Fence check for every tool call. Returns the records the tool needs. */
 export const authorizeTool = internalQuery({
-  args: { credentialId: v.string(), attemptId: v.string(), grantId: v.string(), epoch: v.number(), investigationId: v.string(), environmentId: v.string() },
+  args: {
+    credentialId: v.string(), attemptId: v.string(), grantId: v.string(), epoch: v.number(),
+    investigationId: v.string(), environmentId: v.string(), sessionId: v.string(),
+  },
   handler: async (ctx, args) => {
     const credential = await ctx.db.query("runnerCredentials").withIndex("by_appId", (q) => q.eq("appId", args.credentialId)).unique();
     if (!credential || credential.revokedAtMs !== undefined || credential.expiresAtMs <= Date.now()) throw new ConvexError("unauthorized");
@@ -254,6 +290,11 @@ export const authorizeTool = internalQuery({
     if (attempt.leasedUntilMs <= Date.now()) throw new ConvexError("lease_expired");
     const grant = await ctx.db.query("grants").withIndex("by_attempt", (q) => q.eq("attemptId", attempt.appId)).unique();
     if (!grant || grant.appId !== args.grantId || grant.revokedAtMs !== undefined || grant.expiresAtMs <= Date.now()) throw new ConvexError("grant_revoked");
+    if (grant.jobId !== job.appId || grant.epoch !== args.epoch || grant.investigationId !== job.investigationId
+      || grant.environmentId !== job.environmentId) throw new ConvexError("fenced");
+    const session = await ctx.db.query("sessions").withIndex("by_appId", (q) => q.eq("appId", args.sessionId)).unique();
+    if (!session || session.investigationId !== job.investigationId || session.environmentId !== job.environmentId
+      || session.attemptId !== attempt.appId) throw new ConvexError("session_mismatch");
     const investigation = await ctx.db.query("investigations").withIndex("by_appId", (q) => q.eq("appId", job.investigationId)).unique();
     if (!investigation || investigation.cancelStatus !== "none" || job.cancelRequestedAtMs !== undefined) throw new ConvexError("investigation_cancelling");
     const environment = await ctx.db.query("environments").withIndex("by_appId", (q) => q.eq("appId", job.environmentId!)).unique();
