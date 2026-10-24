@@ -1,0 +1,76 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { ActivityLog } from "../src/activity-log.js";
+import { FixtureFactoryAdapter } from "../src/adapter.js";
+import { SessionCapError, SessionManager } from "../src/session-manager.js";
+import { UsageLedger } from "../src/usage.js";
+
+const investigations = [crypto.randomUUID(), crypto.randomUUID()];
+const environments = Array.from({ length: 7 }, () => crypto.randomUUID());
+const dirs: string[] = [];
+const backend = {
+  async run_experiment() { return { status: "blocked" }; },
+  async submit_candidate() { return { status: "blocked" }; },
+  async read_findings() { return []; },
+  async write_finding() { return { status: "local" }; },
+  async request_evidence() { return { status: "local" }; },
+};
+async function manager(adapter = new FixtureFactoryAdapter(), opts: { sessionsPerEnvironment?: number; maxActiveTurns?: number } = {}) {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), "forksafe-sessions-"));
+  dirs.push(workspaceRoot);
+  return new SessionManager({
+    adapter, ledger: new UsageLedger(), workspaceRoot,
+    toolBackend: backend, log: new ActivityLog(), ...opts,
+  });
+}
+afterEach(async () => Promise.all(dirs.splice(0).map((path) => rm(path, { recursive: true, force: true }))));
+
+describe("SessionManager", () => {
+  it("enforces environment session caps and the absolute limit", async () => {
+    const defaultManager = await manager();
+    await defaultManager.createSession({ investigationId: investigations[0]!, environmentId: environments[0]! });
+    await defaultManager.createSession({ investigationId: investigations[0]!, environmentId: environments[0]! });
+    await expect(defaultManager.createSession({ investigationId: investigations[0]!, environmentId: environments[0]! })).rejects.toBeInstanceOf(SessionCapError);
+    const three = await manager(new FixtureFactoryAdapter(), { sessionsPerEnvironment: 3 });
+    for (let i = 0; i < 3; i += 1) await three.createSession({ investigationId: investigations[0]!, environmentId: environments[1]! });
+    expect(() => new SessionManager({ adapter: new FixtureFactoryAdapter(), ledger: new UsageLedger(), workspaceRoot: "/tmp", toolBackend: backend, log: new ActivityLog(), sessionsPerEnvironment: 4 })).toThrow(RangeError);
+  });
+
+  it("isolates workspace cwd by environment", async () => {
+    const sessions = await manager();
+    const first = await sessions.createSession({ investigationId: investigations[0]!, environmentId: environments[2]! });
+    const second = await sessions.createSession({ investigationId: investigations[0]!, environmentId: environments[3]! });
+    expect(sessions.toAgentSession(first.sessionId).environmentId).not.toBe(sessions.toAgentSession(second.sessionId).environmentId);
+  });
+
+  it("caps global active turns at four while allowing concurrent sessions", async () => {
+    let active = 0;
+    let maximum = 0;
+    const adapter = new FixtureFactoryAdapter({ gate: async () => {
+      active += 1; maximum = Math.max(maximum, active);
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      active -= 1;
+    } });
+    const sessions = await manager(adapter);
+    const ids = [];
+    for (let i = 0; i < 5; i += 1) ids.push((await sessions.createSession({ investigationId: investigations[0]!, environmentId: environments[i]! })).sessionId);
+    await Promise.all(ids.map((id) => sessions.runTurn(id, "inspect")));
+    expect(maximum).toBe(4);
+  });
+
+  it("reports fixture and unknown usage, and replaces missing vendor sessions with lineage", async () => {
+    const adapter = new FixtureFactoryAdapter({ usage: "unknown" });
+    const sessions = await manager(adapter);
+    const created = await sessions.createSession({ investigationId: investigations[0]!, environmentId: environments[5]! });
+    const outcome = await sessions.runTurn(created.sessionId, "fixture");
+    expect(outcome.mode).toBe("fixture");
+    expect(outcome.vendorRef.provider).toBe("local");
+    expect(outcome.toolCalls[0]?.name).toBe("read_findings");
+    expect(sessions.toAgentSession(created.sessionId).tokenUsage.usageKnown).toBe(false);
+    (adapter as unknown as { sessions: Set<string> }).sessions.clear();
+    const replacement = await sessions.resume(created.sessionId);
+    expect(sessions.replacesSessionId(replacement.sessionId)).toBe(created.sessionId);
+  });
+});
