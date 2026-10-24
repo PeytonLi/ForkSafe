@@ -194,3 +194,175 @@ test("readiness endpoint returns contract-shaped data without secret values", as
     expect(typeof r.probed).toBe("boolean");
   }
 });
+
+const PANDA = "3b7d9303-7082-4b73-a3b6-1391b3e2fc4d";
+
+async function openSection(page: Page, mobile: boolean, value: string, label: string) {
+  if (mobile) await page.getByRole("combobox", { name: "Investigation sections" }).selectOption(value);
+  else await page.getByRole("tab", { name: label }).click();
+}
+
+test("health page: plain-language service cards and pipeline counts", async ({ page }, info) => {
+  const mobile = info.project.name === "mobile";
+  await page.goto("/");
+  await page.getByTestId("readiness-strip").getByRole("button").first().click();
+  await page.getByTestId("readiness-see-all").click();
+  await expect(page).toHaveURL(/#\/health$/);
+  const health = page.getByTestId("health-page");
+  await expect(health.getByRole("heading", { name: "How everything is running" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Integration status" })).toHaveCount(0);
+
+  const readiness = (await (await page.request.get("/api/readiness")).json()).integrations as { name: string; mode: string; probed: boolean }[];
+  for (const r of readiness) {
+    const card = health.getByTestId(`health-${r.name}`);
+    const label = r.mode === "blocked" ? "Blocked" : r.mode === "not_implemented" ? "Not implemented" : r.mode === "fixture" ? "Fixture" : r.probed ? "Live" : "Configured";
+    await expect(card.getByText(label, { exact: true })).toBeVisible();
+  }
+  const daytona = health.getByTestId("health-daytona");
+  if (mobile) {
+    const toggle = daytona.getByRole("button", { name: /Daytona/ });
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await toggle.tap();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  }
+  await expect(daytona).toContainText(/experiments|sandboxes/);
+  await expect(daytona.getByText(/^Checked /)).toBeVisible();
+
+  const pipeline = page.getByTestId("pipeline-card");
+  await expect(pipeline.getByText("Fixture", { exact: true })).toBeVisible();
+  await expect(pipeline.getByTestId("pipeline-sandboxes")).toContainText("of 5");
+  await expect(pipeline.getByTestId("pipeline-dead")).toHaveText("0");
+
+  // Keyboard: filter to services that need attention.
+  const attention = health.getByRole("button", { name: /Needs attention/ });
+  await attention.focus();
+  await page.keyboard.press("Enter");
+  await expect(attention).toHaveAttribute("aria-pressed", "true");
+  const attentionCount = readiness.filter((r) => ["blocked", "not_implemented", "fixture"].includes(r.mode)).length;
+  await expect(health.getByRole("list", { name: "Services" }).getByRole("listitem")).toHaveCount(attentionCount);
+  await expectNoHorizontalOverflow(page);
+});
+
+test("why did this fail: cited fixture answer, withheld source, not-enough and out-of-scope states", async ({ page }, info) => {
+  const mobile = info.project.name === "mobile";
+  await page.goto(`/#/investigations/${PANDA}/ask`);
+  const ask = page.getByTestId("ask-panel");
+  await expect(ask.getByRole("heading", { name: "Why did this fail?" })).toBeVisible();
+  await expect(ask.getByRole("group", { name: "Suggested questions" }).getByRole("button")).toHaveCount(3);
+
+  // Keyboard path: type and press Enter.
+  await ask.getByTestId("ask-input").focus();
+  await page.keyboard.type("Why did the cube hit the divider?");
+  await page.keyboard.press("Enter");
+  const answer = ask.getByTestId("ask-answer");
+  await expect(answer).toContainText("first penetration at t=4.1 s");
+  await expect(answer).toContainText("Elastic evidence agent was not used");
+  await expect(answer.getByText("Fixture", { exact: true })).toBeVisible();
+  const withheld = answer.getByTestId("citation-withheld");
+  await expect(withheld).toHaveCount(1);
+  await expect(withheld.locator("s")).toBeVisible();
+  await expect(answer.getByTestId("withheld-note")).toContainText("was revoked");
+  await expectNoHorizontalOverflow(page);
+
+  // A citation chip opens the exact evidence row.
+  const chip = answer.getByTestId("citation-chip").first();
+  const href = (await chip.getAttribute("href"))!;
+  const findingId = href.split("/").pop()!;
+  await chip.focus();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(new RegExp(`/evidence/${findingId}$`));
+  const row = page.locator(`[data-finding-id="${findingId}"]`);
+  await expect(row).toBeVisible();
+  await expect(row).toBeFocused();
+
+  // Not enough evidence is a friendly state, never a guess.
+  await page.goto(`/#/investigations/${PANDA}/ask`);
+  await page.getByTestId("ask-input").fill("What is the weather on Mars today?");
+  await page.getByTestId("ask-submit").click();
+  const soft = page.getByTestId("ask-not-enough");
+  await expect(soft).toContainText("We don't have enough evidence to answer that yet");
+  await expect(soft.getByTestId("citation-chip")).toHaveCount(0);
+
+  // Questions about other investigations are refused before anything is asked.
+  await page.getByTestId("ask-input").fill("Compare this with all investigations");
+  await page.getByTestId("ask-submit").click();
+  await expect(page.getByTestId("ask-error")).toContainText("only be about this investigation");
+  await expectNoHorizontalOverflow(page);
+});
+
+test("compare: original run as a time-synced ghost with legend and toggle", async ({ page }, info) => {
+  await page.goto(`/#/investigations/${PANDA}/capture`);
+  await openSection(page, info.project.name === "mobile", "compare", "Compare & review");
+  const cmp = page.getByTestId("comparison-replay");
+  const repaired = cmp.locator('[data-testid="replay-viewer"][data-label="Repaired candidate"]');
+  const original = cmp.locator('[data-testid="replay-viewer"][data-label="Original"]');
+  const toggle = page.getByTestId("ghost-toggle");
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("ghost-legend")).toContainText("Original arm (ghost)");
+  await expect(repaired).toHaveAttribute("data-ghost", "on");
+  await expect(original).toHaveAttribute("data-ghost", "off");
+
+  await cmp.getByTestId("replay-scrubber").fill("4.1");
+  await expect(repaired).toHaveAttribute("data-ghost-t", "4.10");
+  await expect(original.getByTestId("frame-readout")).toContainText("t=4.10 s");
+  await cmp.getByTestId("replay-scrubber").focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(repaired).toHaveAttribute("data-ghost-t", "4.20");
+  await expect(repaired.getByTestId("frame-readout")).toContainText("t=4.20 s");
+  await expectNoHorizontalOverflow(page);
+
+  await toggle.focus();
+  await page.keyboard.press("Space");
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await expect(repaired).toHaveAttribute("data-ghost", "off");
+  await expect(page.getByTestId("ghost-legend")).toHaveCount(0);
+});
+
+test("timeline: swim lanes on desktop, vertical list on phones", async ({ page }, info) => {
+  const mobile = info.project.name === "mobile";
+  await page.goto(`/#/investigations/${PANDA}/capture`);
+  await openSection(page, mobile, "timeline", "Timeline");
+  const timeline = page.getByTestId("timeline");
+  if (mobile) {
+    await expect(timeline.getByTestId("timeline-chart")).toHaveCount(0);
+    const list = timeline.getByTestId("timeline-list");
+    await expect(list.getByRole("listitem").first()).toBeVisible();
+    await list.getByRole("button", { name: "Env 2" }).tap();
+    await expect(list.getByRole("button", { name: "Env 2" })).toHaveAttribute("aria-pressed", "true");
+    await expect(list).toContainText("Experiment");
+    const more = list.getByTestId("timeline-more");
+    if (await more.count()) {
+      const before = await list.getByRole("listitem").count();
+      await more.tap();
+      expect(await list.getByRole("listitem").count()).toBeGreaterThan(before);
+    }
+  } else {
+    const chart = timeline.getByTestId("timeline-chart");
+    for (const n of [1, 2, 3]) await expect(chart.getByTestId(`timeline-lane-${n}`)).toBeVisible();
+    const readout = chart.getByTestId("timeline-readout");
+    const first = chart.getByRole("toolbar").getByRole("button").first();
+    await first.focus();
+    const start = await readout.textContent();
+    await page.keyboard.press("ArrowRight");
+    await expect(readout).not.toHaveText(start!);
+    await page.keyboard.press("End");
+    await expect(readout).toContainText(/check|Fix|Experiment|job|session/i);
+    // Only one tab stop inside the chart (roving focus).
+    await expect(chart.locator('button[tabindex="0"]')).toHaveCount(1);
+  }
+  await expectNoHorizontalOverflow(page);
+});
+
+test("evidence: finding-influence graph shows cross-environment use", async ({ page }, info) => {
+  await page.goto(`/#/investigations/${PANDA}/capture`);
+  await openSection(page, info.project.name === "mobile", "evidence", "Evidence");
+  await page.getByTestId("influence-toggle").click();
+  const graph = page.getByTestId("influence-graph");
+  await expect(graph.getByTestId("influence-edge")).toHaveCount(4);
+  await expect(graph.locator('[data-testid="influence-edge"][data-cross="true"]')).toHaveCount(1);
+  await expect(graph).toContainText("1 of 4 links crossed environments");
+  const node = graph.getByRole("button", { name: /Finding 63a91fbd from Env 3/ });
+  await node.focus();
+  await expect(node).toBeFocused();
+  await expectNoHorizontalOverflow(page);
+});

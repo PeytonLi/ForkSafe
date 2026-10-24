@@ -14,3 +14,4 @@ export function createClient(env: ImportMetaEnv = import.meta.env): ForkSafeClie
   if (url && env.VITE_FORKSAFE_DATA !== "fixture") return new ConvexForkSafeClient(url);
   return new FixtureClient();
 }
+export * from "./ask";

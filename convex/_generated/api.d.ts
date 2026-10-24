@@ -59,6 +59,12 @@ import type * as runnerHttp from "../runnerHttp.js";
 import type * as sandboxActions from "../sandboxActions.js";
 import type * as sandboxData from "../sandboxData.js";
 import type * as sandboxes from "../sandboxes.js";
+import type * as web_ask from "../web/ask.js";
+import type * as web_askData from "../web/askData.js";
+import type * as web_askPolicy from "../web/askPolicy.js";
+import type * as web_elasticAgent from "../web/elasticAgent.js";
+import type * as web_health from "../web/health.js";
+import type * as web_timeline from "../web/timeline.js";
 import type * as workers from "../workers.js";
 import type * as workflows from "../workflows.js";
 
@@ -120,6 +126,12 @@ declare const fullApi: ApiFromModules<{
   sandboxActions: typeof sandboxActions;
   sandboxData: typeof sandboxData;
   sandboxes: typeof sandboxes;
+  "web/ask": typeof web_ask;
+  "web/askData": typeof web_askData;
+  "web/askPolicy": typeof web_askPolicy;
+  "web/elasticAgent": typeof web_elasticAgent;
+  "web/health": typeof web_health;
+  "web/timeline": typeof web_timeline;
   workers: typeof workers;
   workflows: typeof workflows;
 }>;

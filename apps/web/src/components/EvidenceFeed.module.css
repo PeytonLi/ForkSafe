@@ -18,3 +18,7 @@
   .filters { overflow-x: auto; }
   .filter, .filterActive { padding-right: 0.45rem; padding-left: 0.45rem; }
 }
+.actions { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; min-width: 0; max-width: 100%; }
+.item:focus { outline: none; }
+.item:focus-visible { outline: 3px solid rgba(51, 118, 129, 0.42); outline-offset: 2px; }
+.focused { border-color: #99bdbe; background: #f3faf9; box-shadow: 0 0 0 3px rgba(51, 118, 129, 0.14); }
