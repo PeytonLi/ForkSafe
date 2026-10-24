@@ -10,6 +10,11 @@
 .subTabPanel { min-width: 0; animation: compare-rise 180ms ease-out both; }
 @keyframes compare-rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 .panes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.65rem; }
+.compact .panes { gap: 0.35rem; }
+.compact .canvasWrap { aspect-ratio: 1 / 0.38; }
+@media (max-width: 900px) {
+  .compact .panes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 .outcome { margin: 0.35rem 0 0; }
 .card { min-width: 0; padding: 0.9rem; border: 1px solid rgba(221, 226, 222, 0.72); border-radius: var(--radius-md); background: var(--panel); box-shadow: var(--shadow-card); }
 .card h3 { margin-bottom: 0.65rem; font-size: var(--text-md); }

@@ -19,10 +19,13 @@ import type {
   CancellationState,
   CaptureDraft,
   CaptureOutcome,
+  CurrentController,
   EvidenceAnswer,
   ForkSafeClient,
   HandoffEvent,
   InvestigationListItem,
+  LearningExperimentSummary,
+  LearningView,
   InvestigationWorkspace,
   LiveStreamSnapshot,
   PipelineHealth,
@@ -48,6 +51,36 @@ type FixtureFile = z.infer<typeof FixtureFile>;
 
 export const FIXTURE_REVIEWER = "local-dev-reviewer (fixture identity)";
 const REVIEWS_KEY = "forksafe.fixture.reviews.v1";
+const RETRIES_KEY = "forksafe.fixture.retries.v1";
+
+const RetrySnapshot = z.object({
+  investigationId: z.string().uuid(),
+  state: z.string(),
+  captureStatus: z.string().nullable(),
+  controllerSha256: z.string().nullable(),
+  controllerVersion: z.number().nullable(),
+  before: z.object({
+    experimentId: z.string(),
+    status: z.string(),
+    completed: z.boolean(),
+    completionTimeSec: z.number().optional(),
+    firstFailure: z.object({ kind: z.string(), tSec: z.number(), detail: z.string() }).optional(),
+    replayArtifactId: z.string().optional(),
+    controllerSha256: z.string(),
+    failureKinds: z.array(z.string()).optional(),
+  }).nullable(),
+  after: z.object({
+    experimentId: z.string(),
+    status: z.string(),
+    completed: z.boolean(),
+    completionTimeSec: z.number().optional(),
+    firstFailure: z.object({ kind: z.string(), tSec: z.number(), detail: z.string() }).optional(),
+    replayArtifactId: z.string().optional(),
+    controllerSha256: z.string(),
+    failureKinds: z.array(z.string()).optional(),
+  }).nullable(),
+  recorded: z.boolean().optional(),
+});
 
 export interface FixtureOptions {
   /** Delay applied to every call so loading states are observable. */
@@ -107,6 +140,7 @@ export class FixtureClient implements ForkSafeClient {
   private fixtureStreams = new Map<string, FixtureStreamSource>();
   private liveRuns = new Map<string, FixtureStreamRun>();
   private simulateStream: boolean;
+  private retries = new Map<string, NonNullable<LearningView["retry"]["latest"]>>();
 
   constructor(opts: FixtureOptions = {}) {
     this.data = FixtureFile.parse(raw);
@@ -119,6 +153,11 @@ export class FixtureClient implements ForkSafeClient {
     if (stored) {
       const parsed = z.array(HumanReview).safeParse(JSON.parse(stored));
       if (parsed.success) this.data.reviews = parsed.data;
+    }
+    const retries = this.storage?.getItem(RETRIES_KEY);
+    if (retries) {
+      const parsed = z.record(RetrySnapshot).safeParse(JSON.parse(retries));
+      if (parsed.success) this.retries = new Map(Object.entries(parsed.data));
     }
   }
 
@@ -374,6 +413,138 @@ export class FixtureClient implements ForkSafeClient {
       this.storage?.setItem(REVIEWS_KEY, JSON.stringify(this.data.reviews));
       this.emit(input.investigationId);
       return review;
+    });
+  }
+
+  private learningNow(investigationId: string): LearningView {
+    const investigation = this.requireInvestigation(investigationId);
+    const baselineExperiment = this.data.experiments.find((row) => row.id === investigation.baselineExperimentId);
+    const baselineReplay = baselineExperiment?.replayArtifactId ? this.data.replays[baselineExperiment.replayArtifactId] : undefined;
+    const lineage: LearningView["lineage"] = [];
+    if (baselineExperiment) {
+      lineage.push({
+        version: 1,
+        controllerSha256: baselineExperiment.controllerSha256,
+        label: "Original baseline",
+      });
+    }
+    const approvedReviews = this.data.reviews
+      .filter((review) => review.decision === "approved")
+      .sort((a, b) => a.createdAtMs - b.createdAtMs);
+    for (const review of approvedReviews) {
+      const source = this.data.investigations.find((row) => row.id === review.investigationId);
+      const candidate = this.data.candidates.find((row) => row.id === review.candidateId);
+      if (!source || !candidate || candidate.controllerSha256 !== review.controllerSha256) continue;
+      lineage.push({
+        version: lineage.length + 1,
+        controllerSha256: review.controllerSha256,
+        label: `Fix approved in ${source.title}`,
+        investigationId: source.id,
+        investigationTitle: source.title,
+        candidateId: candidate.id,
+        approvedAtMs: review.createdAtMs,
+      });
+    }
+    const current = lineage.length ? {
+      version: lineage[lineage.length - 1]!.version,
+      controllerSha256: lineage[lineage.length - 1]!.controllerSha256,
+    } : null;
+    const thisRunSha = baselineExperiment?.controllerSha256 ?? null;
+    const thisRunVersion = thisRunSha
+      ? lineage.find((row) => row.controllerSha256 === thisRunSha)?.version ?? null
+      : null;
+    let reason: string | undefined;
+    if (!["awaiting_review", "completed"].includes(investigation.state)) {
+      reason = "Retry opens once the investigation is awaiting review.";
+    } else if (!current || current.version < 2) {
+      reason = "No fix has been approved for this task yet.";
+    } else if (current.controllerSha256 === thisRunSha) {
+      reason = "This run already used the newest approved controller.";
+    }
+    const retry = this.retries.get(investigationId);
+    const priorHints: LearningView["priorHints"] = [];
+    return {
+      taskFamily: "divider_pick_place",
+      lineage,
+      current,
+      thisRun: { controllerSha256: thisRunSha, version: thisRunVersion, choice: null },
+      retry: {
+        available: !reason,
+        ...(reason ? { reason } : {}),
+        ...(retry ? { latest: retry } : {}),
+      },
+      priorHints,
+    };
+  }
+
+  getLearning(investigationId: string): Promise<LearningView> {
+    return this.wait(() => this.learningNow(investigationId));
+  }
+
+  retryWithImprovedController(investigationId: string): Promise<CaptureOutcome> {
+    return this.wait(() => {
+      const existing = this.retries.get(investigationId);
+      if (existing) return { accepted: true as const, investigationId: existing.investigationId };
+      const learning = this.learningNow(investigationId);
+      if (!learning.retry.available || !learning.current) {
+        return { accepted: false as const, mode: "fixture" as const, reason: learning.retry.reason ?? "No approved controller is available." };
+      }
+      const approved = [...learning.lineage].reverse().find((row) => row.version === learning.current!.version);
+      const candidate = approved?.candidateId ? this.data.candidates.find((row) => row.id === approved.candidateId) : undefined;
+      if (!candidate) return { accepted: false as const, mode: "fixture" as const, reason: "The approved fixture replay is unavailable." };
+      const baselineExperiment = this.data.experiments.find((row) =>
+        row.id === this.requireInvestigation(investigationId).baselineExperimentId);
+      const baselineReplay = baselineExperiment?.replayArtifactId ? this.data.replays[baselineExperiment.replayArtifactId] : undefined;
+      const afterArtifactId = this.data.replayByCandidate[candidate.id];
+      const afterReplay = afterArtifactId ? this.data.replays[afterArtifactId] : undefined;
+      if (!baselineExperiment || !baselineReplay || !afterReplay) {
+        return { accepted: false as const, mode: "fixture" as const, reason: "The recorded fixture replay is unavailable." };
+      }
+      const summary = (experiment: typeof baselineExperiment, replay: typeof baselineReplay, replayArtifactId?: string): LearningExperimentSummary => ({
+        experimentId: replay.experimentId,
+        status: replay.completed ? "succeeded" : "physics_failure",
+        completed: replay.completed,
+        ...(replay.completionTimeSec !== undefined ? { completionTimeSec: replay.completionTimeSec } : {}),
+        ...(replay.firstFailure ? { firstFailure: replay.firstFailure } : {}),
+        ...(replayArtifactId ? { replayArtifactId } : {}),
+        controllerSha256: replay.controllerSha256 || experiment.controllerSha256,
+        failureKinds: replay.failureKinds,
+      });
+      const snapshot: NonNullable<LearningView["retry"]["latest"]> = {
+        investigationId: crypto.randomUUID(),
+        state: "completed",
+        captureStatus: "recorded",
+        controllerSha256: candidate.controllerSha256,
+        controllerVersion: learning.current.version,
+        before: summary(baselineExperiment, baselineReplay, baselineExperiment.replayArtifactId),
+        after: summary(baselineExperiment, afterReplay, afterArtifactId),
+        recorded: true,
+      };
+      this.retries.set(investigationId, snapshot);
+      this.storage?.setItem(RETRIES_KEY, JSON.stringify(Object.fromEntries(this.retries)));
+      this.emit(investigationId);
+      return { accepted: true as const, investigationId: snapshot.investigationId };
+    });
+  }
+
+  getCurrentController(taskFamily?: string): Promise<CurrentController> {
+    return this.wait(() => {
+      const family = taskFamily ?? "divider_pick_place";
+      const panda = this.data.investigations.find((row) => row.id === "3b7d9303-7082-4b73-a3b6-1391b3e2fc4d");
+      const view = panda ? this.learningNow(panda.id) : null;
+      const approved = view?.current && view.current.version >= 2
+        ? {
+          version: view.current.version,
+          controllerSha256: view.current.controllerSha256,
+          investigationTitle: view.lineage.at(-1)?.investigationTitle,
+        }
+        : null;
+      const baselineExperiment = panda ? this.data.experiments.find((row) => row.id === panda.baselineExperimentId) : null;
+      return {
+        taskFamily: family,
+        approved,
+        baseline: baselineExperiment ? { version: 1 as const, controllerSha256: baselineExperiment.controllerSha256 } : null,
+      };
     });
   }
 

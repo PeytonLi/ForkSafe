@@ -3,6 +3,7 @@ import { internal } from "./_generated/api.js";
 import { action, internalMutation, internalQuery } from "./_generated/server.js";
 import { requireWriteIdentity } from "./lib/webAccess.js";
 import { appId, assertUUID } from "./lib/validators.js";
+import { promoteOnApproval } from "./learning.js";
 
 /** Web: `reviews:record` — a human decision bound to the exact controller
  *  sha of an evaluated candidate. SpacetimeDB is written first (bridge), then
@@ -42,7 +43,15 @@ export const insert = internalMutation({
     if (investigation && investigation.state === "awaiting_review" && args.decision === "approved") {
       await ctx.db.patch(investigation._id, { state: "completed", version: investigation.version + 1, updatedAtMs: Date.now(), finishedAtMs: Date.now() });
     }
-    return row;
+    const promotion = args.decision === "approved" ? await promoteOnApproval(ctx, row) : null;
+    return {
+      ...row,
+      ...(promotion?.appId ? {
+        promotedLineageId: promotion.appId,
+        promotedLineageCommitted: promotion.spacetimeCommitted,
+        promotedLineage: promotion,
+      } : {}),
+    };
   },
 });
 
@@ -79,11 +88,31 @@ export const record = action({
     } catch {
       committed = false;
     }
-    const row = await ctx.runMutation(internal.reviews.insert, {
+    const row: any = await ctx.runMutation(internal.reviews.insert, {
       reviewId, investigationId: args.investigationId, candidateId: args.candidateId, evaluationId: args.evaluationId, controllerSha256: args.controllerSha256,
       decision: args.decision, reviewerIdentity, ...(args.notes ? { notes: args.notes } : {}), ...(check.jiraIssueKey ? { jiraIssueKey: check.jiraIssueKey } : {}),
       idempotencyKey, spacetimeCommitted: committed,
     });
+    if (row.promotedLineage && !row.promotedLineageCommitted) {
+      try {
+        await ctx.runAction(internal.bridge.recordControllerPromotion, {
+          id: row.promotedLineage.appId,
+          taskFamily: row.promotedLineage.taskFamily,
+          version: row.promotedLineage.version,
+          controllerSha256: row.promotedLineage.controllerSha256,
+          parentControllerSha256: row.promotedLineage.parentControllerSha256,
+          investigationId: row.promotedLineage.investigationId,
+          candidateId: row.promotedLineage.candidateId,
+          reviewId: row.promotedLineage.reviewId,
+        });
+        await ctx.runMutation(internal.learning.markPromotionCommitted, {
+          lineageId: row.promotedLineage.appId,
+          committed: true,
+        });
+      } catch (error) {
+        console.warn("controller promotion mirror failed", error instanceof Error ? error.message : String(error));
+      }
+    }
     return toHumanReview(row);
   },
 });

@@ -5,7 +5,7 @@ import type { ForkSafeClient } from "./types";
 export * from "./types";
 export * from "./errors";
 export { FixtureClient, FIXTURE_REVIEWER } from "./fixtureClient";
-export { ConvexForkSafeClient, CONVEX_FUNCTIONS } from "./convexClient";
+export { ConvexForkSafeClient, CONVEX_FUNCTIONS, CONVEX_LEARNING_FUNCTIONS } from "./convexClient";
 
 /** Convex when VITE_CONVEX_URL is set (and fixtures not forced), else the
  *  recorded fixture adapter. Components only ever see ForkSafeClient. */

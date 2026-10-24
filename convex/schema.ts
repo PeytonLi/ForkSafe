@@ -41,6 +41,11 @@ export default defineSchema({
   investigations: defineTable({
     parentInvestigationId: v.optional(uuid),
     appId: uuid,
+    taskFamily: v.optional(v.string()),
+    controllerSha256: v.optional(v.string()),
+    controllerChoice: v.optional(v.union(v.literal("approved"), v.literal("baseline"))),
+    controllerVersion: v.optional(v.number()),
+    retryOfInvestigationId: v.optional(uuid),
     title: v.string(),
     state: v.union(
       v.literal("capturing"), v.literal("admitted"), v.literal("searching"),
@@ -70,7 +75,8 @@ export default defineSchema({
     captureStatus: v.optional(v.union(v.literal("pending"), v.literal("running"), v.literal("recorded"), v.literal("failed"))),
     autoStart: v.optional(v.boolean()),
   }).index("by_appId", ["appId"]).index("by_idempotencyKey", ["idempotencyKey"])
-    .index("by_state", ["state"]).index("by_cancel_status", ["cancelStatus"]),
+    .index("by_state", ["state"]).index("by_cancel_status", ["cancelStatus"])
+    .index("by_retryOf", ["retryOfInvestigationId"]),
 
   environments: defineTable({
     appId: uuid,
@@ -576,6 +582,22 @@ export default defineSchema({
   }).index("by_appId", ["appId"]).index("by_investigation", ["investigationId"])
     .index("by_idempotencyKey", ["idempotencyKey"]),
 
+  controllerLineage: defineTable({
+    appId: uuid,
+    taskFamily: v.string(),
+    version: v.number(),
+    controllerSha256: v.string(),
+    parentControllerSha256: v.string(),
+    investigationId: uuid,
+    candidateId: uuid,
+    evaluationId: uuid,
+    reviewId: uuid,
+    approvedBy: v.string(),
+    spacetimeCommitted: v.boolean(),
+    createdAtMs: v.number(),
+  }).index("by_appId", ["appId"]).index("by_family_version", ["taskFamily", "version"])
+    .index("by_review", ["reviewId"]).index("by_family_sha", ["taskFamily", "controllerSha256"]),
+
   agentToolCalls: defineTable({
     investigationId: uuid, environmentId: uuid, sessionId: uuid, attemptId: uuid, epoch: v.number(),
     tool: v.string(), callId: uuid, result: v.any(), atMs: v.number(),
@@ -588,9 +610,21 @@ export default defineSchema({
 
   findingUses: defineTable({
     appId: uuid, findingId: uuid, findingEnvironmentId: uuid, usedByEnvironmentId: uuid,
-    experimentId: v.optional(uuid), candidateId: v.optional(uuid), crossEnvironment: v.boolean(),
+    experimentId: v.optional(uuid), candidateId: v.optional(uuid), crossEnvironment: v.boolean(), crossRun: v.optional(v.boolean()),
     spacetimeCommitted: v.boolean(), createdAtMs: v.number(),
   }).index("by_target", ["findingId", "experimentId", "candidateId"])
+    .index("by_finding", ["findingId"]),
+
+  priorHintOffers: defineTable({
+    investigationId: uuid,
+    environmentId: uuid,
+    findingId: uuid,
+    sourceInvestigationId: uuid,
+    rank: v.number(),
+    summary: v.string(),
+    offeredAtMs: v.number(),
+  }).index("by_investigation", ["investigationId"])
+    .index("by_environment_finding", ["environmentId", "findingId"])
     .index("by_finding", ["findingId"]),
 
   sessionCheckpoints: defineTable({
