@@ -89,6 +89,7 @@ export function ReadinessStrip({ clientSource }: { clientSource: { kind: string;
               <button type="button" onClick={state.reload}>Retry</button>
             </p>
           )}
+          <a className={styles.seeAll} href="#/health" onClick={() => setOpen(false)} data-testid="readiness-see-all">See all services and pipeline health</a>
           {groups.map((group) => {
             const entries = integrations.filter((r) => readinessGroup(r) === group.id);
             if (!entries.length) return null;
@@ -116,16 +117,16 @@ export function ReadinessStrip({ clientSource }: { clientSource: { kind: string;
   );
 }
 
-type ReadinessGroup = "live" | "configured" | "blocked" | "not_implemented" | "fixture";
+export type ReadinessGroup = "live" | "configured" | "blocked" | "not_implemented" | "fixture";
 
-function readinessGroup(r: WebIntegrationReadiness): ReadinessGroup {
+export function readinessGroup(r: WebIntegrationReadiness): ReadinessGroup {
   if (r.mode === "blocked") return "blocked";
   if (r.mode === "not_implemented") return "not_implemented";
   if (r.mode === "fixture") return "fixture";
   return r.probed ? "live" : "configured";
 }
 
-function readinessTone(r: WebIntegrationReadiness) {
+export function readinessTone(r: WebIntegrationReadiness) {
   return readinessGroup(r) === "configured" ? "blue" : modeTone[r.mode];
 }
 
@@ -152,6 +153,6 @@ const LABELS: Record<string, string> = {
   evaluator: "Evaluator",
 };
 
-function integrationLabel(name: string): string {
+export function integrationLabel(name: string): string {
   return LABELS[name] ?? human(name);
 }

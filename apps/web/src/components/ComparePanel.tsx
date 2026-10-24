@@ -163,15 +163,30 @@ function SyncedReplays({ original, candidate, scene }: { original: SimRunResult;
   ];
   const outcome = (r: SimRunResult) =>
     r.completed ? `Completed in ${r.completionTimeSec?.toFixed(1) ?? "?"} s` : `Failed: ${r.failureKinds.map(words).join(", ") || "incomplete"}`;
+  const [ghost, setGhost] = useState(true);
   return (
     <div>
+      <div className={styles.ghostBar}>
+        <button type="button" className={ghost ? styles.ghostOn : styles.ghostOff} aria-pressed={ghost} onClick={() => setGhost((g) => !g)} data-testid="ghost-toggle">
+          <span className={styles.switch} aria-hidden="true"><span /></span>
+          Show the original run as a ghost
+        </button>
+        {ghost && (
+          <ul className={styles.ghostLegend} aria-label="Ghost legend" data-testid="ghost-legend">
+            <li><i className={styles.keyArm} aria-hidden="true" />Repaired arm</li>
+            <li><i className={styles.keyGhost} aria-hidden="true" />Original arm (ghost)</li>
+            <li><i className={styles.keyPath} aria-hidden="true" />Repaired gripper path</li>
+            <li><i className={styles.keyGhostPath} aria-hidden="true" />Original gripper path</li>
+          </ul>
+        )}
+      </div>
       <div className={styles.panes}>
         <div>
           <ReplayViewer replay={original} t={clock.t} label="Original" scene={scene} />
           <p className={styles.outcome}><Badge tone={original.completed ? "green" : "red"}>{outcome(original)}</Badge></p>
         </div>
         <div>
-          <ReplayViewer replay={candidate} t={clock.t} label="Repaired candidate" scene={scene} />
+          <ReplayViewer replay={candidate} t={clock.t} label="Repaired candidate" scene={scene} ghost={ghost ? original : undefined} />
           <p className={styles.outcome}><Badge tone={candidate.completed ? "green" : "red"}>{outcome(candidate)}</Badge></p>
         </div>
       </div>

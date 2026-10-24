@@ -14,12 +14,16 @@ import { makeFunctionReference } from "convex/server";
 import { z } from "zod";
 import { ServiceError } from "./errors";
 import { fetchReadiness } from "./readiness";
+import { scopedQuestion } from "./ask";
 import type {
   CaptureDraft,
   CaptureOutcome,
+  EvidenceAnswer,
   ForkSafeClient,
+  HandoffEvent,
   InvestigationListItem,
   InvestigationWorkspace,
+  PipelineHealth,
   ReviewInput,
 } from "./types";
 
@@ -36,6 +40,13 @@ export const CONVEX_FUNCTIONS = {
   cancel: "investigations:cancel",
   capture: "investigations:capture",
   recordReview: "reviews:record",
+} as const;
+
+/** Read-only web functions living under convex/web/ (stretch views). */
+export const CONVEX_WEB_FUNCTIONS = {
+  pipelineHealth: "web/health:pipeline",
+  ask: "web/ask:ask",
+  handoffs: "web/timeline:handoffs",
 } as const;
 
 const q = (name: string) => makeFunctionReference<"query">(name);
@@ -63,6 +74,40 @@ export const Capture = z.union([
   z.object({ accepted: z.literal(false), mode: z.enum(["live", "local", "fixture", "blocked", "not_implemented"]), reason: z.string() }),
 ]);
 
+const Mode = z.enum(["live", "local", "fixture", "blocked", "not_implemented"]);
+export const PipelineHealthSchema = z.object({
+  mode: Mode,
+  checkedAtMs: z.number().int(),
+  activeSandboxes: z.number().int().nonnegative(),
+  sandboxCap: z.number().int().positive(),
+  runners: z.number().int().nonnegative(),
+  outboxBacklog: z.number().int().nonnegative(),
+  outboxDead: z.number().int().nonnegative(),
+  oldestBacklogAtMs: z.number().int().optional(),
+});
+export const EvidenceAnswerSchema = z.object({
+  mode: Mode,
+  enoughEvidence: z.boolean(),
+  answer: z.string().max(8000).optional(),
+  label: z.string().optional(),
+  reason: z.string().optional(),
+  citations: z.array(z.object({
+    id: z.string().min(1),
+    docType: z.enum(["finding", "evidence", "experiment_result"]),
+    summary: z.string(),
+    environmentId: z.string().optional(),
+  })),
+  withheld: z.array(z.object({ id: z.string().min(1), reason: z.string() })),
+});
+export const HandoffEventSchema = z.object({
+  jobId: z.string(),
+  jobKind: z.string(),
+  environmentId: z.string().optional(),
+  stage: z.enum(["admission_reserved", "grant_installed", "work_started", "artifacts_persisted", "evidence_committed", "completion_acknowledged"]),
+  atMs: z.number(),
+  stale: z.boolean(),
+});
+
 export const CONVEX_RESPONSE_SCHEMAS = {
   listInvestigations: z.array(ListItem),
   workspace: Workspace,
@@ -72,6 +117,12 @@ export const CONVEX_RESPONSE_SCHEMAS = {
   candidateDiff: z.string(),
   capture: Capture,
   recordReview: HumanReview,
+};
+
+export const CONVEX_WEB_SCHEMAS = {
+  pipelineHealth: PipelineHealthSchema,
+  ask: EvidenceAnswerSchema,
+  handoffs: z.array(HandoffEventSchema),
 };
 
 function parse<T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, value: unknown, what: string): T {
@@ -84,6 +135,8 @@ function mapError(e: unknown): never {
   if (e instanceof ServiceError) throw e;
   const msg = (e as Error)?.message ?? String(e);
   if (/unauthori[sz]ed|forbidden|permission/i.test(msg)) throw new ServiceError("permission_denied", msg);
+  if (/out_of_scope/i.test(msg)) throw new ServiceError("out_of_scope", "Questions can only be about this investigation.");
+  if (/invalid_input/i.test(msg)) throw new ServiceError("invalid_input", "That question can't be sent. Try rephrasing it.");
   if (/not found/i.test(msg)) throw new ServiceError("not_found", msg);
   throw new ServiceError("unavailable", msg);
 }
@@ -166,5 +219,20 @@ export class ConvexForkSafeClient implements ForkSafeClient {
   }
   getReadiness() {
     return fetchReadiness();
+  }
+  async getPipelineHealth(): Promise<PipelineHealth> {
+    return parse(CONVEX_WEB_SCHEMAS.pipelineHealth, await this.query(CONVEX_WEB_FUNCTIONS.pipelineHealth), "Pipeline health");
+  }
+  async askEvidence(investigationId: string, question: string): Promise<EvidenceAnswer> {
+    const q = scopedQuestion(question, investigationId);
+    try {
+      const r = await this.client.action(makeFunctionReference<"action">(CONVEX_WEB_FUNCTIONS.ask), { investigationId, question: q });
+      return parse(CONVEX_WEB_SCHEMAS.ask, r, "Evidence answer");
+    } catch (e) {
+      mapError(e);
+    }
+  }
+  async listHandoffs(investigationId: string): Promise<HandoffEvent[]> {
+    return parse(CONVEX_WEB_SCHEMAS.handoffs, await this.query(CONVEX_WEB_FUNCTIONS.handoffs, { investigationId }), "Handoffs");
   }
 }

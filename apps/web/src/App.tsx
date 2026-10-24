@@ -4,6 +4,7 @@ import { ReadinessStrip } from "./components/ReadinessStrip";
 import { useClient, useHashRoute } from "./hooks";
 import styles from "./App.module.css";
 import { AuthControls } from "./components/AuthControls";
+import { HealthPage } from "./components/HealthPage";
 
 export function App() {
   const [route, go] = useHashRoute();
@@ -31,8 +32,10 @@ export function App() {
           <InvestigationList selectedId={route.investigationId} onSelect={(id) => go({ investigationId: id, tab: "capture" })} />
         </nav>
         <main id="main" className={styles.main} tabIndex={-1}>
-          {route.investigationId ? (
-            <InvestigationView key={route.investigationId} id={route.investigationId} tab={route.tab} onTab={(tab) => go({ investigationId: route.investigationId, tab })} />
+          {route.page === "health" ? (
+            <HealthPage />
+          ) : route.investigationId ? (
+            <InvestigationView key={route.investigationId} id={route.investigationId} tab={route.tab} focus={route.focus} onTab={(tab, focus) => go({ investigationId: route.investigationId, tab, focus })} />
           ) : (
             <div className={styles.welcome}>
               <div className={styles.welcomeIntro}>

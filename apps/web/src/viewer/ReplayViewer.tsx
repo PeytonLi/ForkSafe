@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import type { SimRunResult } from "@forksafe/contracts";
-import { mjToThreePos, mjToThreeQuat, sampleAt } from "./transform";
+import { mjToThreePos, mjToThreeQuat, sampleAt, type Sample } from "./transform";
 import styles from "./ReplayViewer.module.css";
 
 const CHAIN = ["link0", "link1", "link4", "link6", "hand"] as const;
@@ -17,6 +17,38 @@ interface Scene3D {
   divider: THREE.Mesh;
   target: THREE.Mesh;
   contact: THREE.Mesh;
+  ghost: ArmParts & { group: THREE.Group };
+  paths: THREE.Group;
+}
+
+interface ArmParts {
+  links: THREE.Mesh[];
+  joints: THREE.Mesh[];
+  hand: THREE.Mesh;
+}
+
+export const GHOST_COLOR = "#d9733b";
+export const PATH_COLOR = "#337681";
+
+function ghostArm(s: THREE.Scene): ArmParts & { group: THREE.Group } {
+  const group = new THREE.Group();
+  const mat = new THREE.MeshBasicMaterial({ color: GHOST_COLOR, transparent: true, opacity: 0.3, depthWrite: false });
+  const links = CHAIN.slice(1).map(() => {
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.04, 1, 16), mat);
+    group.add(m);
+    return m;
+  });
+  const joints = CHAIN.map(() => {
+    const m = new THREE.Mesh(new THREE.SphereGeometry(0.045, 16, 10), mat);
+    group.add(m);
+    return m;
+  });
+  const hand = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.05, 0.16), mat);
+  group.add(hand);
+  group.renderOrder = 2;
+  group.visible = false;
+  s.add(group);
+  return { group, links, joints, hand };
 }
 
 function build(canvas: HTMLCanvasElement, scene: Record<string, number>): Scene3D {
@@ -86,23 +118,32 @@ function build(canvas: HTMLCanvasElement, scene: Record<string, number>): Scene3
   for (const object of s.children) {
     if (object instanceof THREE.Mesh && object !== floor) object.castShadow = true;
   }
-  return { renderer, scene: s, camera, links, joints, hand, cube, divider, target, contact };
+  const ghost = ghostArm(s);
+  const paths = new THREE.Group();
+  s.add(paths);
+  return { renderer, scene: s, camera, links, joints, hand, cube, divider, target, contact, ghost, paths };
 }
 
 const v = (p: [number, number, number]) => new THREE.Vector3(...mjToThreePos(p));
 
-function apply(s3: Scene3D, replay: SimRunResult, t: number) {
-  const smp = sampleAt(replay.frames, t);
-  if (!smp) return;
+function place(smp: Sample, mesh: THREE.Object3D, name: string) {
+  const b = smp.bodies.get(name);
+  mesh.visible = !!b;
+  if (!b) return;
+  mesh.position.copy(v(b.pos));
+  mesh.quaternion.set(...mjToThreeQuat(b.quat));
+}
+
+function poseArm(parts: ArmParts, smp: Sample) {
   const pts = CHAIN.map((n) => smp.bodies.get(n)?.pos);
   pts.forEach((p, i) => {
-    s3.joints[i]!.visible = !!p;
-    if (p) s3.joints[i]!.position.copy(v(p));
+    parts.joints[i]!.visible = !!p;
+    if (p) parts.joints[i]!.position.copy(v(p));
   });
-  for (let i = 0; i < s3.links.length; i++) {
+  for (let i = 0; i < parts.links.length; i++) {
     const a = pts[i];
     const b = pts[i + 1];
-    const m = s3.links[i]!;
+    const m = parts.links[i]!;
     m.visible = !!(a && b);
     if (!a || !b) continue;
     const va = v(a);
@@ -111,17 +152,43 @@ function apply(s3: Scene3D, replay: SimRunResult, t: number) {
     m.scale.set(1, va.distanceTo(vb), 1);
     m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), vb.clone().sub(va).normalize());
   }
-  const place = (mesh: THREE.Object3D, name: string) => {
-    const b = smp.bodies.get(name);
-    mesh.visible = !!b;
-    if (!b) return;
-    mesh.position.copy(v(b.pos));
-    mesh.quaternion.set(...mjToThreeQuat(b.quat));
-  };
-  place(s3.hand, "hand");
-  place(s3.cube, "cube");
-  place(s3.divider, "divider");
-  place(s3.target, "target");
+  place(smp, parts.hand, "hand");
+}
+
+/** Gripper (hand body) path over the whole replay, in Three.js coordinates. */
+export function gripperPath(replay: SimRunResult): THREE.Vector3[] {
+  return replay.frames.flatMap((f) => {
+    const hand = f.bodies.find((b) => b.name === "hand");
+    return hand ? [v(hand.pos as [number, number, number])] : [];
+  });
+}
+
+function setPaths(s3: Scene3D, replay: SimRunResult, ghost: SimRunResult | undefined) {
+  for (const child of [...s3.paths.children]) {
+    s3.paths.remove(child);
+    (child as THREE.Line).geometry.dispose();
+  }
+  if (!ghost) return;
+  const own = new THREE.Line(new THREE.BufferGeometry().setFromPoints(gripperPath(replay)), new THREE.LineBasicMaterial({ color: PATH_COLOR }));
+  const ghostLine = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(gripperPath(ghost)),
+    new THREE.LineDashedMaterial({ color: GHOST_COLOR, dashSize: 0.025, gapSize: 0.018, transparent: true, opacity: 0.9 }),
+  );
+  ghostLine.computeLineDistances();
+  s3.paths.add(own, ghostLine);
+}
+
+function apply(s3: Scene3D, replay: SimRunResult, t: number, ghost?: SimRunResult) {
+  const smp = sampleAt(replay.frames, t);
+  if (!smp) return;
+  poseArm(s3, smp);
+  const gs = ghost ? sampleAt(ghost.frames, t) : undefined;
+  s3.ghost.group.visible = !!gs;
+  s3.paths.visible = !!gs;
+  if (gs) poseArm(s3.ghost, gs);
+  place(smp, s3.cube, "cube");
+  place(smp, s3.divider, "divider");
+  place(smp, s3.target, "target");
   const hit = smp.contacts.find((c) => c.a === "cube" || c.b === "cube");
   s3.contact.visible = !!hit;
   if (hit) s3.contact.position.copy(s3.cube.position).add(new THREE.Vector3(0, 0, -0.03));
@@ -133,10 +200,12 @@ interface Props {
   t: number;
   label: string;
   scene: Record<string, number>;
+  /** Original (failing) run drawn as a translucent ghost on the same clock. */
+  ghost?: SimRunResult;
 }
 
 /** Renders sampled authoritative state; it never runs physics or scores. */
-export function ReplayViewer({ replay, t, label, scene }: Props) {
+export function ReplayViewer({ replay, t, label, scene, ghost }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const s3Ref = useRef<Scene3D | null>(null);
@@ -176,13 +245,20 @@ export function ReplayViewer({ replay, t, label, scene }: Props) {
   useEffect(() => {
     const s3 = s3Ref.current;
     if (!s3) return;
-    apply(s3, replay, t);
+    setPaths(s3, replay, ghost);
+  }, [replay, ghost, scene, webglError]);
+
+  useEffect(() => {
+    const s3 = s3Ref.current;
+    if (!s3) return;
+    apply(s3, replay, t, ghost);
     s3.renderer.render(s3.scene, s3.camera);
-  }, [replay, t, webglError]);
+  }, [replay, t, ghost, scene, webglError]);
+  const ghostSample = ghost ? sampleAt(ghost.frames, t) : undefined;
 
   const contact = smp?.contacts[0];
   return (
-    <figure className={styles.viewer} data-testid="replay-viewer" data-label={label}>
+    <figure className={styles.viewer} data-testid="replay-viewer" data-label={label} data-ghost={ghost ? "on" : "off"} data-ghost-t={ghostSample?.tSec.toFixed(2)}>
       <div ref={wrapRef} className={styles.canvasWrap}>
         {webglError ? (
           <div className={styles.fallback} role="note">
