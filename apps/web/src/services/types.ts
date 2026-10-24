@@ -63,6 +63,62 @@ export interface CaptureDraft {
   seed: number;
   sceneOverrides: Record<string, number>;
   requestedEnvironments: number;
+  controller?: ControllerChoiceValue;
+}
+
+export type ControllerChoiceValue = "approved" | "baseline";
+
+export interface LearningExperimentSummary {
+  experimentId: string;
+  status: string;
+  completed: boolean;
+  completionTimeSec?: number;
+  firstFailure?: { kind: string; tSec: number; detail: string };
+  replayArtifactId?: string;
+  controllerSha256: string;
+  failureKinds?: string[];
+}
+
+export interface LearningView {
+  taskFamily: string;
+  lineage: {
+    version: number;
+    controllerSha256: string;
+    label: string;
+    investigationId?: string;
+    investigationTitle?: string;
+    candidateId?: string;
+    approvedAtMs?: number;
+  }[];
+  current: { version: number; controllerSha256: string } | null;
+  thisRun: { controllerSha256: string | null; version: number | null; choice: ControllerChoiceValue | null };
+  retry: {
+    available: boolean;
+    reason?: string;
+    latest?: {
+      investigationId: string;
+      state: string;
+      captureStatus: string | null;
+      controllerSha256: string | null;
+      controllerVersion: number | null;
+      before: LearningExperimentSummary | null;
+      after: LearningExperimentSummary | null;
+      recorded?: boolean;
+    };
+  };
+  priorHints: {
+    findingId: string;
+    sourceInvestigationId: string;
+    sourceTitle: string;
+    summary: string;
+    used: boolean;
+  }[];
+}
+
+export interface CurrentController {
+  taskFamily: string;
+  approved: { version: number; controllerSha256: string; investigationTitle?: string } | null;
+  baseline: { version: 1; controllerSha256: string } | null;
 }
 
 export type CaptureOutcome =
@@ -127,6 +183,9 @@ export interface ForkSafeClient {
   cancelInvestigation(investigationId: string): Promise<void>;
   submitReview(input: ReviewInput): Promise<HumanReview>;
   requestCapture(draft: CaptureDraft): Promise<CaptureOutcome>;
+  getLearning(investigationId: string): Promise<LearningView>;
+  retryWithImprovedController(investigationId: string): Promise<CaptureOutcome>;
+  getCurrentController(taskFamily?: string): Promise<CurrentController>;
   /** Invalidation stream; listeners re-fetch what they render. */
   subscribe(investigationId: string, onChange: () => void): () => void;
   getReadiness(): Promise<WebIntegrationReadiness[]>;

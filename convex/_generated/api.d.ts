@@ -34,6 +34,7 @@ import type * as grants from "../grants.js";
 import type * as health from "../health.js";
 import type * as http from "../http.js";
 import type * as investigations from "../investigations.js";
+import type * as learning from "../learning.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_commandPolicy from "../lib/commandPolicy.js";
 import type * as lib_constants from "../lib/constants.js";
@@ -106,6 +107,7 @@ declare const fullApi: ApiFromModules<{
   health: typeof health;
   http: typeof http;
   investigations: typeof investigations;
+  learning: typeof learning;
   "lib/auth": typeof lib_auth;
   "lib/commandPolicy": typeof lib_commandPolicy;
   "lib/constants": typeof lib_constants;

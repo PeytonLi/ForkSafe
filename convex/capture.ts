@@ -38,19 +38,34 @@ export const run = internalAction({
     await ctx.runMutation(internal.investigations.setCapture, { investigationId: args.investigationId, captureStatus: "running" });
     try {
       const baselineBundle = await ctx.runQuery(internal.bundles.get, { key: "baseline_controller" });
-      const source = baselineBundle ? await ctx.runQuery(internal.evidence.getSourceBySha, { controllerSha256: baselineBundle.sha256 }) : null;
-      if (!baselineBundle || !source) throw new ConvexError("baseline_controller_missing");
+      const controllerSha256 = investigation.controllerSha256 ?? baselineBundle?.sha256;
+      if (!controllerSha256) throw new ConvexError("baseline_controller_missing");
+      const source = await ctx.runQuery(internal.evidence.getSourceBySha, { controllerSha256 });
+      if (!source) throw new ConvexError(investigation.controllerSha256 ? "controller_source_missing" : "baseline_controller_missing");
       const sandbox = await ensureExecutionSandbox(ctx, args.investigationId);
       const attemptId = appId();
       const experimentId = investigation.baselineExperimentId;
       await ctx.runMutation(internal.evidence.reserveExperiment, {
         experimentId, investigationId: args.investigationId, attemptId, epoch: 0, purpose: "baseline",
-        simCase: investigation.baselineCase, controllerSha256: baselineBundle.sha256, sandboxOpId: sandbox.appId, changedFunctions: [],
+        simCase: investigation.baselineCase, controllerSha256, sandboxOpId: sandbox.appId, changedFunctions: [],
       });
       const outcome = await ctx.runAction(internal.execution.runCase, {
         sandboxOpId: sandbox.appId, investigationId: args.investigationId, attemptId, experimentId,
         simCase: investigation.baselineCase, controllerSource: source.source, timeoutSec: 30,
       });
+      if (outcome.controllerSha256 !== controllerSha256) {
+        await ctx.runMutation(internal.evidence.finishExperiment, {
+          experimentId, status: "invalid", failureKinds: ["controller_sha_mismatch"], completed: false,
+          engineVersion: outcome.engineVersion, assetsSha256: outcome.assetsSha256,
+          controllerSha256: outcome.controllerSha256, spacetimeCommitted: false,
+          ...(outcome.traceArtifactId ? { traceArtifactId: outcome.traceArtifactId } : {}),
+          ...(outcome.replayArtifactId ? { replayArtifactId: outcome.replayArtifactId } : {}),
+        });
+        await ctx.runMutation(internal.investigations.setCapture, {
+          investigationId: args.investigationId, captureStatus: "failed", error: "controller_sha_mismatch",
+        });
+        return { recorded: false, experimentId, error: "controller_sha_mismatch" };
+      }
       await ctx.runMutation(internal.evidence.finishExperiment, {
         experimentId, status: outcome.status, failureKinds: outcome.failureKinds, completed: outcome.completed,
         ...(outcome.completionTimeSec !== undefined ? { completionTimeSec: outcome.completionTimeSec } : {}),
