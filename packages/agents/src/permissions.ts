@@ -59,6 +59,7 @@ function safeCommand(command: string, workspaceRoot: string): boolean {
 function allowedUse(use: PermissionToolUse, policy: PermissionPolicy): boolean {
   const type = use.confirmationType;
   const details = use.details;
+  if (use.name === "ToolSearch" || details.toolName === "ToolSearch") return false;
   if (type === ToolConfirmationType.Create || details.type === ToolConfirmationType.Create) {
     return typeof details.filePath === "string" && insideWorkspace(policy.workspaceRoot, details.filePath);
   }

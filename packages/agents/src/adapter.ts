@@ -61,6 +61,8 @@ export const DISABLED_BUILTIN_TOOL_IDS = [
   "WebSearch",
 ] as const;
 const ALLOWED_FORKSAFE_TOOL_IDS = FORKSAFE_TOOL_NAMES.map((name) => `forksafe___${name}`);
+// ToolSearch only searches the catalog and cannot be disabled by Factory.
+export const UNREMOVABLE_META_TOOL_IDS = ["ToolSearch"] as const;
 
 export type AdapterSessionOptions = {
   cwd: string;
@@ -233,7 +235,9 @@ export class LiveFactoryAdapter implements FactoryAdapter {
     const disabledToolIds = computeDisabledToolIds(tools);
     const restrictedToolIds = [...new Set([...DISABLED_BUILTIN_TOOL_IDS, ...disabledToolIds])];
     const hasEnabledForbiddenTool = tools.some((tool) =>
-      tool.allowed && computeDisabledToolIds([tool]).length > 0,
+      tool.allowed
+      && !ALLOWED_FORKSAFE_TOOL_IDS.includes(tool.id as typeof ALLOWED_FORKSAFE_TOOL_IDS[number])
+      && !UNREMOVABLE_META_TOOL_IDS.includes(tool.id as typeof UNREMOVABLE_META_TOOL_IDS[number]),
     );
     if (hasEnabledForbiddenTool) {
       await session.close().catch(() => undefined);
@@ -250,12 +254,15 @@ export class LiveFactoryAdapter implements FactoryAdapter {
       }
     }
 
-    const enabledToolIds = ALLOWED_FORKSAFE_TOOL_IDS.filter((id) =>
-      tools.some((tool) => tool.id === id && tool.allowed),
+    const enabledToolIds = tools.filter((tool) => tool.allowed).map((tool) => tool.id);
+    const hasUnexpectedAllowedTool = enabledToolIds.some((id) =>
+      !ALLOWED_FORKSAFE_TOOL_IDS.includes(id as typeof ALLOWED_FORKSAFE_TOOL_IDS[number])
+      && !UNREMOVABLE_META_TOOL_IDS.includes(id as typeof UNREMOVABLE_META_TOOL_IDS[number]),
     );
-    if (enabledToolIds.length !== ALLOWED_FORKSAFE_TOOL_IDS.length) {
+    const hasMissingForkSafeTool = ALLOWED_FORKSAFE_TOOL_IDS.some((id) => !enabledToolIds.includes(id));
+    if (hasUnexpectedAllowedTool || hasMissingForkSafeTool) {
       await session.close().catch(() => undefined);
-      throw new ToolSurfaceError("Factory did not expose the complete ForkSafe tool surface");
+      throw new ToolSurfaceError("Factory exposed an invalid enabled tool surface");
     }
     return liveSession(session, enabledToolIds);
   }
