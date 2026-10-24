@@ -8,7 +8,7 @@
 .error, .permission { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; padding: 0.75rem; border-radius: 10px; font-size: var(--text-sm); }
 .error { background: var(--red-bg); color: var(--red); }
 .permission { background: var(--amber-bg); color: var(--amber); }
-.badge { display: inline-flex; align-items: center; gap: 0.3rem; font-size: var(--text-xs); font-weight: 600; padding: 0.16rem 0.5rem; border-radius: 999px; white-space: nowrap; text-transform: capitalize; }
+.badge { display: inline-flex; align-items: center; gap: 0.3rem; font-size: var(--text-xs); font-weight: 600; padding: 0.16rem 0.5rem; border-radius: 999px; white-space: nowrap; }
 .blue { background: var(--blue-bg); color: #285e68; }
 .green { background: var(--green-bg); color: var(--green); }
 .amber { background: var(--amber-bg); color: var(--amber); }

@@ -1,11 +1,11 @@
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr)); gap: 0.75rem; align-items: start; }
+.grid { display: grid; width: 100%; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: 0.75rem; align-items: stretch; }
 .tile { display: grid; min-width: 0; align-content: start; gap: 0.7rem; padding: 0.9rem; border: 1px solid rgba(221, 226, 222, 0.72); border-radius: var(--radius-md); background: var(--panel); box-shadow: var(--shadow-card); }
 .tile:hover { transform: translateY(-1px); box-shadow: 0 10px 26px rgba(36, 51, 54, 0.075); transition: transform 160ms ease, box-shadow 160ms ease; }
 .tileHead { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
 .tileHead h3 { font-size: var(--text-md); }
-.stats { display: grid; grid-template-columns: minmax(5.3rem, max-content) minmax(0, 1fr); gap: 0.28rem 0.55rem; margin: 0; font-size: var(--text-xs); }
+.stats { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.28rem 0.55rem; margin: 0; font-size: var(--text-xs); }
 .stats dt { color: var(--muted); }
-.stats dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.stats dd { min-width: 0; margin: 0; overflow-wrap: anywhere; text-align: right; font-variant-numeric: tabular-nums; }
 .warn { color: var(--amber); }
 .budget { display: grid; gap: 0.35rem; }
 .progressLabel { display: flex; justify-content: space-between; gap: 0.5rem; color: var(--muted); font-size: 11px; }

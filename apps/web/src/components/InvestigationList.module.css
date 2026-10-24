@@ -5,7 +5,7 @@
 .selected, .selected:hover:not(:disabled) { color: var(--ink); background: #fff; box-shadow: 0 5px 18px rgba(45, 66, 68, 0.055); }
 .selected::before { background: var(--accent); }
 .itemTitle { width: 100%; font-size: var(--text-sm); font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
-.itemStatus { display: inline-flex; align-items: center; gap: 0.38rem; color: var(--muted); font-size: var(--text-xs); text-transform: capitalize; }
+.itemStatus { display: inline-flex; align-items: center; gap: 0.38rem; color: var(--muted); font-size: var(--text-xs); }
 .statusDot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: #89969a; }
 .statusDot[data-tone="green"] { background: #47845e; }
 .statusDot[data-tone="amber"] { background: #bd891f; }

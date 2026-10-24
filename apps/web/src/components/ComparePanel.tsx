@@ -7,7 +7,7 @@ import { ReplayViewer } from "../viewer/ReplayViewer";
 import { replayDuration } from "../viewer/transform";
 import { useReplayClock } from "../viewer/useReplayClock";
 import { Badge, Panel } from "./Panel";
-import { human, stateTone } from "./tone";
+import { human, stateTone, words } from "./tone";
 import styles from "./ComparePanel.module.css";
 
 const DETAIL_TABS = [
@@ -31,10 +31,12 @@ export function ComparePanel({ workspace: w }: { workspace: InvestigationWorkspa
           return (
             <label key={c.id} className={c.id === cand.id ? styles.pickActive : styles.pick}>
               <input type="radio" name="candidate" value={c.id} checked={c.id === cand.id} onChange={() => setSelected(c.id)} />
-              <span>
-                Candidate {shortId(c.id)} · Env {(w.environments.find((e) => e.id === c.environmentId)?.index ?? 0) + 1}
+              <span className={styles.pickContent}>
+                <span className={styles.pickTitle}>
+                  Candidate {shortId(c.id)} · Env {(w.environments.find((e) => e.id === c.environmentId)?.index ?? 0) + 1}
+                </span>
+                <Badge tone={evs.length === 0 ? "gray" : ok ? "green" : "red"}>{evs.length === 0 ? "Not evaluated" : ok ? "All required passed" : "Failed cases"}</Badge>
               </span>
-              <Badge tone={evs.length === 0 ? "gray" : ok ? "green" : "red"}>{evs.length === 0 ? "not evaluated" : ok ? "all required passed" : "failed cases"}</Badge>
             </label>
           );
         })}
@@ -158,7 +160,7 @@ function SyncedReplays({ original, candidate, scene }: { original: SimRunResult;
     ...(candidate.firstFailure ? [{ tSec: candidate.firstFailure.tSec, label: `candidate ${human(candidate.firstFailure.kind)}` }] : []),
   ];
   const outcome = (r: SimRunResult) =>
-    r.completed ? `completed in ${r.completionTimeSec?.toFixed(1) ?? "?"} s` : `failed: ${r.failureKinds.map(human).join(", ") || "incomplete"}`;
+    r.completed ? `Completed in ${r.completionTimeSec?.toFixed(1) ?? "?"} s` : `Failed: ${r.failureKinds.map(words).join(", ") || "incomplete"}`;
   return (
     <div>
       <div className={styles.panes}>
@@ -196,9 +198,9 @@ function CaseTable({ ev }: { ev: CandidateEvaluation }) {
             {rows.map((c) => (
               <tr key={c.caseId}>
                 <td>{c.caseId}</td>
-                <td><Badge tone={stateTone(c.status)}>{c.status}</Badge></td>
+                <td><Badge tone={stateTone(c.status)}>{human(c.status)}</Badge></td>
                 <td>{c.completionTimeSec !== undefined ? `${c.completionTimeSec.toFixed(2)} s` : "—"}</td>
-                <td>{c.failureKinds.map(human).join(", ") || "none"}</td>
+                <td>{c.failureKinds.map(words).join(", ") || "none"}</td>
               </tr>
             ))}
           </tbody>
@@ -216,6 +218,12 @@ const DECISIONS: [ReviewDecision, string][] = [
   ["needs_changes", "Needs changes"],
   ["rejected", "Reject"],
 ];
+
+const DECISION_DETAILS: Record<ReviewDecision, string> = {
+  approved: "Accept this version for engineering review; it does not deploy to hardware.",
+  needs_changes: "Ask the team to make another change before review.",
+  rejected: "Do not advance this candidate.",
+};
 
 /** Review binds to the exact evaluated controllerSha256 and evaluation id. */
 function ReviewForm({ w, cand, evals }: { w: InvestigationWorkspace; cand: ControllerCandidate; evals: CandidateEvaluation[] }) {
@@ -275,11 +283,15 @@ function ReviewForm({ w, cand, evals }: { w: InvestigationWorkspace; cand: Contr
         </p>
       ) : (
         <form onSubmit={submit} className={styles.form}>
-          <fieldset className={styles.decisions}>
-            <legend>Decision</legend>
+          <fieldset className={styles.decisions} role="radiogroup" aria-labelledby="decision-legend">
+            <legend id="decision-legend">Decision</legend>
             {DECISIONS.map(([d, label]) => (
-              <label key={d}>
-                <input type="radio" name="decision" value={d} checked={decision === d} onChange={() => setDecision(d)} /> {label}
+              <label key={d} className={`${styles.decision} ${decision === d ? styles.decisionSelected : ""}`}>
+                <input type="radio" name="decision" value={d} checked={decision === d} aria-label={label} onChange={() => setDecision(d)} />
+                <span className={styles.decisionText}>
+                  <strong>{label}</strong>
+                  <span>{DECISION_DETAILS[d]}</span>
+                </span>
               </label>
             ))}
           </fieldset>

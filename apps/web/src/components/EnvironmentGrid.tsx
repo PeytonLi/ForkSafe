@@ -42,6 +42,7 @@ export function EnvironmentGrid({ workspace: w }: { workspace: InvestigationWork
               <dt>Elapsed</dt>
               <dd>{elapsed !== undefined ? fmtDuration(elapsed) : "not started"}</dd>
               <dt>Experiments</dt>
+              <dd>{exps.length} / {e.budgets.maxExperiments}</dd>
               <dt>Model usage</dt>
               <dd>
                 {tokens.toLocaleString()} tokens{unknown && <span className={styles.warn} title="At least one session did not report usage; not counted as zero"> + unknown</span>}

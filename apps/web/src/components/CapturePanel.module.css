@@ -6,8 +6,9 @@
 .dl dt { color: var(--muted); }
 .dl dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
 .note { color: var(--muted); font-size: var(--text-xs); line-height: 1.5; margin: 0.5rem 0 0; }
+.cardFooter { margin-top: 0.75rem; padding-top: 0.7rem; border-top: 1px solid var(--line); }
 .failure { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; margin: 0.6rem 0 0; color: var(--red); font-size: var(--text-xs); }
-.editScenario { justify-self: start; color: var(--accent); border-color: transparent; background: var(--accent-soft); }
+.editScenario { width: 100%; color: var(--accent); border-color: transparent; background: var(--accent-soft); }
 .editScenario:hover:not(:disabled) { border-color: transparent; background: #dfedeb; }
 .sheetBackdrop { position: fixed; z-index: 50; inset: 0; display: flex; justify-content: flex-end; background: rgba(32, 46, 48, 0.24); backdrop-filter: blur(3px); animation: backdrop-in 180ms ease-out both; }
 .sheet { width: min(520px, 94vw); height: 100%; overflow: auto; padding: 1.5rem; background: var(--panel); box-shadow: var(--shadow-popover); animation: sheet-in 190ms ease-out both; }

@@ -14,7 +14,7 @@ test("browser story: readiness, fixture investigation, replay scrub, review", as
 
   // The compact status pill makes fixture mode and integration details available.
   const strip = page.getByTestId("readiness-strip");
-  const statusButton = strip.getByRole("button");
+  const statusButton = strip.getByRole("button").first();
   await statusButton.focus();
   await expect(page.getByRole("dialog", { name: "Integration status" })).toHaveCount(0);
   await statusButton.click();
@@ -22,8 +22,18 @@ test("browser story: readiness, fixture investigation, replay scrub, review", as
   await expect(status).toContainText("Showing recorded fixture data, not live results");
   await expect(status.getByTestId("readiness-web-data")).toContainText("fixture");
   await expect(status.getByTestId("readiness-convex")).toBeVisible();
+  await expect(statusButton).toHaveAttribute("aria-label", /configured/);
   for (const name of ["convex", "spacetimedb", "daytona", "factory", "elastic", "atlassian_jira"]) {
-    await expect(status.getByTestId(`readiness-${name}`)).toHaveAttribute("data-mode", /^(live|local|fixture|blocked|not_implemented)$/);
+    const row = status.getByTestId(`readiness-${name}`);
+    await expect(row).toHaveAttribute("data-mode", /^(live|local|fixture|blocked|not_implemented)$/);
+    const mode = await row.getAttribute("data-mode");
+    const probed = await row.getAttribute("data-probed");
+    expect(["true", "false"]).toContain(probed);
+    const label = mode === "blocked" ? "Blocked"
+      : mode === "not_implemented" ? "Not implemented"
+        : mode === "fixture" ? "Fixture"
+          : probed === "true" ? "Live" : "Configured";
+    await expect(row.getByText(label, { exact: true })).toBeVisible();
   }
   await page.keyboard.press("Escape");
   await expect(status).toHaveCount(0);
@@ -51,7 +61,9 @@ test("browser story: readiness, fixture investigation, replay scrub, review", as
   await page.screenshot({ path: info.outputPath(`capture-${info.project.name}.png`), fullPage: true });
 
   // Scenario controls stay out of the way until explicitly opened.
-  await page.getByTestId("open-scenario").click();
+  const capturedFailure = page.getByRole("region", { name: "Captured failure" });
+  await expect(capturedFailure.getByTestId("open-scenario")).toBeVisible();
+  await capturedFailure.getByTestId("open-scenario").click();
   const scenario = page.getByRole("dialog", { name: "Edit scenario" });
   await expect(scenario).toBeVisible();
   for (const group of ["Divider", "Cube", "Target", "Run"]) await expect(scenario.getByRole("group", { name: group })).toBeVisible();
@@ -89,6 +101,7 @@ test("browser story: readiness, fixture investigation, replay scrub, review", as
     await page.getByRole("tab", { name: "Compare & review" }).click();
   }
   const subtabs = page.getByTestId("compare-subtabs");
+  await expect(page.getByRole("radiogroup", { name: "Candidate" }).getByRole("radio")).toHaveCount(2);
   await expect(subtabs.getByRole("tab", { name: "Replay" })).toHaveAttribute("aria-selected", "true");
   const cmp = page.getByTestId("comparison-replay");
   await expect(cmp.getByTestId("replay-viewer")).toHaveCount(2);
@@ -113,10 +126,21 @@ test("browser story: readiness, fixture investigation, replay scrub, review", as
   const review = page.getByTestId("review-panel");
   await expect(review.getByTestId("submit-review")).toBeDisabled();
   await expect(review).toContainText("Choose a decision to enable your review");
+  const decisions = review.getByRole("radiogroup", { name: "Decision" });
+  await expect(decisions.getByRole("radio")).toHaveCount(3);
+  await expect(decisions).toContainText("Accept this version for engineering review");
+  await expect(decisions).toContainText("Ask the team to make another change before review.");
+  await expect(decisions).toContainText("Do not advance this candidate.");
+  const approve = decisions.getByRole("radio", { name: "Approve for engineering review" });
+  await approve.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(decisions.getByRole("radio", { name: "Needs changes" })).toBeChecked();
+  await page.keyboard.press("ArrowLeft");
+  await expect(approve).toBeChecked();
   await review.getByLabel("Approve for engineering review").check();
   await review.getByLabel("Notes (optional)").fill("Clears divider on all public and withheld cases.");
   await review.getByTestId("submit-review").click();
-  await expect(review.getByTestId("review-history")).toContainText("approved");
+  await expect(review.getByTestId("review-history")).toContainText("Approved");
   await expect(review.getByTestId("review-history")).toContainText(sha.slice(0, 12));
 });
 
@@ -145,7 +169,7 @@ test("running investigation can be cancelled with a visible pending phase", asyn
   page.once("dialog", (d) => void d.accept());
   await page.getByTestId("cancel-investigation").click();
   await expect(page.getByText("cancellation pending")).toBeVisible();
-  await expect(page.getByTestId("investigation-view").getByText("cancelled", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId("investigation-view").getByText("Cancelled", { exact: true })).toBeVisible({ timeout: 10_000 });
   await expect(page.getByTestId("cancel-investigation")).toHaveCount(0);
 });
 
@@ -165,5 +189,8 @@ test("readiness endpoint returns contract-shaped data without secret values", as
   expect(res.ok()).toBeTruthy();
   const body = await res.json();
   expect(body.integrations.length).toBeGreaterThanOrEqual(10);
-  for (const r of body.integrations) expect(["live", "local", "fixture", "blocked", "not_implemented"]).toContain(r.mode);
+  for (const r of body.integrations) {
+    expect(["live", "local", "fixture", "blocked", "not_implemented"]).toContain(r.mode);
+    expect(typeof r.probed).toBe("boolean");
+  }
 });

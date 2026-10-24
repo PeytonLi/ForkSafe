@@ -7,7 +7,7 @@ import { ReplayViewer } from "../viewer/ReplayViewer";
 import { replayDuration } from "../viewer/transform";
 import { useReplayClock } from "../viewer/useReplayClock";
 import { Badge, Panel } from "./Panel";
-import { human, stateTone } from "./tone";
+import { human, stateTone, words } from "./tone";
 import styles from "./CapturePanel.module.css";
 
 export function CapturePanel({ workspace }: { workspace: InvestigationWorkspace }) {
@@ -42,7 +42,7 @@ export function CapturePanel({ workspace }: { workspace: InvestigationWorkspace 
             {baseline?.failureKinds.length ? (
               <>
                 <dt>Failure</dt>
-                <dd>{baseline.failureKinds.map(human).join(", ")}</dd>
+                <dd>{baseline.failureKinds.map(words).join(", ")}</dd>
               </>
             ) : null}
             <dt>Controller</dt>
@@ -53,15 +53,17 @@ export function CapturePanel({ workspace }: { workspace: InvestigationWorkspace 
             <dd>{baseline?.engineVersion ?? "—"}</dd>
           </dl>
           {inv.baselineCase.description && <p className={styles.note}>{inv.baselineCase.description}</p>}
+          <footer className={styles.cardFooter}>
+            <SceneEditor
+              scene={inv.baselineCase.sceneOverrides}
+              seed={inv.baselineCase.seed}
+              envs={inv.requestedEnvironments}
+              open={editorOpen}
+              onOpen={() => setEditorOpen(true)}
+              onClose={() => setEditorOpen(false)}
+            />
+          </footer>
         </section>
-        <SceneEditor
-          scene={inv.baselineCase.sceneOverrides}
-          seed={inv.baselineCase.seed}
-          envs={inv.requestedEnvironments}
-          open={editorOpen}
-          onOpen={() => setEditorOpen(true)}
-          onClose={() => setEditorOpen(false)}
-        />
       </div>
     </div>
   );
