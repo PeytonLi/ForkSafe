@@ -342,3 +342,58 @@ export const runnerLogTail = internalAction({
     return { done: result.done, ...(result.exitCode === undefined ? {} : { exitCode: result.exitCode }), logs: result.logs };
   },
 });
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const CASE_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const WITHHELD_MANIFEST_IN_IMAGE = "/opt/forksafe/evaluation/withheld/manifest.json";
+
+/** Runs one case through PR #13's `evaluator.run_candidate` inside a v3 evaluator
+ *  sandbox. The sandbox signs the result with the seed injected at create time;
+ *  this action only returns the document, Convex verifies before scoring. */
+export const runSignedCase = internalAction({
+  args: {
+    sandboxOpId: v.string(), investigationId: v.string(), candidateId: v.string(), attemptId: v.string(),
+    caseId: v.string(), suite: v.union(v.literal("public"), v.literal("withheld")),
+    controllerSource: v.string(), controllerSha256: v.string(),
+  },
+  handler: async (ctx, args): Promise<{ exitCode: number; document: unknown; logTail: string; wallMs: number }> => {
+    const started = Date.now();
+    for (const id of [args.investigationId, args.candidateId, args.attemptId]) {
+      if (!UUID_RE.test(id)) throw new ConvexError("signed_case_input_rejected");
+    }
+    if (!CASE_ID_RE.test(args.caseId) || !/^[0-9a-f]{64}$/.test(args.controllerSha256)) throw new ConvexError("signed_case_input_rejected");
+    const { ref } = await readyRef(ctx, args.sandboxOpId);
+    const daytona = provider();
+    const runDir = `${RUN_ROOT}/eval-${args.attemptId}/${args.caseId}`;
+    await putSmallFile(daytona, ref, `${runDir}/controller/task_controller.py`, new TextEncoder().encode(args.controllerSource));
+    const command = [
+      "python3 -m evaluator.run_candidate",
+      `--controller ${runDir}/controller/task_controller.py`,
+      `--expected-sha256 ${args.controllerSha256}`,
+      `--suite ${args.suite}`,
+      `--case-ids ${args.caseId}`,
+      `--candidate-id ${args.candidateId}`,
+      `--investigation-id ${args.investigationId}`,
+      `--evaluator-attempt-id ${args.attemptId}`,
+      `--artifacts-dir ${runDir}/artifacts`,
+      `--work-dir ${runDir}/work`,
+      `--out ${runDir}/result.json`,
+      ...(args.suite === "withheld" ? [`--withheld-manifest ${WITHHELD_MANIFEST_IN_IMAGE}`] : []),
+      `--case-wall-sec 120`,
+    ].join(" ");
+    let run: { exitCode: number; output: string };
+    try {
+      run = await daytona.exec(ref, { command: `mkdir -p ${runDir}/work && ${command}`, cwd: "/workspace", timeoutSec: 300 });
+    } catch (error) {
+      run = { exitCode: -1, output: `exec_failed:${error instanceof Error ? error.name : "unknown"}` };
+    }
+    let document: unknown = null;
+    try {
+      const bytes = await pullFile(ctx, daytona, ref, `${runDir}/result.json`);
+      if (bytes.byteLength <= 2 * 1024 * 1024) document = JSON.parse(new TextDecoder().decode(bytes));
+    } catch {
+      document = null;
+    }
+    return { exitCode: run.exitCode, document, logTail: run.output.slice(-600), wallMs: Date.now() - started };
+  },
+});
