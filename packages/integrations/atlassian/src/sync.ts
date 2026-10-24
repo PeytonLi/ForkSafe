@@ -59,8 +59,17 @@ export const JiraSyncInput = z.object({
 });
 export type JiraSyncInput = z.infer<typeof JiraSyncInput>;
 
+const INVESTIGATION_LABEL_PREFIX = "forksafe-inv-";
+const INVESTIGATION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function investigationLabel(id: string): string {
-  return `forksafe-inv-${id}`;
+  return `${INVESTIGATION_LABEL_PREFIX}${id}`;
+}
+
+export function investigationIdFromLabel(label: string): string | undefined {
+  if (!label.startsWith(INVESTIGATION_LABEL_PREFIX)) return undefined;
+  const id = label.slice(INVESTIGATION_LABEL_PREFIX.length);
+  return INVESTIGATION_ID_PATTERN.test(id) ? id : undefined;
 }
 
 /** Issue description: candidate verdicts and the review decision. Withheld
