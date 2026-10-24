@@ -1,7 +1,7 @@
 import { expect, test, type Page, type TestInfo } from "../../apps/web/e2e/playwright";
 
 function learningScreenshotPath(info: TestInfo, name: string): string {
-  return process.env.CI ? info.outputPath(name) : `/home/ubuntu/lane-d/shots/${name}`;
+  return process.env.FORKSAFE_SHOT_DIR ? `${process.env.FORKSAFE_SHOT_DIR}/${name}` : info.outputPath(name);
 }
 
 async function expectNoHorizontalOverflow(page: Page) {
