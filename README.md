@@ -1,218 +1,136 @@
 # ForkSafe
 
-ForkSafe helps an engineer understand why a robot task failed and review a
-possible controller fix. Start with a recorded collision, let independent
-investigation environments gather evidence, then compare the original and a
-candidate against separate evaluation cases. Every finding should point back to
-its experiment, artifacts and controller version. A person makes the final
-decision; an agent's explanation is not a passing test.
+ForkSafe helps you find out **why a robot controller failed, and prove that a
+fix really works**.
 
-The browser can show a recorded fixture story without cloud accounts. The local
-benchmark runs real MuJoCo physics. Those are different things: a fixture replay
-is not a newly executed simulation, and a healthy cloud endpoint is not proof
-that the whole repair pipeline ran.
+You start with one recorded failure: a Franka Panda arm that clips a divider
+while placing a block. ForkSafe then:
 
-## Five-minute quickstart
+1. **Replays the failure** in real MuJoCo physics so everyone sees the same thing.
+2. **Starts several independent agent environments.** Each one gets its own
+   sandbox and its own AI agent (Factory Droid) that runs experiments and
+   proposes a fixed controller.
+3. **Shares evidence in SpacetimeDB.** Every experiment, finding and candidate
+   lands in one shared database, so environments can learn from each other and
+   you can trace which finding led to which fix.
+4. **Runs a protected evaluation.** Each candidate is tested in a fresh sandbox
+   on public cases and on withheld cases the agents never see. The evaluator
+   signs its results, and nothing unsigned is scored.
+5. **Asks a human to review.** The approval is tied to the exact controller
+   file (its SHA-256), so nobody can swap the code after it was approved.
 
-You'll need Node 22+, pnpm 10.34.8 (the version in `packageManager`), uv and
-Python 3.12. First-time downloads may take longer than five minutes.
+**Hosted app:** https://giant-jellyfish-684.convex.site
+Signed-out visitors see a short list of public investigations. Ask Peyton for
+an invite code to sign in and start or review runs.
 
-```sh
-pnpm run setup
-pnpm run doctor
+> **Honest labels.** Fixture mode shows a recorded story, not live physics.
+> `pnpm benchmark` runs real physics on your machine. The hosted health page
+> only checks that cloud services answer. A full hosted repair is a separate
+> thing again. See [what is live](docs/integration-matrix.md).
+
+## 10-minute quickstart (no keys needed)
+
+You need Node 22, pnpm 10, [uv](https://docs.astral.sh/uv/) and Python 3.12.
+
+```bash
+git clone https://github.com/PeytonLi/ForkSafe.git && cd ForkSafe
+pnpm run setup          # Node + Python deps, robot assets, creates .env.local
 VITE_FORKSAFE_DATA=fixture pnpm dev
 ```
 
-Open <http://localhost:5173>. Choose **Panda clips divider**, scrub the baseline
-replay, then explore **Environments**, **Evidence**, and **Compare & review**.
-The banner tells you this is recorded fixture data. Reviews in this mode stay in
-your browser. See the [demo runbook](docs/demo-runbook.md) for a guided tour.
+Open http://localhost:5173. The banner says this is **recorded fixture data**.
+Click through the baseline replay, the environments, the evidence and the
+review screen. Reviews you submit here stay in your browser.
 
-Use **pnpm run setup** and **pnpm run doctor**: pnpm reserves bare `setup` and
-`doctor` for its own commands. Setup installs dependencies, syncs Python, fetches
-and verifies pinned assets, and creates the ignored `.env.local` if absent.
-Missing optional CLIs print install hints. SpacetimeDB's CLI is required for
-workspace typecheck:
+Want real physics too? In a second terminal:
 
-```sh
-curl -sSf https://install.spacetimedb.com | sh -s -- -y
-export PATH="$HOME/.local/bin:$PATH"
-curl -fsSL https://app.factory.ai/cli | sh
+```bash
+pnpm benchmark          # real MuJoCo run of the original controller, about 20 seconds
 ```
 
-`pnpm dev` starts Vite on 5173, simulator on 8000 and evaluator on 8001.
-Ctrl-C stops all three. It does not start Convex, SpacetimeDB, or cloud workers.
-Without `VITE_CONVEX_URL`, the web selects fixtures; setting
-`VITE_FORKSAFE_DATA=fixture` explicitly keeps the tour in fixture mode even if a
-hosted URL is configured. For a hosted UI, remove that override and set the URL.
+Use `pnpm run setup` and `pnpm run doctor` (with `run`): plain `pnpm setup` is a
+pnpm built-in. If something goes wrong, see [troubleshooting](docs/troubleshooting.md).
 
-## How the pieces fit
+## Full cloud setup
 
-This is the intended wiring, not a claim that every link is deployed.
-See the [integration matrix](docs/integration-matrix.md) for current limits.
+Copy `.env.example` to `.env.local` (setup already did) and fill in what you
+need. Never commit real values. `pnpm run doctor` tells you which names are
+missing, and `pnpm run doctor --live` checks each service with a read-only call.
 
-```mermaid
-flowchart LR
-  Web["Web: capture, replay, compare, review"] <--> Convex["Convex: lifecycle, jobs, review"]
-  Convex <--> STDB["SpacetimeDB Maincloud: evidence and revisions"]
-  Convex --> Runner
-  subgraph Daytona["Daytona sandboxes"]
-    Runner["Trusted runner + Factory Droid"]
-    Physics["Isolated simulator + trusted evaluator"]
-    Runner --> Physics
-  end
-  Runner --> STDB
-  STDB --> Elastic["Elastic evidence projections"]
-  Elastic <--> Agent["Kibana Agent Builder: cited answers"]
-  Convex <--> Jira["Jira + Forge panel"]
-  Jira <--> Confluence["Confluence: versioned requirements"]
-```
+| Variable | What it is | Where to get it |
+| --- | --- | --- |
+| `APP_MODE` | `local` or `cloud` | Pick one; `local` is the default |
+| `WEB_PORT` | Port for the web app | Defaults to 5173 |
+| `CONVEX_MODE` | `local` or `cloud` | Pick one |
+| `CONVEX_URL`, `VITE_CONVEX_URL` | Convex API URL (`https://<name>.convex.cloud`). Setting `VITE_CONVEX_URL` makes the web app use live data | Convex dashboard, deployment settings |
+| `CONVEX_SITE_URL` | Convex HTTP URL (`https://<name>.convex.site`) | Convex dashboard, deployment settings |
+| `CONVEX_DEPLOY_KEY` | Lets the CLI deploy and run functions | Convex dashboard, Settings, Deploy keys |
+| `CONVEX_ADMIN_KEY` | Admin key for readiness checks | Convex dashboard (optional) |
+| `DAYTONA_MODE` | `local` or `cloud` | Pick one |
+| `DAYTONA_API_KEY` | Creates sandboxes | Daytona dashboard, API Keys |
+| `DAYTONA_API_URL` | Daytona API endpoint | Keep `https://app.daytona.io/api` |
+| `DAYTONA_RUNNER_SNAPSHOT`, `DAYTONA_EXECUTION_SNAPSHOT` | Sandbox images for runner and physics/evaluator | Printed by `pnpm daytona:prepare` |
+| `DAYTONA_MAX_ACTIVE_SANDBOXES`, `DAYTONA_EXECUTION_CONCURRENCY` | Sandbox caps | The org cap is 5; keep the defaults |
+| `RUNNER_MODE` | `local` or `cloud` runner | Pick one |
+| `ARTIFACT_MODE`, `ARTIFACT_ROOT` | Where replays and logs are stored | `local` and `./var/artifacts` work out of the box |
+| `RUNNER_CALLBACK_SECRET`, `INTEGRATION_SHARED_SECRET` | Shared secrets between services | Make your own: `openssl rand -hex 32` |
+| `SIMULATOR_MODE`, `SIMULATOR_URL`, `EVALUATOR_URL` | Local physics and evaluator services | Defaults are `http://127.0.0.1:8000` and `:8001` |
+| `EVALUATOR_SERVICE_TOKEN` | Token for the evaluator service | Make your own: `openssl rand -hex 32` |
+| `SPACETIMEDB_MODE`, `SPACETIMEDB_URI`, `SPACETIMEDB_DATABASE` | Shared evidence database | `wss://maincloud.spacetimedb.com` and `forksafe`; see [publishing](docs/publish-spacetimedb.md) |
+| `FACTORY_MODE`, `FACTORY_API_KEY`, `FACTORY_MODEL` | The AI agent | Factory app, Settings, API keys |
+| `ELASTIC_MODE`, `ELASTICSEARCH_URL`, `ELASTICSEARCH_API_KEY` | Search index | Elastic Cloud deployment page and Kibana, Stack Management, API keys |
+| `ELASTIC_AGENT_BUILDER_MODE`, `KIBANA_URL`, `KIBANA_API_KEY` | "Why did this fail?" answers | Kibana URL from the deployment page; the ES API key also works for Kibana |
+| `ATLASSIAN_MODE`, `ATLASSIAN_SITE_URL`, `ATLASSIAN_EMAIL`, `ATLASSIAN_API_TOKEN`, `ATLASSIAN_PROJECT_KEY` | Jira review issues | Your site URL, your login email, a token from id.atlassian.com, Security, API tokens; project key `FS` |
+| `FORGE_APP_ID` | Jira review panel app | `apps/forge/manifest.yml`, or `forge register` for your own copy |
+| `MAX_ENVIRONMENTS`, `DEFAULT_ENVIRONMENTS`, `MAX_ACTIVE_MODEL_CALLS` | Run size limits | Keep the defaults |
+
+The hosted Convex deployment also needs some variables that live only in Convex
+(set with `npx convex env set`): `FORKSAFE_BRIDGE_SECRET` (must match the
+SpacetimeDB module), `FORKSAFE_EVAL_SIGNING_KEY` and `FORKSAFE_EVAL_TRUSTED_KEYS`
+(evaluator signing), `RUNNER_LAUNCH_MODE=external` (see below),
+`FORKSAFE_INVITE_CODE`, `FORKSAFE_PUBLIC_INVESTIGATION_IDS`, `FORKSAFE_WEB_URL`,
+`FORGE_ALLOWED_INSTALLATION_IDS`, and the Convex Auth keys `JWT_PRIVATE_KEY`,
+`JWKS`, `SITE_URL`. See [Convex](docs/integrations/convex.md),
+[web access](docs/web-access-control.md) and the
+[on-call runbook](docs/operations/runbook.md).
+
+**One important network limit.** Daytona sandboxes on this org's tier cannot
+reach Factory or SpacetimeDB Maincloud. So the trusted runner runs on an
+outside host (`RUNNER_LAUNCH_MODE=external`), while Daytona still runs the
+physics and the protected evaluator. Details: [Daytona network](docs/integrations/daytona-network.md).
 
 ## Commands
 
-Root scripts load `.env.local`, then `.env`, without replacing nonempty process
-variables. Keep real credentials out of git and out of `VITE_*` variables.
+Every command below is a script in `package.json`.
 
-| Command | What it actually does |
-| --- | --- |
-| `pnpm run setup` | Install Node/Python dependencies, fetch and verify assets, check CLIs, create env file. |
-| `pnpm run doctor` | Report modes and missing names; blocked integrations are warnings. |
-| `pnpm run doctor --live` | Add read-only probes; failed configured probes exit 1. |
-| `pnpm run doctor --strict --json` | Machine-readable readiness; blocked integrations also exit 1. |
-| `pnpm dev` | Start web and both local Python services; stop together on exit. |
-| `pnpm seed:demo` | Run Convex `demo:seed` if available; currently exits 2 because `convex/demo.ts` is absent. |
-| `pnpm build` | Run workspace build scripts. |
-| `pnpm typecheck` | Workspace type checks; generates SpacetimeDB bindings if missing. |
-| `pnpm lint` | Workspace lint scripts where defined; not a substitute for tests. |
-| `pnpm test` | Workspace Vitest suites, then Python pytest. |
-| `pnpm test:integration` | Offline contracts/adapter/helper tests; live tests skip with reasons. |
-| `INTEGRATION_LIVE=1 pnpm test:integration` | Also run configured read-only Convex, Elastic, Jira and Maincloud tests. |
-| `pnpm test:e2e` | Fixture browser story on desktop/mobile; Playwright starts Vite itself. |
-| `pnpm benchmark` | Real baseline simulator fallback, or evaluator benchmark module if added. Prints completed/failureKinds/wall time. |
-| `pnpm daytona:prepare` | Prepare images/snapshots; needs a Daytona key and may create resources. |
-| `pnpm smoke:hosted` | Read-only endpoint probes, not a full repair or sandbox experiment. |
-| `pnpm cleanup:sandboxes` | Dry-run owned sandbox list; `--yes` deletes exact ForkSafe-labelled resources only. |
+| Command | What it does | Needs keys? |
+| --- | --- | --- |
+| `pnpm run setup` | Install Node and Python deps, fetch and verify robot assets, create `.env.local` | No |
+| `pnpm run doctor` | List missing settings; add `--live` for read-only cloud checks | No (`--live`: yes) |
+| `pnpm dev` | Web on 5173, simulator on 8000, evaluator on 8001 | No |
+| `pnpm build` | Build every package | No |
+| `pnpm typecheck` | Type-check every package (needs the `spacetime` CLI) | No |
+| `pnpm lint` | Runs `lint` in every package that defines one (none do yet, so it finishes instantly) | No |
+| `pnpm test` | All workspace tests, then Python tests | No |
+| `pnpm test:integration` | Integration tests; cloud ones skip without keys | Optional |
+| `pnpm test:e2e` | Playwright browser tests against fixture data | No |
+| `pnpm benchmark` | Runs the original controller on 10 cases in real MuJoCo and shows it failing (`forbidden_contact`) | No |
+| `pnpm seed:demo` | Start a real hosted demo capture (runs physics in Daytona) | Yes, `CONVEX_DEPLOY_KEY` |
+| `pnpm deploy:web` | Build the web app and deploy Convex plus static hosting | Yes, deploy owner only |
+| `pnpm daytona:prepare` | Build the Daytona snapshots | Yes, `DAYTONA_API_KEY` |
+| `pnpm daytona:egress-probe` | Check what a Daytona sandbox can reach | Yes, `DAYTONA_API_KEY` |
+| `pnpm smoke:hosted` | Read-only checks of each cloud service you have settings for | Optional; unset services show blocked |
+| `pnpm cleanup:sandboxes` | List or remove ForkSafe-labelled Daytona sandboxes | Yes, `DAYTONA_API_KEY` |
+| `pnpm release:check` | Pre-release checks | Some |
 
-For Python alone use `node scripts/pytest.mjs`. A reproduced baseline collision is
-an expected benchmark result and exits 0; a crash or unparseable result fails.
-Set `EVALUATOR_SERVICE_TOKEN` before authenticated evaluator operations.
-Health endpoints do not need it.
+Python tests on their own: `.venv/bin/pytest -q`. After `node scripts/fetch-assets.mjs`,
+run `git checkout assets/robots/manifest.json` because it rewrites a timestamp.
 
-CI runs without secrets: typecheck, workspace/integration tests, pinned-asset
-Python tests, web build and fixture Playwright tests. Install Chromium locally:
-`pnpm --filter @forksafe/web exec playwright install --with-deps chromium`.
+## Learn more
 
-## Connect a development cloud account
-
-Use an authorized development project, not production. Vendor menu wording may
-change; these are the places to look. Save values in `.env.local` or a secret
-manager, never in terminal history, screenshots or an issue. A local env file
-does not configure secrets inside a hosted deployment or worker.
-
-### Convex
-
-1. Open the [Convex dashboard](https://dashboard.convex.dev), select your project,
-   then the development deployment.
-2. Open **Settings → URL & Deploy Key**, generate a deployment key, and save
-   `CONVEX_DEPLOY_KEY`. A development deploy key is not an admin key.
-3. Copy the deployment URL into `CONVEX_URL` and `VITE_CONVEX_URL`; put its
-   HTTP actions URL in `CONVEX_SITE_URL`. The existing authorized dev deployment
-   uses `https://giant-jellyfish-684.convex.cloud` and
-   `https://giant-jellyfish-684.convex.site`.
-4. Configure server-side integration secrets under **Settings → Environment
-   Variables**. Keep `CONVEX_MODE=cloud`; run `pnpm run doctor --live`.
-   The shared package readiness contract still asks for `CONVEX_ADMIN_KEY`
-   separately. Do not put a development deploy key in that field just to clear
-   its warning; the public health probe needs neither key.
-
-### Daytona
-
-1. Open the [Daytona dashboard](https://app.daytona.io), select your organization,
-   then **API Keys**. Create a development key and save `DAYTONA_API_KEY`.
-2. Keep `DAYTONA_API_URL=https://app.daytona.io/api` unless your account uses a
-   different endpoint. Use `DAYTONA_MODE=cloud`.
-3. Read the [adapter guide](docs/integrations/daytona.md) before
-   `pnpm daytona:prepare`; set the resulting runner/execution snapshot names in
-   `DAYTONA_RUNNER_SNAPSHOT` and `DAYTONA_EXECUTION_SNAPSHOT`.
-   Listing sandboxes is read-only; preparing snapshots is not.
-
-### Factory
-
-1. Sign into [Factory](https://app.factory.ai), open account/organization
-   **Settings → API Keys**, and create a development key.
-2. Set `FACTORY_API_KEY`, `FACTORY_MODE=cloud`, and optionally `FACTORY_MODEL`.
-   Install Droid with the command above.
-3. Doctor intentionally says **not verified** with a key present. SDK model
-   discovery returned models for an invalid key too, so it does not verify
-   authentication. Real tool/session work remains a separate checkpoint.
-
-### Elastic Serverless and Kibana
-
-1. In [Elastic Cloud](https://cloud.elastic.co), select or create an
-   **Elasticsearch Serverless** project. Open **Connection details** on its
-   overview; copy the Elasticsearch endpoint to `ELASTICSEARCH_URL`.
-2. Open **API keys** from connection details or Kibana management.
-   Create a least-privilege key for the ForkSafe indices and save its **encoded**
-   value as `ELASTICSEARCH_API_KEY`, not the key ID.
-3. Click **Open Kibana**; copy its base URL to `KIBANA_URL` without an application
-   path. Root doctor uses the Elasticsearch key for Kibana, with
-   `KIBANA_API_KEY` as an optional fallback.
-4. Keep `ELASTIC_MODE=cloud` and `ELASTIC_AGENT_BUILDER_MODE=cloud`. For the
-   package Agent Builder adapter, also bind that authorized key as
-   `KIBANA_API_KEY`: its contracts currently require that name separately.
-   The [Elastic guide](packages/integrations/elastic/README.md) covers index
-   permissions and scoped read-only agents. A successful agents-list probe
-   does not establish evidence indexing or a cited answer.
-
-### Atlassian: Jira and Confluence
-
-1. Visit [Atlassian account security](https://id.atlassian.com/manage-profile/security/api-tokens),
-   choose **Create API token**, and save `ATLASSIAN_API_TOKEN`. Use an account
-   with access to the development project; save its email as `ATLASSIAN_EMAIL`.
-2. Open Jira and copy the site base URL, such as
-   `https://your-team.atlassian.net`, to `ATLASSIAN_SITE_URL`.
-   The adapter uses email/token Basic auth at that site; an OAuth/scoped token
-   that requires a different API gateway is not interchangeable.
-3. Open **Project settings → Details** (or space details in newer navigation).
-   Save the project **key**, not display name, as `ATLASSIAN_PROJECT_KEY`.
-4. Set `ATLASSIAN_MODE=cloud`. Confluence requirements need access to the page;
-   preserve its page ID and revision. The Jira project probe does not verify
-   Confluence access or issue writes.
-
-### Forge Jira app
-
-1. Open the [Atlassian developer console](https://developer.atlassian.com/console/myapps/),
-   choose **Peyton ForkSafe**, and find registered app
-   `66bb7292-9ddc-4529-aa0f-db7b15fc667a`. Set `FORGE_APP_ID` to that public ID.
-2. Follow [apps/forge/README.md](apps/forge/README.md) to log into Forge CLI,
-   configure its HTTPS Convex remote, build, deploy, and install into an authorized
-   Jira development site. The checked-in remote URL is a placeholder.
-3. Select remote mode only after the backend is configured. The default panel
-   is a labelled fixture; an app ID alone does not mean it is installed.
-
-### SpacetimeDB Maincloud
-
-1. Install the CLI above, ensure `~/.local/bin` is on PATH, then run
-   `spacetime login`. Open its browser link and choose the authorized account.
-2. Follow [the publish guide](docs/publish-spacetimedb.md) to publish
-   `packages/spacetimedb` as `forksafe` on Maincloud. Supply
-   `FORKSAFE_BRIDGE_SECRET` through the deployment secret mechanism, not source
-   control. Never use a data-deletion flag on an existing database.
-3. Keep `SPACETIMEDB_URI=wss://maincloud.spacetimedb.com`,
-   `SPACETIMEDB_DATABASE=forksafe` and `SPACETIMEDB_MODE=cloud`. Configure matching
-   bridge settings in Convex. HTTP discovery is not proof that the authenticated
-   bridge can read or commit canonical evidence.
-
-## What is ready?
-
-Read-only probes returned HTTP 200 for Convex, Maincloud database discovery,
-Daytona sandbox listing, Elasticsearch, Kibana agents listing and the Jira
-project. Factory remains unverified. The fixture browser story and offline
-adapter tests are separate from those probes; this is not a claim of an
-end-to-end hosted repair.
-
-See [integration modes and limits](docs/integration-matrix.md),
-[troubleshooting](docs/troubleshooting.md), and the
-[demo runbook](docs/demo-runbook.md). For design intent and security boundaries,
-start with the [PRD](docs/ForkSafe_PRD_Handoff.md) and
-[implementation status](IMPLEMENTATION_STATUS.md).
+- [How it is built](docs/architecture.md): who owns what, the lifecycle, fencing, outbox, signed results.
+- [What is live](docs/integration-matrix.md) and [implementation status](IMPLEMENTATION_STATUS.md).
+- [3-minute demo script](docs/demo-runbook.md).
+- [Latest test results](docs/verification-report.md).
+- [On-call runbook](docs/operations/runbook.md) and [troubleshooting](docs/troubleshooting.md).
+- The full spec: [PRD](docs/ForkSafe_PRD_Handoff.md).
