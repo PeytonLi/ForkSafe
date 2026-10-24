@@ -32,7 +32,7 @@ let server;
 let serverDataDir;
 let serverOutput = "";
 const serverLog = (chunk) => {
-  const text = chunk.toString();
+  const text = chunk.toString().replaceAll(secret, "[REDACTED]");
   serverOutput += text;
   process.stdout.write(text);
 };
@@ -44,13 +44,15 @@ function cli(args, { env = {}, allowFailure = false } = {}) {
     env: { ...process.env, ...env },
     maxBuffer: 20 * 1024 * 1024,
   });
-  if (result.stdout) process.stdout.write(result.stdout);
-  if (result.stderr) process.stdout.write(result.stderr);
+  const stdout = (result.stdout ?? "").replaceAll(secret, "[REDACTED]");
+  const stderr = (result.stderr ?? "").replaceAll(secret, "[REDACTED]");
+  if (stdout) process.stdout.write(stdout);
+  if (stderr) process.stdout.write(stderr);
   if (result.error) throw result.error;
   if (!allowFailure && result.status !== 0) {
     throw new Error(`spacetime ${args[0]} exited ${result.status}`);
   }
-  return { status: result.status, output: `${result.stdout ?? ""}\n${result.stderr ?? ""}` };
+  return { status: result.status, output: `${stdout}\n${stderr}` };
 }
 
 function call(reducer, args, options = {}) {
@@ -63,6 +65,12 @@ function call(reducer, args, options = {}) {
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function sqlRows(output) {
+  const jsonLine = output.split(/\r?\n/).find((line) => line.startsWith("[") && line.includes('"rows":'));
+  assert(jsonLine !== undefined, "SpacetimeDB SQL output did not contain JSON rows");
+  return JSON.parse(jsonLine).flatMap((query) => query.rows);
 }
 
 function expectError(reducer, args, code) {
@@ -152,6 +160,9 @@ async function run() {
   let revisionId;
   let candidateId;
   let outboxKey;
+  let crossGrant;
+  let crossAttempt;
+  let crossCandidate;
   const jobId = uuid();
   const attemptId = uuid();
   investigationId = uuid();
@@ -174,6 +185,7 @@ async function run() {
       "acquire_revision_lease",
       "commit_revision",
       "record_artifact",
+      "record_experiment",
       "record_finding",
       "submit_candidate",
     ],
@@ -200,6 +212,32 @@ async function run() {
       },
     ],
     links: [],
+  });
+  const experimentInput = (id, grant = grantRef()) => ({
+    grant,
+    id,
+    investigationId,
+    environmentId: some(environmentId),
+    candidateId: null,
+    simCase: {
+      case_id: "smoke-case",
+      suite: "public",
+      seed: 7,
+      scene_overrides_json: '{"weather":"clear"}',
+      description: some("deterministic smoke case"),
+    },
+    status: "succeeded",
+    failureKinds: [],
+    completed: true,
+    completionTimeSec: some(1.25),
+    changedFunctions: ["steer"],
+    traceArtifactId: null,
+    replayArtifactId: null,
+    engineVersion: "smoke-engine",
+    assetsSha256: sha("b"),
+    controllerSha256: controllerSha,
+    startedAtMs: Date.now(),
+    finishedAtMs: some(Date.now()),
   });
   const primaryExpiry = Date.now() + 120_000;
 
@@ -277,8 +315,108 @@ async function run() {
     );
   });
 
+  await step("register an idempotent baseline without outbox work", () => {
+    const baseline = {
+      id: uuid(),
+      simCase: {
+        case_id: "smoke-case",
+        suite: "public",
+        seed: 7,
+        scene_overrides_json: '{"weather":"clear"}',
+        description: some("baseline case"),
+      },
+      sceneSha256: sha("c"),
+      controllerSha256: controllerSha,
+      assetsManifestSha256: sha("d"),
+      engineVersion: "smoke-engine",
+      failureKinds: ["timeout"],
+      failureSummary: "Timed out at the final frame",
+      sourceExperimentId: null,
+      requirements: [{
+        rule_id: "must-complete",
+        confluence_page_id: "12345",
+        confluence_page_revision: 3,
+        title: "Completion",
+        enforcement: "checked",
+        rule_json: '{"minimumFrames":10}',
+      }],
+    };
+    const before = sqlRows(cli([
+      "sql",
+      "--server",
+      httpUri,
+      "--format",
+      "json",
+      dbName,
+      "SELECT id FROM outbox_entry",
+    ]).output).map((row) => row.id).sort();
+    call("register_baseline", baseline);
+    call("register_baseline", baseline);
+    expectError(
+      "register_baseline",
+      { ...baseline, failureSummary: "Conflicting baseline" },
+      "baseline_conflict",
+    );
+    const after = sqlRows(cli([
+      "sql",
+      "--server",
+      httpUri,
+      "--format",
+      "json",
+      dbName,
+      "SELECT id FROM outbox_entry",
+    ]).output).map((row) => row.id).sort();
+    assert(JSON.stringify(before) === JSON.stringify(after), "Baseline registration unexpectedly enqueued outbox work");
+    const requirements = cli([
+      "sql",
+      "--server",
+      httpUri,
+      "--format",
+      "json",
+      dbName,
+      `SELECT * FROM baseline_requirement WHERE baseline_id = '${baseline.id}'`,
+    ]);
+    assert(requirements.output.includes("must-complete"), "Baseline requirement was not stored");
+  });
+
+  await step("canonical experiment deduplication and explicit replication", () => {
+    const canonical = uuid();
+    const alias = uuid();
+    const replication = uuid();
+    const experiment = experimentInput(canonical);
+    call("record_experiment", experiment);
+    call("record_experiment", { ...experiment, id: alias });
+    const rows = cli(["sql", "--server", httpUri, "--format", "json", dbName, "SELECT * FROM experiment"]);
+    assert(rows.output.includes(canonical), "Canonical experiment is missing");
+    assert(!rows.output.includes(alias), "Duplicate experiment unexpectedly created a second row");
+    const aliases = cli([
+      "sql",
+      "--server",
+      httpUri,
+      "--format",
+      "json",
+      dbName,
+      `SELECT * FROM experiment_identity WHERE experiment_id = '${alias}'`,
+    ]);
+    assert(aliases.output.includes(canonical), "Experiment alias does not point to its canonical row");
+    expectError(
+      "commit_experiment",
+      { ...experimentInput(uuid()), replicationOf: some(canonical), replicationReason: null },
+      "invalid_replication",
+    );
+    call("commit_experiment", {
+      ...experimentInput(replication),
+      replicationOf: some(canonical),
+      replicationReason: some("Independent deterministic replay"),
+    });
+    const finding = findingInput();
+    finding.evidence[0].experiment_id = some(alias);
+    call("record_finding", finding);
+    const evidence = cli(["sql", "--server", httpUri, "--format", "json", dbName, "SELECT * FROM evidence"]);
+    assert(evidence.output.includes(alias), "Finding evidence did not preserve the submitted experiment alias");
+  });
+
   await step("record finding, evidence, and its provenance outbox entry", () => {
-    call("record_finding", findingInput());
     outboxKey = `finding:${findingId}:elastic_index`;
     const sql = cli(["sql", "--server", httpUri, "--format", "json", dbName, "SELECT * FROM finding"]);
     assert(sql.output.includes(findingId), "SQL assertion could not find recorded finding");
@@ -304,6 +442,16 @@ async function run() {
       basedOnFindings: [findingId],
     };
     call("submit_candidate", candidate);
+    const lineage = cli([
+      "sql",
+      "--server",
+      httpUri,
+      "--format",
+      "json",
+      dbName,
+      `SELECT * FROM finding_use WHERE finding_id = '${findingId}'`,
+    ]);
+    assert(lineage.output.includes("false"), "Same-environment candidate lineage did not record crossEnvironment=false");
     expectError(
       "submit_candidate",
       { ...candidate, controllerSha256: sha("b") },
@@ -311,11 +459,90 @@ async function run() {
     );
   });
 
+  await step("record cross-environment lineage and deduplicate the natural key", () => {
+    const otherEnvironment = uuid();
+    const otherJob = uuid();
+    crossAttempt = uuid();
+    crossGrant = uuid();
+    crossCandidate = uuid();
+    call("install_grant", {
+      ...grantInput(crossGrant, otherJob, crossAttempt, 1, Date.now() + 120_000),
+      environmentId: some(otherEnvironment),
+    });
+    call("submit_candidate", {
+      grant: { grant_id: crossGrant, attempt_id: crossAttempt, epoch: 1 },
+      id: crossCandidate,
+      investigationId,
+      environmentId: otherEnvironment,
+      revisionId: null,
+      controllerSha256: controllerSha,
+      sourceArtifactId: artifactId,
+      changedFunctions: ["steer"],
+      rationale: null,
+      basedOnFindings: [findingId],
+    });
+    const crossEnvironment = cli([
+      "sql",
+      "--server",
+      httpUri,
+      "--format",
+      "json",
+      dbName,
+      `SELECT * FROM finding_use WHERE finding_id = '${findingId}'`,
+    ]);
+    assert(crossEnvironment.output.includes("true"), "Cross-environment lineage did not record crossEnvironment=true");
+    call("record_finding_use", {
+      grant: { grant_id: crossGrant, attempt_id: crossAttempt, epoch: 1 },
+      id: uuid(),
+      findingId,
+      experimentId: null,
+      candidateId: some(crossCandidate),
+    });
+  });
+
+  await step("tombstone a finding, expose its reason, and reject further lineage", () => {
+    call("record_tombstone", {
+      targetKind: "finding",
+      targetId: findingId,
+      reason: "Smoke verification",
+    });
+    const tombstones = cli(["sql", "--server", httpUri, "--format", "json", dbName, "SELECT * FROM tombstone"]);
+    assert(tombstones.output.includes(findingId) && tombstones.output.includes("Smoke verification"), "Tombstone reason is absent from tombstone rows");
+    const candidates = cli(["sql", "--server", httpUri, "--format", "json", dbName, "SELECT * FROM candidate"]);
+    assert(candidates.output.includes(candidateId), "Unrevoked candidate is absent from candidate rows");
+    call("record_tombstone", {
+      targetKind: "artifact",
+      targetId: artifactId,
+      reason: "Source withdrawn",
+    });
+    const artifactTombstones = cli(["sql", "--server", httpUri, "--format", "json", dbName, "SELECT * FROM tombstone"]);
+    assert(artifactTombstones.output.includes(artifactId), "Source artifact tombstone was not stored");
+    expectError("record_tombstone", {
+      targetKind: "evidence",
+      targetId: "not-u64",
+      reason: "Invalid test id",
+    }, "invalid_id");
+    expectError("record_finding_use", {
+      grant: { grant_id: crossGrant, attempt_id: crossAttempt, epoch: 1 },
+      id: uuid(),
+      findingId,
+      experimentId: null,
+      candidateId: some(crossCandidate),
+    }, "finding_tombstoned");
+  });
+
   await step("reject superseded, revoked, and expired grants atomically", async () => {
     const replacement = uuid();
     const replacementAttempt = uuid();
     call("install_grant", grantInput(replacement, jobId, replacementAttempt, 2, Date.now() + 120_000));
     expectError("record_finding", findingInput(), "grant_superseded");
+    expectError("record_finding_use", {
+      grant: grantRef(),
+      id: uuid(),
+      findingId: uuid(),
+      experimentId: some(uuid()),
+      candidateId: null,
+    }, "grant_superseded");
     call("revoke_grant", { grantId: replacement, reason: "smoke test revocation" });
     expectError(
       "heartbeat",
@@ -359,6 +586,7 @@ async function run() {
         SPACETIMEDB_DATABASE: dbName,
         SMOKE_FINDING_ID: findingId,
         SMOKE_INVESTIGATION_ID: investigationId,
+        SMOKE_CANDIDATE_ID: candidateId,
       },
       maxBuffer: 20 * 1024 * 1024,
     });
