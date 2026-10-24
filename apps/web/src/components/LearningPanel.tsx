@@ -3,6 +3,7 @@ import { routeHref, shortSha, useClient, useLoad } from "../hooks";
 import type { InvestigationWorkspace, LearningExperimentSummary, LearningView } from "../services";
 import { useBrowserAccess } from "../services/browserAccess";
 import { SyncedReplays } from "./ComparePanel";
+import { Icon } from "./Icon";
 import { Badge, Panel } from "./Panel";
 import { outcomeSentence } from "./learning";
 import { human } from "./tone";
@@ -37,21 +38,21 @@ export function LearningPanel({ workspace }: { workspace: InvestigationWorkspace
         <div className={styles.wrap}>
           <section className={styles.card} aria-labelledby="lineage-heading">
             <h3 id="lineage-heading">Controller history</h3>
-            <div className={styles.lineage} data-testid="controller-lineage">
+            <ol className={styles.lineage} data-testid="controller-lineage">
               {view.lineage.map((entry, index) => (
-                <span className={`${styles.lineageItem} ${entry.version === view.current?.version ? styles.current : ""}`} key={`${entry.version}-${entry.controllerSha256}`}>
+                <li className={styles.step} key={`${entry.version}-${entry.controllerSha256}`}>
                   {index > 0 && <span className={styles.arrow} aria-hidden="true">→</span>}
-                  {entry.version === 1 ? <span>Baseline v1</span> : (
-                    <span>
-                      {entry.investigationId
-                        ? <a href={routeHref({ investigationId: entry.investigationId, tab: "compare" })}>{entry.label}</a>
-                        : entry.label}{" "}
-                      <strong>v{entry.version}</strong>
-                    </span>
-                  )}
-                </span>
+                  <span className={`${styles.chip} ${entry.version === view.current?.version ? styles.current : ""}`}>
+                    <span className={styles.stepLabel}>
+                      {entry.version === 1 ? "Baseline" : entry.investigationId
+                        ? <a className={styles.link} href={routeHref({ investigationId: entry.investigationId, tab: "compare" })}>{entry.label}</a>
+                        : entry.label}
+                    </span>{" "}
+                    <span className={styles.version}>v{entry.version}</span>
+                  </span>
+                </li>
               ))}
-            </div>
+            </ol>
             <p className={styles.thisRun} data-testid="this-run-controller">
               This run used {view.thisRun.version ? `v${view.thisRun.version}` : "an unrecorded controller"}
               {view.thisRun.controllerSha256 ? <> (<code>{shortSha(view.thisRun.controllerSha256)}</code>)</> : ""}.
@@ -87,10 +88,13 @@ export function LearningPanel({ workspace }: { workspace: InvestigationWorkspace
           </section>
 
           <section className={styles.card} aria-labelledby="hints-heading">
-            <details>
-              <summary id="hints-heading">Hints from earlier runs ({view.priorHints.length})</summary>
-              <p className={styles.muted}>Shared with agents as hints, not as facts.</p>
-              {view.priorHints.length ? (
+            {view.priorHints.length ? (
+              <details className={styles.disclosure}>
+                <summary id="hints-heading">
+                  <span>Hints from earlier runs ({view.priorHints.length})</span>
+                  <Icon name="chevronRight" className={styles.chevron} />
+                </summary>
+                <p className={styles.muted}>Shared with agents as hints, not as facts.</p>
                 <ul className={styles.hints}>
                   {view.priorHints.map((hint) => (
                     <li key={`${hint.sourceInvestigationId}-${hint.findingId}`}>
@@ -99,8 +103,13 @@ export function LearningPanel({ workspace }: { workspace: InvestigationWorkspace
                     </li>
                   ))}
                 </ul>
-              ) : <p className={styles.muted}>No earlier findings were offered to this investigation.</p>}
-            </details>
+              </details>
+            ) : (
+              <>
+                <h3 id="hints-heading">Hints from earlier runs</h3>
+                <p className={styles.muted} data-testid="no-hints">No hints yet. Hints appear after a fix is approved.</p>
+              </>
+            )}
           </section>
         </div>
       )}

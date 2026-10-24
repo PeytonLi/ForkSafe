@@ -3,11 +3,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 export const SPEEDS = [0.25, 0.5, 1, 2] as const;
 
 /** One clock shared by every pane that should stay in sync. */
-export function useReplayClock(durationSec: number) {
-  const [t, setTState] = useState(0);
+export function useReplayClock(durationSec: number, initialT = 0) {
+  const [t, setTState] = useState(initialT);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState<number>(1);
-  const tRef = useRef(0);
+  const tRef = useRef(initialT);
   const setT = useCallback(
     (v: number) => {
       const c = Math.min(Math.max(v, 0), durationSec);

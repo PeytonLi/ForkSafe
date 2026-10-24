@@ -109,6 +109,7 @@ export const PanelData = z.object({
       passedCases: z.number().int().nonnegative(),
       totalCases: z.number().int().nonnegative(),
       suites: z.array(SuiteSummary).optional(),
+      uncommittedSuites: z.array(z.enum(["public", "withheld"])).optional(),
     }),
   ),
   underReview: z

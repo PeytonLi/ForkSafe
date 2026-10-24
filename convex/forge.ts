@@ -122,6 +122,9 @@ export function registerForgeRoutes(http: HttpRouter, dependencies: ForgeRouteDe
 
         const candidateData = candidates.map((candidate) => {
           const evaluation = bestEvaluationFor(candidate.id, evaluations);
+          const uncommittedSuites = [...new Set((evidence.uncommittedEvaluations ?? [])
+            .filter((item) => item.candidateId === candidate.id)
+            .map((item) => item.suite))];
           return {
             candidate: {
               id: candidate.id,
@@ -141,6 +144,7 @@ export function registerForgeRoutes(http: HttpRouter, dependencies: ForgeRouteDe
             passedCases: evaluation?.cases.filter((item) => item.status === "passed").length ?? 0,
             totalCases: evaluation?.cases.length ?? 0,
             suites: suiteSummaries(candidate.id, evaluations),
+            ...(uncommittedSuites.length ? { uncommittedSuites } : {}),
           };
         });
         const underReview = investigation?.investigation.state === "awaiting_review"

@@ -423,6 +423,31 @@ export default defineSchema({
     createdAtMs: v.number(),
   }).index("by_artifact", ["artifactId"]).index("by_experiment", ["experimentId"]),
 
+  liveStreams: defineTable({
+    experimentId: uuid,
+    investigationId: uuid,
+    environmentId: v.optional(uuid),
+    status: v.union(v.literal("waiting"), v.literal("streaming"), v.literal("finished"), v.literal("unavailable")),
+    reason: v.optional(v.string()),
+    nextSeq: v.number(),
+    chunkCount: v.number(),
+    replayArtifactId: v.optional(uuid),
+    compacted: v.boolean(),
+    createdAtMs: v.number(),
+    updatedAtMs: v.number(),
+  }).index("by_experiment", ["experimentId"])
+    .index("by_investigation", ["investigationId"])
+    .index("by_status_updated", ["status", "updatedAtMs"]),
+
+  liveChunks: defineTable({
+    experimentId: uuid,
+    seq: v.number(),
+    frames: v.any(),
+    tEndSec: v.number(),
+    final: v.boolean(),
+    createdAtMs: v.number(),
+  }).index("by_experiment_seq", ["experimentId", "seq"]),
+
   /** Bridge projection of SpacetimeDB findings. */
   findings: defineTable({
     appId: uuid,

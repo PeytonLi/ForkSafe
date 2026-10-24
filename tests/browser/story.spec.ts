@@ -1,7 +1,7 @@
 import { expect, test, type Page, type TestInfo } from "../../apps/web/e2e/playwright";
 
 function learningScreenshotPath(info: TestInfo, name: string): string {
-  return process.env.CI ? info.outputPath(name) : `/home/ubuntu/lane-d/shots/${name}`;
+  return process.env.FORKSAFE_SHOT_DIR ? `${process.env.FORKSAFE_SHOT_DIR}/${name}` : info.outputPath(name);
 }
 
 async function expectNoHorizontalOverflow(page: Page) {
@@ -55,7 +55,7 @@ test("browser story: readiness, fixture investigation, replay scrub, review", as
   // Scrub the baseline replay to the failure and check the frame readout follows.
   const viewer = page.getByTestId("baseline-replay");
   const scrubber = viewer.getByTestId("replay-scrubber");
-  await expect(scrubber).toBeVisible();
+  await expect(scrubber).toBeVisible({ timeout: 10_000 });
   await scrubber.fill("4.1");
   await expect(viewer.getByTestId("frame-readout")).toContainText("t=4.10 s");
   await expect(viewer.getByText(/Contact cube↔divider/)).toBeVisible();
@@ -309,6 +309,7 @@ test("learning loop: approved lineage and fixture retry at desktop and mobile si
   const learning = page.getByTestId("learning-panel");
   await expect(learning.getByTestId("controller-lineage")).toContainText("Baseline v1");
   await expect(learning.getByTestId("retry-unavailable")).toContainText("No fix has been approved");
+  await expect(learning.getByTestId("no-hints")).toHaveText("No hints yet. Hints appear after a fix is approved.");
   await expectNoHorizontalOverflow(page);
   await page.screenshot({ path: learningScreenshotPath(info, `learning-before-approval-${info.project.name}.png`) });
 
