@@ -1,0 +1,9 @@
+.filter { display: flex; gap: 0.4rem; align-items: center; font-size: 0.82rem; color: var(--muted); }
+.list { list-style: none; margin: 0 0 0.6rem; padding: 0; display: grid; gap: 0.6rem; }
+.item { border: 1px solid var(--line); border-radius: 10px; padding: 0.6rem 0.75rem; min-width: 0; }
+.badges { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.summary { margin: 0.4rem 0; font-size: 0.9rem; overflow-wrap: anywhere; }
+.evidence { margin: 0; padding-left: 1.1rem; font-size: 0.8rem; color: var(--muted); }
+.evidence code { overflow-wrap: anywhere; }
+.excerpt { margin: 0.3rem 0 0; padding: 0.4rem; background: var(--gray-bg); border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; contain: inline-size; }
+.time { font-size: 0.75rem; color: var(--muted); }
