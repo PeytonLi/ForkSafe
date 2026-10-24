@@ -119,3 +119,13 @@ describe("signed evaluation manifests gate scoring", () => {
     expect(await verifySignedEvaluation(document, { ...expected, suite: "withheld" }, trusted)).toEqual({ ok: false, code: "suite_mismatch" });
   });
 });
+
+describe("withheld manifest upload bytes", () => {
+  it("re-serialises to exactly the bytes pinned in evaluation/manifests.lock.json", async () => {
+    const withheld = (await import("../../evaluation/withheld/manifest.json")).default;
+    const lock = (await import("../../evaluation/manifests.lock.json")).default;
+    const bytes = new TextEncoder().encode(`${JSON.stringify(withheld, null, 2)}\n`);
+    const digest = Buffer.from(await crypto.subtle.digest("SHA-256", bytes)).toString("hex");
+    expect(digest).toBe(lock.withheld);
+  });
+});

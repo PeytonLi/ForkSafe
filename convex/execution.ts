@@ -7,6 +7,8 @@ import { CloudDaytonaProvider, loadDaytonaConfig } from "@forksafe/daytona";
 import { internal } from "./_generated/api.js";
 import { internalAction } from "./_generated/server.js";
 import { classifyExperiment } from "./lib/experimentStatus.js";
+import withheldManifest from "../evaluation/withheld/manifest.json";
+import manifestsLock from "../evaluation/manifests.lock.json";
 
 /** Runs simulator cases inside Daytona execution sandboxes. Convex never runs
  *  physics itself; it ships the pinned simulator bundle plus one controller
@@ -345,7 +347,14 @@ export const runnerLogTail = internalAction({
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const CASE_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
-const WITHHELD_MANIFEST_IN_IMAGE = "/opt/forksafe/evaluation/withheld/manifest.json";
+
+/** The withheld manifest is not baked into the image; it is uploaded per run and
+ *  consumed (deleted) by run_candidate once read. Bytes must match the lock. */
+async function withheldManifestBytes(): Promise<Uint8Array> {
+  const bytes = new TextEncoder().encode(`${JSON.stringify(withheldManifest, null, 2)}\n`);
+  if (await sha256(bytes) !== manifestsLock.withheld) throw new ConvexError("withheld_manifest_lock_mismatch");
+  return bytes;
+}
 
 /** Runs one case through PR #13's `evaluator.run_candidate` inside a v3 evaluator
  *  sandbox. The sandbox signs the result with the seed injected at create time;
@@ -366,6 +375,7 @@ export const runSignedCase = internalAction({
     const daytona = provider();
     const runDir = `${RUN_ROOT}/eval-${args.attemptId}/${args.caseId}`;
     await putSmallFile(daytona, ref, `${runDir}/controller/task_controller.py`, new TextEncoder().encode(args.controllerSource));
+    if (args.suite === "withheld") await putSmallFile(daytona, ref, `${runDir}/withheld-manifest.json`, await withheldManifestBytes());
     const command = [
       "python3 -m evaluator.run_candidate",
       `--controller ${runDir}/controller/task_controller.py`,
@@ -378,7 +388,7 @@ export const runSignedCase = internalAction({
       `--artifacts-dir ${runDir}/artifacts`,
       `--work-dir ${runDir}/work`,
       `--out ${runDir}/result.json`,
-      ...(args.suite === "withheld" ? [`--withheld-manifest ${WITHHELD_MANIFEST_IN_IMAGE}`] : []),
+      ...(args.suite === "withheld" ? [`--withheld-manifest ${runDir}/withheld-manifest.json`, "--consume-withheld-manifest"] : []),
       `--case-wall-sec 120`,
     ].join(" ");
     let run: { exitCode: number; output: string };
