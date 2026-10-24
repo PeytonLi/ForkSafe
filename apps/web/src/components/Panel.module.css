@@ -15,4 +15,4 @@
 .red { background: var(--red-bg); color: var(--red); }
 .gray { background: var(--gray-bg); color: #566267; }
 @keyframes shimmer { to { background-position: -200% 0; } }
-@media (max-width: 560px) { .panel { padding: 0.85rem; } }
+@media (max-width: 560px) { .panel:not(.bare) { padding: 0.85rem; } }

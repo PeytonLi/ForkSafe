@@ -7,6 +7,7 @@ import { ReplayViewer } from "../viewer/ReplayViewer";
 import { replayDuration } from "../viewer/transform";
 import { useReplayClock } from "../viewer/useReplayClock";
 import { Badge, Panel } from "./Panel";
+import { SegThumb } from "./SegThumb";
 import { human, stateTone, words } from "./tone";
 import styles from "./ComparePanel.module.css";
 import { useBrowserAccess } from "../services/browserAccess";
@@ -80,7 +81,8 @@ function CandidateDetail({ w, cand }: { w: InvestigationWorkspace; cand: Control
   };
   return (
     <div className={styles.detail}>
-      <div role="tablist" aria-label="Candidate details" className={styles.subTabs} data-testid="compare-subtabs">
+      <div role="tablist" aria-label="Candidate details" className={`seg seg-fill ${styles.subTabs}`} data-testid="compare-subtabs">
+        <SegThumb active={active} />
         {DETAIL_TABS.map(([key, label], i) => (
           <button
             key={key}
@@ -91,7 +93,6 @@ function CandidateDetail({ w, cand }: { w: InvestigationWorkspace; cand: Control
             aria-controls={`compare-panel-${key}`}
             tabIndex={active === key ? 0 : -1}
             ref={(el) => { tabRefs.current[i] = el; }}
-            className={active === key ? styles.subTabActive : styles.subTab}
             onClick={() => setActive(key)}
             onKeyDown={(e) => onTabKey(e, i)}
           >

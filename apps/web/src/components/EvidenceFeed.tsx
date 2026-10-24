@@ -3,6 +3,7 @@ import { InfluenceGraph } from "./InfluenceGraph";
 import { fmtTime, shortId, useLoad } from "../hooks";
 import type { InvestigationWorkspace } from "../services";
 import { Badge, Panel } from "./Panel";
+import { SegThumb } from "./SegThumb";
 import { human } from "./tone";
 import styles from "./EvidenceFeed.module.css";
 
@@ -41,15 +42,17 @@ export function EvidenceFeed({ workspace: w, focus }: { workspace: Investigation
       testId="evidence-feed"
       actions={
         <div className={styles.actions}>
-        <div className={styles.filters} role="group" aria-label="Evidence view">
-          <button type="button" aria-pressed={view === "list"} className={view === "list" ? styles.filterActive : styles.filter} onClick={() => setView("list")}>List</button>
-          <button type="button" aria-pressed={view === "influence"} className={view === "influence" ? styles.filterActive : styles.filter} onClick={() => setView("influence")} data-testid="influence-toggle">How fixes used it</button>
+        <div className={`seg ${styles.filters}`} role="group" aria-label="Evidence view">
+          <SegThumb active={view} />
+          <button type="button" aria-pressed={view === "list"} onClick={() => setView("list")}>List</button>
+          <button type="button" aria-pressed={view === "influence"} onClick={() => setView("influence")} data-testid="influence-toggle">How fixes used it</button>
         </div>
         {view === "list" && (w.environments.length <= 5 ? (
-          <div className={styles.filters} role="group" aria-label="Filter evidence by environment">
-            <button type="button" aria-pressed={env === "all"} className={env === "all" ? styles.filterActive : styles.filter} onClick={() => { setEnv("all"); setLimit(PAGE); }}>All</button>
+          <div className={`seg ${styles.filters}`} role="group" aria-label="Filter evidence by environment">
+            <SegThumb active={env} />
+            <button type="button" aria-pressed={env === "all"} onClick={() => { setEnv("all"); setLimit(PAGE); }}>All</button>
             {w.environments.map((e) => (
-              <button key={e.id} type="button" aria-pressed={env === e.id} className={env === e.id ? styles.filterActive : styles.filter} onClick={() => { setEnv(e.id); setLimit(PAGE); }}>
+              <button key={e.id} type="button" aria-pressed={env === e.id} onClick={() => { setEnv(e.id); setLimit(PAGE); }}>
                 Env {e.index + 1}
               </button>
             ))}

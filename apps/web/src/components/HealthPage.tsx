@@ -2,6 +2,7 @@ import { useState } from "react";
 import { fmtAgo, fmtTime, useClient, useLoad, useNarrow, type AsyncState } from "../hooks";
 import { errorCode, type PipelineHealth, type WebIntegrationReadiness } from "../services";
 import { Badge } from "./Panel";
+import { SegThumb } from "./SegThumb";
 import { integrationLabel, readinessGroup, readinessTone, type ReadinessGroup } from "./ReadinessStrip";
 import { modeTone } from "./tone";
 import styles from "./HealthPage.module.css";
@@ -92,9 +93,10 @@ export function HealthPage() {
 
       <div className={styles.layout}>
         <div className={styles.services}>
-          <div className={styles.filters} role="group" aria-label="Show services">
+          <div className={`seg ${styles.filters}`} role="group" aria-label="Show services">
+            <SegThumb active={filter} />
             {filters.map(([key, label, n]) => (
-              <button key={key} type="button" aria-pressed={filter === key} className={filter === key ? styles.filterActive : styles.filter} onClick={() => setFilter(key)}>
+              <button key={key} type="button" aria-pressed={filter === key} onClick={() => setFilter(key)}>
                 {label} <span className={styles.count}>{n}</span>
               </button>
             ))}

@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { ForkSafeClient } from "./services";
 
 const Ctx = createContext<ForkSafeClient | null>(null);
@@ -117,4 +117,58 @@ export function useNarrow() {
     return () => m.removeEventListener("change", on);
   }, []);
   return narrow;
+}
+
+/** Live result of a CSS media query. */
+export function useMedia(query: string) {
+  const [match, setMatch] = useState(() => typeof window !== "undefined" && window.matchMedia(query).matches);
+  useEffect(() => {
+    const m = window.matchMedia(query);
+    const on = () => setMatch(m.matches);
+    on();
+    m.addEventListener("change", on);
+    return () => m.removeEventListener("change", on);
+  }, [query]);
+  return match;
+}
+
+/** Below this width the sidebar becomes a drawer (matches the 899px CSS breakpoint). */
+export const useCompact = () => useMedia("(max-width: 899px)");
+
+/** Measures the element matching `selector` inside the returned ref and
+ *  returns a style that places a shared highlight over it, so the highlight
+ *  can slide between items. The first placement does not animate. */
+export function useIndicator<T extends HTMLElement>(selector: string, deps: unknown[]) {
+  const ref = useRef<T>(null);
+  const [box, setBox] = useState<{ x: number; y: number; w: number; h: number; animate: boolean } | null>(null);
+  useLayoutEffect(() => {
+    const root = ref.current;
+    if (!root) return;
+    let target: HTMLElement | null = null;
+    const ro = new ResizeObserver(() => measure());
+    const measure = () => {
+      const el = root.querySelector<HTMLElement>(selector);
+      if (el !== target) {
+        if (target) ro.unobserve(target);
+        if (el) ro.observe(el);
+        target = el;
+      }
+      if (!el || el.offsetWidth === 0) {
+        setBox(null);
+        return;
+      }
+      const r = root.getBoundingClientRect();
+      const e = el.getBoundingClientRect();
+      const next = { x: e.left - r.left + root.scrollLeft - root.clientLeft, y: e.top - r.top + root.scrollTop - root.clientTop, w: e.width, h: e.height };
+      setBox((prev) => (prev && prev.x === next.x && prev.y === next.y && prev.w === next.w && prev.h === next.h ? prev : { ...next, animate: prev !== null }));
+    };
+    measure();
+    ro.observe(root);
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+  const style: CSSProperties | undefined = box
+    ? { width: box.w, height: box.h, transform: `translate(${box.x}px, ${box.y}px)`, opacity: 1, ...(box.animate ? {} : { transition: "none" }) }
+    : { opacity: 0, transition: "none" };
+  return [ref, style] as const;
 }

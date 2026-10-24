@@ -1,22 +1,12 @@
-.wrap { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr); gap: 1rem; }
-.head { display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: space-between; align-items: flex-start; }
+.wrap { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr); gap: 24px; }
+.head { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: flex-start; }
 .titleBlock { min-width: 0; flex: 1 1 18rem; }
-.title { font-size: clamp(var(--text-xl), 2.1vw, var(--text-2xl)); line-height: 1.2; letter-spacing: -0.035em; overflow-wrap: anywhere; }
-.meta { display: flex; flex-wrap: wrap; gap: 0.38rem 0.75rem; margin-top: 0.58rem; color: var(--muted); font-size: var(--text-xs); align-items: center; }
+.title { font-size: var(--text-2xl); font-weight: 650; line-height: 1.2; letter-spacing: -0.02em; overflow-wrap: anywhere; }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 8px; color: var(--faint); font-size: var(--text-xs); align-items: center; }
 .id { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .err { color: var(--red); margin: 0; }
-.tabs { position: relative; display: flex; gap: 0.25rem; min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; border-bottom: 1px solid var(--line); scrollbar-width: none; mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent); }
-.tabs::-webkit-scrollbar { display: none; }
-.mobileTabSelect { display: none; }
-.tab, .tabActive { flex: 0 0 auto; min-height: 42px; border: 0; border-radius: 10px 10px 0 0; background: transparent; padding: 0.55rem 0.85rem; white-space: nowrap; color: var(--muted); font-size: var(--text-sm); border-bottom: 2px solid transparent; }
-.tab:hover:not(:disabled), .tabActive:hover:not(:disabled) { box-shadow: none; transform: none; }
-.tabActive { color: var(--accent); border-bottom-color: var(--accent); font-weight: 650; }
-.tabPanel { min-width: 0; animation: panel-rise 180ms ease-out both; }
-@keyframes panel-rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+.tabPanel { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr); }
 @media (max-width: 560px) {
-  .wrap { gap: 0.8rem; }
+  .wrap { gap: 16px; }
   .title { font-size: var(--text-xl); }
-  .tabs { display: none; }
-  .mobileTabSelect { display: block; }
-  .mobileTabSelect select { width: 100%; min-height: 42px; border-radius: 11px; font-size: var(--text-sm); }
 }

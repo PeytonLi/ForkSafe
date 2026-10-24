@@ -6,11 +6,7 @@
 .pickTitle { min-width: 0; overflow-wrap: anywhere; font-weight: 600; }
 .pickActive { border-color: #99bdbe; background: #f1f8f7; box-shadow: 0 3px 12px rgba(50, 111, 118, 0.08); }
 .detail { display: grid; min-width: 0; gap: 0.7rem; }
-.subTabs { display: flex; min-width: 0; gap: 0.2rem; overflow-x: auto; padding: 0.2rem; border-radius: 11px; background: #f0f2ef; scrollbar-width: none; }
-.subTabs::-webkit-scrollbar { display: none; }
-.subTab, .subTabActive { flex: 1 0 auto; min-height: 34px; padding: 0.4rem 0.7rem; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: var(--text-xs); }
-.subTab:hover:not(:disabled), .subTabActive:hover:not(:disabled) { transform: none; box-shadow: none; }
-.subTabActive { color: var(--accent); background: #fff; box-shadow: 0 1px 4px rgba(36, 51, 54, 0.08); font-weight: 650; }
+.subTabs { display: flex; width: 100%; }
 .subTabPanel { min-width: 0; animation: compare-rise 180ms ease-out both; }
 @keyframes compare-rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 .panes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.65rem; }
@@ -57,8 +53,6 @@
 @media (max-width: 560px) {
   .picker { grid-template-columns: minmax(0, 1fr); }
   .panes { grid-template-columns: minmax(0, 1fr); }
-  .subTabs { margin-right: -0.15rem; }
-  .subTab, .subTabActive { min-width: 70px; }
   .decisions { grid-template-columns: minmax(0, 1fr); }
   .tableWrap th, .tableWrap td { padding-right: 0.35rem; padding-left: 0.35rem; }
 }
