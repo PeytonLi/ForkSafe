@@ -45,4 +45,12 @@
 }
 .cardToggle { display: flex; width: 100%; min-height: 40px; align-items: flex-start; justify-content: space-between; gap: 0.6rem; padding: 0; border: 0; background: transparent; text-align: left; }
 .cardToggle:hover:not(:disabled) { transform: none; box-shadow: none; }
-@media (max-width: 560px) { .card { padding: 0.35rem 0.75rem; } .card[data-group] > .note { margin-top: 0.1rem; } .card > .cardFoot { padding-bottom: 0.45rem; } }
+@keyframes health-card-expand { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 560px) {
+  .card { padding: 0.35rem 0.75rem; }
+  .card[data-expanded="false"] { grid-template-rows: auto; gap: 0; padding-block: 0.55rem; }
+  .cardToggle { min-height: 0; align-items: center; }
+  .card[data-expanded="true"] > .note, .card[data-expanded="true"] > .cardFoot { animation: health-card-expand 180ms ease-out both; }
+  .card[data-group] > .note { margin-top: 0.1rem; }
+  .card > .cardFoot { padding-bottom: 0.45rem; }
+}

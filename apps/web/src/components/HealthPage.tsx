@@ -129,13 +129,13 @@ function ServiceCard({ r }: { r: WebIntegrationReadiness }) {
   );
   if (narrow && !open) {
     return (
-      <li className={styles.card} data-testid={`health-${r.name}`} data-group={group}>
+      <li className={styles.card} data-testid={`health-${r.name}`} data-group={group} data-expanded="false">
         <button type="button" className={styles.cardToggle} aria-expanded={false} onClick={() => setOpen(true)}>{head}</button>
       </li>
     );
   }
   return (
-    <li className={styles.card} data-testid={`health-${r.name}`} data-group={group}>
+    <li className={styles.card} data-testid={`health-${r.name}`} data-group={group} data-expanded={narrow ? "true" : undefined}>
       {narrow ? <button type="button" className={styles.cardToggle} aria-expanded onClick={() => setOpen(false)}>{head}</button> : <div className={styles.cardHead}>{head}</div>}
       <p className={styles.note}>{healthNote(r)}</p>
       <div className={styles.cardFoot}>
