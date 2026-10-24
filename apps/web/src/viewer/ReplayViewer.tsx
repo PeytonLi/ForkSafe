@@ -20,22 +20,35 @@ interface Scene3D {
 }
 
 function build(canvas: HTMLCanvasElement, scene: Record<string, number>): Scene3D {
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true, alpha: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setClearColor(0x000000, 0);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   const s = new THREE.Scene();
-  s.background = new THREE.Color("#f4f6f9");
+  s.background = null;
   const camera = new THREE.PerspectiveCamera(40, 1, 0.01, 20);
   camera.position.set(1.45, 0.85, 0.95);
   camera.lookAt(0.35, 0.12, 0);
-  s.add(new THREE.HemisphereLight("#ffffff", "#b8c0cc", 1.4));
-  const sun = new THREE.DirectionalLight("#ffffff", 1.2);
+  s.add(new THREE.HemisphereLight("#ffffff", "#d1d8df", 1.75));
+  s.add(new THREE.AmbientLight("#eff5fb", 0.38));
+  const sun = new THREE.DirectionalLight("#fff8ed", 1.45);
   sun.position.set(1, 2, 1);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(512, 512);
+  sun.shadow.camera.left = -1.4;
+  sun.shadow.camera.right = 1.4;
+  sun.shadow.camera.top = 1.4;
+  sun.shadow.camera.bottom = -1.4;
+  sun.shadow.bias = -0.0002;
+  sun.shadow.radius = 5;
   s.add(sun);
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshStandardMaterial({ color: "#e3e7ee" }));
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshStandardMaterial({ color: "#ffffff", roughness: 1, transparent: true, opacity: 0.74 }));
   floor.rotation.x = -Math.PI / 2;
   floor.position.set(0.4, 0, 0);
+  floor.receiveShadow = true;
   s.add(floor);
-  const grid = new THREE.GridHelper(2, 20, "#c4cbd6", "#d6dbe3");
+  const grid = new THREE.GridHelper(2, 20, "#b9cbd5", "#dce6e7");
   grid.position.set(0.4, 0.001, 0);
   s.add(grid);
 
@@ -70,6 +83,9 @@ function build(canvas: HTMLCanvasElement, scene: Record<string, number>): Scene3
   s.add(target);
   const contact = new THREE.Mesh(new THREE.SphereGeometry(0.018, 16, 10), new THREE.MeshBasicMaterial({ color: "#dc2626" }));
   s.add(contact);
+  for (const object of s.children) {
+    if (object instanceof THREE.Mesh && object !== floor) object.castShadow = true;
+  }
   return { renderer, scene: s, camera, links, joints, hand, cube, divider, target, contact };
 }
 

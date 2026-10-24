@@ -1,58 +1,153 @@
 import React, { useEffect, useState } from "react";
 import { invoke } from "@forge/bridge";
-import ForgeReconciler, {
-  Button,
-  DynamicTable,
-  Heading,
-  Label,
-  Link,
-  Lozenge,
-  SectionMessage,
-  Select,
-  Spinner,
-  Stack,
-  Text,
-  TextArea,
-} from "@forge/react";
+import ForgeReconciler from "@forge/react";
 import type { ReviewDecision } from "@forksafe/contracts";
 import type { PanelData } from "@forksafe/integrations-atlassian";
+import {
+  PanelView,
+  type ResolverResult,
+  type ReviewDetails,
+} from "./PanelView";
 
-type ResolverResult<T> =
-  | { ok: true; mode: string; data: T }
-  | { ok: false; code: string; message: string };
+type ReviewResponse = { reviewId: string; recorded: boolean };
+type InvestigationRequestResponse = { requestId: string; accepted: boolean };
 
 function Panel() {
   const [result, setResult] = useState<ResolverResult<PanelData>>();
+  const [reviewDetails, setReviewDetails] =
+    useState<ResolverResult<ReviewDetails>>();
+  const [selectedCandidateId, setSelectedCandidateId] = useState("");
   const [decision, setDecision] = useState<ReviewDecision>("approved");
   const [notes, setNotes] = useState("");
-  const [reviewResult, setReviewResult] = useState<ResolverResult<{
-    reviewId: string;
-    recorded: boolean;
-  }>>();
-  const [submitting, setSubmitting] = useState(false);
+  const [submitKey, setSubmitKey] = useState(() => globalThis.crypto.randomUUID());
+  const [reviewResult, setReviewResult] =
+    useState<ResolverResult<ReviewResponse>>();
+  const [submittingReview, setSubmittingReview] = useState(false);
+  const [confirmingReview, setConfirmingReview] = useState(false);
+  const [investigationNote, setInvestigationNote] = useState("");
+  const [extraEnvironments, setExtraEnvironments] = useState<number>();
+  const [requestSubmitKey, setRequestSubmitKey] = useState(() =>
+    globalThis.crypto.randomUUID(),
+  );
+  const [investigationResult, setInvestigationResult] =
+    useState<ResolverResult<InvestigationRequestResponse>>();
+  const [submittingInvestigation, setSubmittingInvestigation] = useState(false);
 
   useEffect(() => {
-    void invoke<ResolverResult<PanelData>>("getPanel").then((response) =>
-      setResult(invokeResult(response)),
-    );
+    let active = true;
+    void invoke<ResolverResult<PanelData>>("getPanel")
+      .then((response) => {
+        if (!active) return;
+        const panelResult = invokeResult(response);
+        setResult(panelResult);
+        if (panelResult.ok) {
+          const defaultCandidate =
+            panelResult.data.underReview?.candidateId ??
+            panelResult.data.candidates.find(({ evaluation }) => evaluation)
+              ?.candidate.id ??
+            "";
+          setSelectedCandidateId(defaultCandidate);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setResult({
+            ok: false,
+            code: "backend_error",
+            message: "ForkSafe couldn't load this issue. Try again shortly.",
+          });
+        }
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
-  async function submitReview() {
-    const data = result?.ok ? result.data : undefined;
-    if (!data?.investigation || !data.underReview) return;
-    setSubmitting(true);
+  const investigationId =
+    result?.ok && result.data.investigation
+      ? result.data.investigation.id
+      : undefined;
+
+  useEffect(() => {
+    if (!investigationId || !selectedCandidateId) {
+      setReviewDetails(undefined);
+      return;
+    }
+    const candidate = result?.ok
+      ? result.data.candidates.find(
+          (item) => item.candidate.id === selectedCandidateId,
+        )
+      : undefined;
+    if (!candidate?.evaluation) {
+      setReviewDetails(undefined);
+      return;
+    }
+    let active = true;
+    setReviewDetails(undefined);
+    void invoke<ResolverResult<ReviewDetails>>("getReviewDetails", {
+      investigationId,
+      candidateId: candidate.candidate.id,
+      evaluationId: candidate.evaluation.id,
+    })
+      .then((response) => {
+        if (active) setReviewDetails(invokeResult(response));
+      })
+      .catch(() => {
+        if (active) {
+          setReviewDetails({
+            ok: false,
+            code: "backend_error",
+            message: "Review details could not be loaded.",
+          });
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [investigationId, selectedCandidateId, result]);
+
+  function updateCandidate(candidateId: string) {
+    if (candidateId === selectedCandidateId) return;
+    setSelectedCandidateId(candidateId);
+    setSubmitKey(globalThis.crypto.randomUUID());
+    setReviewResult(undefined);
+  }
+
+  function updateDecision(nextDecision: ReviewDecision) {
+    if (nextDecision === decision) return;
+    setDecision(nextDecision);
+    setSubmitKey(globalThis.crypto.randomUUID());
+    setReviewResult(undefined);
+  }
+
+  function updateNotes(nextNotes: string) {
+    if (nextNotes === notes) return;
+    setNotes(nextNotes);
+    setSubmitKey(globalThis.crypto.randomUUID());
+    setReviewResult(undefined);
+  }
+
+  async function confirmReview() {
+    const panel = result?.ok ? result.data : undefined;
+    const candidate = panel?.candidates.find(
+      (item) => item.candidate.id === selectedCandidateId,
+    );
+    if (!panel?.investigation || !candidate?.evaluation) return;
+    setSubmittingReview(true);
     setReviewResult(undefined);
     try {
-      const response = await invoke<
-          ResolverResult<{ reviewId: string; recorded: boolean }>
-        >("submitReview", {
-          investigationId: data.investigation.id,
-          candidateId: data.underReview.candidateId,
-          evaluationId: data.underReview.evaluationId,
-          controllerSha256: data.underReview.controllerSha256,
+      const response = await invoke<ResolverResult<ReviewResponse>>(
+        "submitReview",
+        {
+          investigationId: panel.investigation.id,
+          candidateId: candidate.candidate.id,
+          evaluationId: candidate.evaluation.id,
+          controllerSha256: candidate.candidate.controllerSha256,
           decision,
           notes,
-        });
+          submitKey,
+        },
+      );
       setReviewResult(invokeResult(response));
     } catch {
       setReviewResult({
@@ -61,155 +156,81 @@ function Panel() {
         message: "The review could not be submitted.",
       });
     } finally {
-      setSubmitting(false);
+      setSubmittingReview(false);
+      setConfirmingReview(false);
     }
   }
 
-  if (!result) return <Spinner label="Loading ForkSafe investigation" />;
-  if (!result.ok) {
-    return (
-      <SectionMessage appearance="error" title={result.code}>
-        <Text>{result.message}</Text>
-      </SectionMessage>
-    );
+  function updateInvestigationNote(note: string) {
+    if (note === investigationNote) return;
+    setInvestigationNote(note);
+    setRequestSubmitKey(globalThis.crypto.randomUUID());
+    setInvestigationResult(undefined);
   }
 
-  const data = result.data;
-  const candidateRows = data.candidates.map(({ candidate, evaluation, passedCases, totalCases }) => ({
-    key: candidate.id,
-    cells: [
-      { key: "candidate", content: candidate.id.slice(0, 8) },
-      { key: "sha", content: candidate.controllerSha256.slice(0, 12) },
-      { key: "status", content: candidate.status },
-      { key: "cases", content: `${passedCases}/${totalCases}` },
-      {
-        key: "median",
-        content: evaluation?.medianCompletionTimeSec === undefined
-          ? "—"
-          : `${evaluation.medianCompletionTimeSec.toFixed(1)} s`,
-      },
-    ],
-  }));
-  const tableHead = {
-    cells: [
-      { key: "candidate", content: "Candidate" },
-      { key: "sha", content: "SHA-256" },
-      { key: "status", content: "Status" },
-      { key: "cases", content: "Passed / total" },
-      { key: "median", content: "Median" },
-    ],
-  };
+  function updateExtraEnvironments(value?: number) {
+    if (value === extraEnvironments) return;
+    setExtraEnvironments(value);
+    setRequestSubmitKey(globalThis.crypto.randomUUID());
+    setInvestigationResult(undefined);
+  }
+
+  async function requestInvestigation() {
+    if (!investigationId) return;
+    setSubmittingInvestigation(true);
+    setInvestigationResult(undefined);
+    try {
+      const response = await invoke<
+        ResolverResult<InvestigationRequestResponse>
+      >("requestMoreInvestigation", {
+        investigationId,
+        note: investigationNote,
+        ...(extraEnvironments === undefined ? {} : { extraEnvironments }),
+        submitKey: requestSubmitKey,
+      });
+      setInvestigationResult(invokeResult(response));
+    } catch {
+      setInvestigationResult({
+        ok: false,
+        code: "backend_error",
+        message: "The request could not be sent.",
+      });
+    } finally {
+      setSubmittingInvestigation(false);
+    }
+  }
 
   return (
-    <Stack space="space.200">
-      <Stack alignInline="start" space="space.100">
-        <Heading as="h2">ForkSafe investigation</Heading>
-        <Lozenge>{data.mode}</Lozenge>
-      </Stack>
-      {data.mode !== "live" && (
-        <SectionMessage appearance="information">
-          <Text>Fixture data — not a live investigation</Text>
-        </SectionMessage>
-      )}
-      <Heading as="h3">Integration readiness</Heading>
-      {data.readiness.map((item) => (
-        <Text key={item.name}>
-          {item.name}: {item.mode}
-          {item.detail ? ` — ${item.detail}` : ""}
-        </Text>
-      ))}
-
-      {!data.investigation ? (
-        <SectionMessage appearance="information">
-          <Text>Use the issue action &apos;Start ForkSafe investigation&apos;.</Text>
-        </SectionMessage>
-      ) : (
-        <>
-          <Heading as="h3">{data.investigation.title}</Heading>
-          <Text>State: {data.investigation.state}</Text>
-          <Text>Environments requested: {data.investigation.requestedEnvironments}</Text>
-          <Text>Findings: {data.findingsCount}</Text>
-          <Text>Environments</Text>
-          {data.environments.map((environment) => (
-            <Text key={environment.id}>
-              Environment {environment.index}: {environment.state}
-            </Text>
-          ))}
-          <Text>Candidates</Text>
-          {candidateRows.length > 0 ? (
-            <DynamicTable head={tableHead} rows={candidateRows} rowsPerPage={10} />
-          ) : (
-            <Text>No candidates have been submitted.</Text>
-          )}
-          {data.requirements && (
-            <Text>
-              Requirements page {data.requirements.pageId}, version {data.requirements.version}
-              {" — "}{data.requirements.checkedRules} checked rules,{" "}
-              {data.requirements.humanReviewItems} human review items
-            </Text>
-          )}
-          {data.links.investigationUrl && (
-            <Link href={data.links.investigationUrl}>Open investigation</Link>
-          )}
-          {data.links.reportUrl && <Link href={data.links.reportUrl}>Open report</Link>}
-          {data.underReview && (
-            <Stack space="space.100">
-              <Heading as="h3">Review candidate</Heading>
-              <Text>Full controller SHA-256: {data.underReview.controllerSha256}</Text>
-              <Label labelFor="review-decision">Decision</Label>
-              <Select
-                inputId="review-decision"
-                name="review-decision"
-                value={{ label: decision, value: decision }}
-                options={[
-                  { label: "Approve", value: "approved" },
-                  { label: "Reject", value: "rejected" },
-                  { label: "Needs changes", value: "needs_changes" },
-                ]}
-                onChange={(option) =>
-                  setDecision(option?.value as ReviewDecision)
-                }
-              />
-              <Label labelFor="review-notes">Review notes</Label>
-              <TextArea
-                id="review-notes"
-                name="review-notes"
-                value={notes}
-                onChange={(event) => setNotes(event.target.value)}
-              />
-              <Button
-                appearance="primary"
-                isDisabled={submitting}
-                onClick={submitReview}
-              >
-                {submitting ? "Submitting…" : "Submit review"}
-              </Button>
-              {reviewResult && (
-                <SectionMessage
-                  appearance={reviewResult.ok ? "success" : "error"}
-                  title={reviewResult.ok ? "Review result" : reviewResult.code}
-                >
-                  <Text>
-                    {reviewResult.ok
-                      ? `Review ${reviewResult.data.reviewId} recorded: ${reviewResult.data.recorded}.`
-                      : reviewResult.message}
-                  </Text>
-                </SectionMessage>
-              )}
-            </Stack>
-          )}
-        </>
-      )}
-    </Stack>
+    <PanelView
+      result={result}
+      reviewDetails={reviewDetails}
+      selectedCandidateId={selectedCandidateId}
+      decision={decision}
+      notes={notes}
+      reviewResult={reviewResult}
+      submittingReview={submittingReview}
+      confirmingReview={confirmingReview}
+      investigationNote={investigationNote}
+      extraEnvironments={extraEnvironments}
+      investigationResult={investigationResult}
+      submittingInvestigation={submittingInvestigation}
+      onSelectCandidate={updateCandidate}
+      onDecisionChange={updateDecision}
+      onNotesChange={updateNotes}
+      onSubmitReview={() => setConfirmingReview(true)}
+      onConfirmReview={() => void confirmReview()}
+      onCloseReviewConfirmation={() => setConfirmingReview(false)}
+      onInvestigationNoteChange={updateInvestigationNote}
+      onExtraEnvironmentsChange={updateExtraEnvironments}
+      onRequestInvestigation={() => void requestInvestigation()}
+    />
   );
 }
 
 function invokeResult<T>(response: T | { body: T }): T {
-  return response !== null &&
-    typeof response === "object" &&
-    "body" in response
-    ? response.body as T
-    : response as T;
+  return response !== null && typeof response === "object" && "body" in response
+    ? (response.body as T)
+    : (response as T);
 }
 
 ForgeReconciler.render(<Panel />);

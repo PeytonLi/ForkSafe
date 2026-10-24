@@ -3,6 +3,8 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { spawnSync } from "node:child_process";
 
+if (existsSync("client/module_bindings/index.ts")) process.exit(0);
+
 const candidates = [
   ...((process.env.PATH ?? "").split(delimiter).map((directory) => join(directory, "spacetime"))),
   join(homedir(), ".local", "bin", "spacetime"),
@@ -12,8 +14,6 @@ if (!spacetime) {
   console.error("SpacetimeDB CLI not found; install CLI 2.13.0 or add it to PATH");
   process.exit(1);
 }
-
-if (existsSync("client/module_bindings/index.ts")) process.exit(0);
 
 const result = spawnSync(
   spacetime,

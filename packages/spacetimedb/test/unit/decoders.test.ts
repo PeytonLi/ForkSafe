@@ -5,6 +5,8 @@ import {
   decodeEvaluation,
   decodeExperiment,
   decodeFinding,
+  decodeLiveCandidates,
+  decodeLiveFindings,
   decodeGrant,
   decodeOutbox,
   decodeReview,
@@ -87,6 +89,83 @@ describe("contract entity decoders", () => {
         { kind: "log_excerpt", locator: { line: 2 } },
       ],
     });
+  });
+
+  it("decodes live findings and reports revoked findings with filtered evidence", () => {
+    const result = decodeLiveFindings(
+      [
+        {
+          id: findingId,
+          investigationId,
+          environmentId,
+          kind: "behavioral_note",
+          summary: "live finding",
+          createdAtMs: 123n,
+        },
+        {
+          id: "88888888-8888-4888-8888-888888888888",
+          investigationId,
+          environmentId,
+          kind: "behavioral_note",
+          summary: "revoked finding",
+          createdAtMs: 124n,
+        },
+      ],
+      [
+        { id: 1n, findingId, ordinal: 0, kind: "metric", locatorJson: "{}" },
+        { id: 2n, findingId, ordinal: 1, kind: "log_excerpt", locatorJson: "{}", artifactId },
+      ],
+      [
+        { key: `evidence:2`, targetKind: "evidence", targetId: "2", reason: "bad evidence", createdAtMs: 125n },
+        {
+          key: "finding:88888888-8888-4888-8888-888888888888",
+          targetKind: "finding",
+          targetId: "88888888-8888-4888-8888-888888888888",
+          reason: "withdrawn",
+          createdAtMs: 126n,
+        },
+      ],
+    );
+    expect(result.live).toHaveLength(1);
+    expect(result.live[0]?.evidence).toHaveLength(1);
+    expect(result.revoked).toEqual([
+      {
+        findingId: "88888888-8888-4888-8888-888888888888",
+        reason: "withdrawn",
+        tombstonedAtMs: 126,
+      },
+    ]);
+  });
+
+  it("decodes live candidates and reports tombstoned candidate sources", () => {
+    const result = decodeLiveCandidates(
+      [{
+        id: candidateId,
+        investigationId,
+        environmentId,
+        controllerSha256: sha256,
+        sourceArtifactId: artifactId,
+        changedFunctions: [],
+        basedOnFindings: [],
+        submittedByAttemptId: attemptId,
+        submittedAtMs: 100n,
+      }],
+      [],
+      [],
+      [{
+        key: `artifact:${artifactId}`,
+        targetKind: "artifact",
+        targetId: artifactId,
+        reason: "invalid source",
+        createdAtMs: 101n,
+      }],
+    );
+    expect(result.live).toEqual([]);
+    expect(result.revoked).toEqual([{
+      candidateId,
+      reason: "invalid source",
+      tombstonedAtMs: 101,
+    }]);
   });
 
   it("derives candidate status and parses evaluation/review rows", () => {

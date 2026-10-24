@@ -148,6 +148,56 @@ export const experiment = table(
   },
 );
 
+export const baseline = table(
+  { name: "baseline", public: true },
+  {
+    id: t.string().primaryKey(),
+    simCase,
+    sceneSha256: t.string(),
+    controllerSha256: t.string(),
+    assetsManifestSha256: t.string(),
+    engineVersion: t.string(),
+    failureKinds: t.array(t.string()),
+    failureSummary: t.string(),
+    sourceExperimentId: t.option(t.string()),
+    registeredBy: t.string(),
+    createdAtMs: t.i64(),
+  },
+);
+
+export const baselineRequirement = table(
+  { name: "baseline_requirement", public: true },
+  {
+    key: t.string().primaryKey(),
+    baselineId: t.string().index("btree"),
+    ruleId: t.string(),
+    confluencePageId: t.string(),
+    confluencePageRevision: t.u32(),
+    title: t.string(),
+    enforcement: t.string(),
+    ruleJson: t.string(),
+    ordinal: t.u32(),
+  },
+);
+
+export const experimentIdentity = table(
+  { name: "experiment_identity", public: true },
+  {
+    experimentId: t.string().primaryKey(),
+    investigationId: t.string().index("btree"),
+    identityHash: t.string().index("btree"),
+    authorClass: t.string(),
+    role: t.string(),
+    canonicalExperimentId: t.string(),
+    replicationOfExperimentId: t.option(t.string()),
+    replicationReason: t.option(t.string()),
+    environmentId: t.option(t.string()),
+    candidateId: t.option(t.string()),
+    grantId: t.string(),
+    createdAtMs: t.i64(),
+  },
+);
+
 export const finding = table(
   { name: "finding", public: true },
   {
@@ -273,6 +323,25 @@ export const tombstone = table(
   },
 );
 
+export const findingUse = table(
+  { name: "finding_use", public: true },
+  {
+    id: t.string().primaryKey(),
+    useKey: t.string().unique(),
+    findingId: t.string().index("btree"),
+    findingInvestigationId: t.string(),
+    findingEnvironmentId: t.string(),
+    usedByEnvironmentId: t.string(),
+    experimentId: t.option(t.string()),
+    candidateId: t.option(t.string()),
+    crossEnvironment: t.bool(),
+    grantId: t.string(),
+    attemptId: t.string(),
+    epoch: t.u32(),
+    createdAtMs: t.i64(),
+  },
+);
+
 export const attemptHeartbeat = table(
   { name: "attempt_heartbeat", public: true },
   {
@@ -293,9 +362,13 @@ const databaseSchema = schema(
     revisionLease,
     artifactRef,
     experiment,
+    baseline,
+    baselineRequirement,
+    experimentIdentity,
     finding,
     evidence,
     findingLink,
+    findingUse,
     candidate,
     evaluation,
     humanReview,
@@ -304,6 +377,121 @@ const databaseSchema = schema(
     attemptHeartbeat,
   },
   { env: { FORKSAFE_BRIDGE_SECRET: t.option(t.string()) } },
+);
+
+export const liveFinding = databaseSchema.anonymousView(
+  { name: "live_finding", public: true },
+  t.array(finding.rowType),
+  (ctx) => {
+    const revoked = new Set(
+      [...ctx.db.tombstone.iter()]
+        .filter((row) => row.targetKind === "finding")
+        .map((row) => row.targetId),
+    );
+    return [...ctx.db.finding.iter()].filter((row) => !revoked.has(row.id));
+  },
+);
+
+export const liveEvidence = databaseSchema.anonymousView(
+  { name: "live_evidence", public: true },
+  t.array(evidence.rowType),
+  (ctx) => {
+    const tombstoneRows = [...ctx.db.tombstone.iter()];
+    const findingTombstones = new Set(
+      tombstoneRows.filter((row) => row.targetKind === "finding").map((row) => row.targetId),
+    );
+    const evidenceTombstones = new Set(
+      tombstoneRows.filter((row) => row.targetKind === "evidence").map((row) => row.targetId),
+    );
+    const artifactTombstones = new Set(
+      tombstoneRows.filter((row) => row.targetKind === "artifact").map((row) => row.targetId),
+    );
+    const experiments = new Map([...ctx.db.experiment.iter()].map((row) => [row.id, row]));
+    const identities = new Map([...ctx.db.experimentIdentity.iter()].map((row) => [row.experimentId, row]));
+    return [...ctx.db.evidence.iter()].filter((row) => {
+      if (findingTombstones.has(row.findingId) || evidenceTombstones.has(row.id.toString())) return false;
+      if (row.artifactId !== undefined && artifactTombstones.has(row.artifactId)) return false;
+      if (row.experimentId !== undefined) {
+        const source = experiments.get(row.experimentId) ??
+          experiments.get(identities.get(row.experimentId)?.canonicalExperimentId ?? "");
+        if (
+          source?.traceArtifactId !== undefined && artifactTombstones.has(source.traceArtifactId) ||
+          source?.replayArtifactId !== undefined && artifactTombstones.has(source.replayArtifactId)
+        ) return false;
+      }
+      return true;
+    });
+  },
+);
+
+export const liveCandidate = databaseSchema.anonymousView(
+  { name: "live_candidate", public: true },
+  t.array(candidate.rowType),
+  (ctx) => {
+    const tombstoneRows = [...ctx.db.tombstone.iter()];
+    const candidateTombstones = new Set(
+      tombstoneRows.filter((row) => row.targetKind === "candidate").map((row) => row.targetId),
+    );
+    const artifactTombstones = new Set(
+      tombstoneRows.filter((row) => row.targetKind === "artifact").map((row) => row.targetId),
+    );
+    return [...ctx.db.candidate.iter()].filter(
+      (row) => !candidateTombstones.has(row.id) && !artifactTombstones.has(row.sourceArtifactId),
+    );
+  },
+);
+
+export const revokedRecord = databaseSchema.anonymousView(
+  { name: "revoked_record", public: true },
+  t.array(t.row("RevokedRecord", {
+    key: t.string().primaryKey(),
+    targetKind: t.string(),
+    targetId: t.string(),
+    reason: t.string(),
+    createdAtMs: t.i64(),
+    investigationId: t.option(t.string()),
+  })),
+  (ctx) => {
+    const findings = new Map([...ctx.db.finding.iter()].map((row) => [row.id, row]));
+    const candidates = new Map([...ctx.db.candidate.iter()].map((row) => [row.id, row]));
+    const evidenceRows = new Map([...ctx.db.evidence.iter()].map((row) => [row.id.toString(), row]));
+    const experiments = [...ctx.db.experiment.iter()];
+    const artifactEvidence = [...ctx.db.evidence.iter()];
+    return [...ctx.db.tombstone.iter()].map((row) => {
+      let investigationId: string | undefined;
+      if (row.targetKind === "finding") {
+        investigationId = findings.get(row.targetId)?.investigationId;
+      } else if (row.targetKind === "candidate") {
+        investigationId = candidates.get(row.targetId)?.investigationId;
+      } else if (row.targetKind === "evidence") {
+        const linked = evidenceRows.get(row.targetId);
+        investigationId = linked === undefined ? undefined : findings.get(linked.findingId)?.investigationId;
+      } else if (row.targetKind === "artifact") {
+        const candidateRow = [...candidates.values()].find((candidateRow) => candidateRow.sourceArtifactId === row.targetId);
+        investigationId = candidateRow?.investigationId;
+        if (investigationId === undefined) {
+          const experimentRow = experiments.find(
+            (item) => item.traceArtifactId === row.targetId || item.replayArtifactId === row.targetId,
+          );
+          investigationId = experimentRow?.investigationId;
+        }
+        if (investigationId === undefined) {
+          const linkedEvidence = artifactEvidence.find((item) => item.artifactId === row.targetId);
+          investigationId = linkedEvidence === undefined
+            ? undefined
+            : findings.get(linkedEvidence.findingId)?.investigationId;
+        }
+      }
+      return {
+        key: row.key,
+        targetKind: row.targetKind,
+        targetId: row.targetId,
+        reason: row.reason,
+        createdAtMs: row.createdAtMs,
+        investigationId,
+      };
+    });
+  },
 );
 
 export default databaseSchema;

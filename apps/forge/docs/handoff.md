@@ -21,6 +21,14 @@ The Forge Remote endpoint contract is POST JSON using the shared schemas in
 - `/forge/v1/review-context` reloads the authoritative investigation,
   candidate, and evaluation before a review is accepted.
 - `/forge/v1/reviews` records the validated review.
+- `/forge/v1/requests` accepts more-investigation requests. This is a separate
+  feature path (`FORGE_FEATURE_PATHS.requests`), not part of the existing
+  `FORGE_BACKEND_PATHS` route set. The Forge backend treats a 404 without a
+  JSON `error` code as feature-unavailable; a JSON 404 remains an ordinary
+  not-found response.
+
+The registered resolvers are `getPanel`, `startInvestigation`,
+`submitReview`, `getReviewDetails`, and `requestMoreInvestigation`.
 
 The backend must validate Forge Invocation Tokens with the app audience and
 issuer, verify `app.id`, resolve the installation and project authorization,
@@ -36,8 +44,23 @@ the original wording stays attached to each extracted item. Reviews bind the
 reviewer, investigation, candidate, evaluation, and lowercase SHA-256 of the
 exact controller artifact. The resolver reloads this evidence immediately
 before recording; an approval is rejected unless the candidate is evaluated
-and all required checks passed. Do not treat a fixture review as production
-approval.
+and all required checks passed. A review ID is derived deterministically from
+the authenticated account ID and `submitKey`, allowing the same submission
+to be retried without creating a second review. Do not treat a fixture review
+as production approval.
+
+The panel strips withheld-suite failed-case IDs before returning data.
+`getReviewDetails` returns only a sanitized evaluation summary; withheld
+evaluations contain counts only, while failed-case IDs may be returned only
+for public evaluations. Raw withheld case records are never sent to the
+browser.
+
+The `forksafe-selfcheck` webtrigger has a publicly callable URL. Obtain its
+current development URL with
+`forge webtrigger list --functionKey forksafe-selfcheck --site <site>.atlassian.net --product Jira --environment development`.
+It invokes `getPanel` with empty context without calling the backend and
+returns only the app name, resolver names, the fixed `no_issue_context`
+result, and backend mode. It returns no issue, investigation, or user data.
 
 ## Fixture boundary
 Jira, Confluence, panel, and review-context fixtures are deterministic local

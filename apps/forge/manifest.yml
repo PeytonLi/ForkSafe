@@ -14,9 +14,14 @@ modules:
         function: resolver
       render: native
       title: Start ForkSafe investigation
+  webtrigger:
+    - key: forksafe-selfcheck
+      function: selfcheck
   function:
     - key: resolver
       handler: generated/resolver.handler
+    - key: selfcheck
+      handler: generated/resolver.selfcheck
 resources:
   - key: panel
     path: src/frontend/panel.tsx
