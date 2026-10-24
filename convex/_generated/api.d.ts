@@ -49,6 +49,7 @@ import type * as lib_unifiedDiff from "../lib/unifiedDiff.js";
 import type * as lib_validators from "../lib/validators.js";
 import type * as lib_webAccess from "../lib/webAccess.js";
 import type * as outbox from "../outbox.js";
+import type * as outboxIngest from "../outboxIngest.js";
 import type * as readiness from "../readiness.js";
 import type * as reconcile from "../reconcile.js";
 import type * as reviews from "../reviews.js";
@@ -108,6 +109,7 @@ declare const fullApi: ApiFromModules<{
   "lib/validators": typeof lib_validators;
   "lib/webAccess": typeof lib_webAccess;
   outbox: typeof outbox;
+  outboxIngest: typeof outboxIngest;
   readiness: typeof readiness;
   reconcile: typeof reconcile;
   reviews: typeof reviews;
