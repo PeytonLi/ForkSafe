@@ -1,7 +1,8 @@
-.viewer { margin: 0; min-width: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); overflow: hidden; }
-.canvasWrap { width: 100%; min-width: 0; aspect-ratio: 1 / 0.62; background: #f4f6f9; }
+.viewer { min-width: 0; margin: 0; overflow: hidden; border: 1px solid rgba(220, 228, 224, 0.85); border-radius: 13px; background: #fff; box-shadow: 0 4px 18px rgba(42, 63, 64, 0.045); }
+.canvasWrap { width: 100%; min-width: 0; aspect-ratio: 1 / 0.62; background: linear-gradient(145deg, #f0f7f5 0%, #f8f8f5 48%, #edf3f8 100%); }
 .canvas { display: block; width: 100%; height: 100%; }
-.fallback { display: grid; place-items: center; height: 100%; padding: 1rem; text-align: center; color: var(--muted); }
-.caption { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; padding: 0.5rem 0.75rem; font-size: 0.85rem; align-items: baseline; }
+.fallback { display: grid; height: 100%; place-items: center; padding: 1rem; color: var(--muted); text-align: center; font-size: var(--text-sm); }
+.caption { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.65rem; padding: 0.5rem 0.65rem; font-size: var(--text-xs); }
+.caption strong { font-weight: 650; }
 .contact { color: var(--red); font-weight: 600; }
 .muted { color: var(--muted); }

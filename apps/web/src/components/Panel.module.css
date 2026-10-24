@@ -1,14 +1,18 @@
-.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 0.9rem 1rem; min-width: 0; }
-.head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.75rem; }
-.head h2 { font-size: 1.05rem; }
-.head h3 { font-size: 0.95rem; }
-.loading, .empty { color: var(--muted); padding: 1rem 0; }
-.error, .permission { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; padding: 0.75rem; border-radius: 8px; }
+.panel { min-width: 0; padding: 1rem; border: 1px solid rgba(221, 226, 222, 0.76); border-radius: var(--radius-md); background: var(--panel); box-shadow: var(--shadow-card); }
+.bare { padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.55rem; margin-bottom: 0.8rem; }
+.head h2 { font-size: var(--text-lg); letter-spacing: -0.02em; }
+.head h3 { font-size: var(--text-md); }
+.loading, .empty { color: var(--muted); padding: 1rem 0; font-size: var(--text-sm); }
+.loading { position: relative; overflow: hidden; border-radius: 8px; background: linear-gradient(90deg, #f5f6f3 25%, #edf1ed 45%, #f5f6f3 65%); background-size: 240% 100%; color: transparent; animation: shimmer 1.5s ease-in-out infinite; }
+.error, .permission { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; padding: 0.75rem; border-radius: 10px; font-size: var(--text-sm); }
 .error { background: var(--red-bg); color: var(--red); }
 .permission { background: var(--amber-bg); color: var(--amber); }
-.badge { display: inline-block; font-size: 0.75rem; font-weight: 600; padding: 0.1rem 0.5rem; border-radius: 999px; white-space: nowrap; }
-.blue { background: var(--blue-bg); color: var(--blue); }
+.badge { display: inline-flex; align-items: center; gap: 0.3rem; font-size: var(--text-xs); font-weight: 600; padding: 0.16rem 0.5rem; border-radius: 999px; white-space: nowrap; }
+.blue { background: var(--blue-bg); color: #285e68; }
 .green { background: var(--green-bg); color: var(--green); }
 .amber { background: var(--amber-bg); color: var(--amber); }
 .red { background: var(--red-bg); color: var(--red); }
-.gray { background: var(--gray-bg); color: var(--muted); }
+.gray { background: var(--gray-bg); color: #566267; }
+@keyframes shimmer { to { background-position: -200% 0; } }
+@media (max-width: 560px) { .panel { padding: 0.85rem; } }

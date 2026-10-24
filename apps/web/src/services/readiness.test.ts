@@ -10,7 +10,8 @@ function respond(body: unknown, status = 200) {
 
 describe("readiness response compatibility", () => {
   it("accepts local server reports without claiming a verified probe", async () => {
-    const integrations = await buildReadiness({}, async () => ({ ok: true, status: 200 }), 1);
+    const integrations = (await buildReadiness({}, async () => ({ ok: true, status: 200 }), 1))
+      .map(({ probed: _probed, ...item }) => item);
     respond({ integrations });
     expect(await fetchReadiness()).toEqual(integrations.map((item) => ({ ...item, probed: false })));
   });
