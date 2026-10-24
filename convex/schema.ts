@@ -525,9 +525,11 @@ export default defineSchema({
     sandboxOpId: v.optional(uuid),
     spacetimeCommitted: v.boolean(),
     createdAtMs: v.number(),
+    commitStatus: v.optional(v.union(v.literal("pending"), v.literal("committed"), v.literal("commit_failed"), v.literal("not_applicable"))),
+    commitError: v.optional(v.string()),
     updatedAtMs: v.number(),
   }).index("by_appId", ["appId"]).index("by_candidate", ["candidateId"])
-    .index("by_investigation", ["investigationId"]),
+    .index("by_investigation", ["investigationId"]).index("by_commitStatus", ["commitStatus"]),
 
   /** Human reviews bound to the exact controller sha. */
   reviews: defineTable({
