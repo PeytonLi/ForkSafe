@@ -1,0 +1,27 @@
+{
+  "name": "forksafe",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.34.8",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "setup": "pnpm install && node scripts/setup.mjs",
+    "doctor": "node scripts/doctor.mjs",
+    "dev": "node scripts/dev.mjs",
+    "seed:demo": "node scripts/seed-demo.mjs",
+    "build": "pnpm -r --if-present build",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "lint": "pnpm -r --if-present lint",
+    "test": "pnpm -r --if-present test && node scripts/pytest.mjs",
+    "test:integration": "node scripts/test-integration.mjs",
+    "test:e2e": "pnpm --filter @forksafe/web test:e2e",
+    "benchmark": "node scripts/benchmark.mjs",
+    "daytona:prepare": "node scripts/daytona-prepare.mjs",
+    "smoke:hosted": "node scripts/smoke-hosted.mjs",
+    "cleanup:sandboxes": "node scripts/cleanup-sandboxes.mjs"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

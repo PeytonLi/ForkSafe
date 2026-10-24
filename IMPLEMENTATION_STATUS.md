@@ -39,3 +39,7 @@ Latest npm versions seen at bootstrap: convex 1.48.0, @convex-dev/workflow 0.4.1
 ## Next action
 
 Scaffold monorepo + shared contracts, verify Panda physics step, publish ownership, then launch feature sessions.
+
+## Progress log
+
+- 2026-10-24: Repo created; handoff docs committed. Toolchain verified: spacetime 2.13.0, droid 0.249.0, MuJoCo 3.17.0 imports, Panda assets pinned (menagerie f3b6013, tree sha256 bcf7166c). Local Convex binary unusable on glibc 2.35 — plan switched to hosted/cloud for all integrations per Peyton. FACTORY_API_KEY + DAYTONA_API_KEY received. `packages/contracts` landed with entity schemas, handoff protocol, env validation; 9 vitest tests green; doctor reports missing names only.

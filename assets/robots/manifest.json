@@ -1,0 +1,8 @@
+{
+  "source": "https://github.com/google-deepmind/mujoco_menagerie",
+  "pinnedCommit": "f3b6013629c7b94f8ee93fd977b161fa8350f9bc",
+  "path": "franka_emika_panda",
+  "sha256": "bcf7166c368900f13a2d4cd66f380b1502c2414960f6820b19d8774b0a15189a",
+  "license": "Apache-2.0 (see assets/robots/mujoco_menagerie/franka_emika_panda/LICENSE)",
+  "fetchedAt": "2026-10-24T09:11:31.708Z"
+}
