@@ -171,7 +171,7 @@ export class FileJobSource implements JobSource {
     const response = { accepted: true };
     record.attempt.state = completion.outcome === "succeeded" ? "succeeded" : "failed";
     record.attempt.endedAtMs = completion.finishedAtMs;
-    job.state = completion.outcome;
+    job.state = completion.outcome === "succeeded" ? "succeeded" : "failed";
     job.activeAttemptId = undefined;
     job.updatedAtMs = completion.finishedAtMs;
     await this.writeJob(job);
