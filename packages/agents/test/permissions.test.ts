@@ -54,7 +54,7 @@ describe("permission policy", () => {
     ]) {
       expect(decide(command)).toBe(false);
     }
-    for (const name of ["Script", "ToolSearch"]) {
+    for (const name of ["Script", "ToolSearch", "script", "toolsearch"]) {
       expect(decidePermission({
         toolUses: [use(ToolConfirmationType.Execute, { command: "arbitrary" }, name)], options: opts,
       }, p).allowed).toBe(true);

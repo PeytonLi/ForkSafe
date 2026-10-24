@@ -23,6 +23,7 @@ import { BudgetExceededError, UsageLedger, type TokenUsage } from "./usage.js";
 
 export class SessionCapError extends Error {}
 export class TurnInProgressError extends Error {}
+export class SessionRegistrationError extends Error {}
 
 export type TurnOutcome = {
   sessionId: string;
@@ -43,6 +44,7 @@ export type SessionManagerOptions = {
   maxActiveTurns?: number;
   toolBackend: ForkSafeToolBackend;
   log: ActivityLog;
+  onSessionReady?: (input: { attemptId: string; epoch: number; session: AgentSessionType }) => Promise<unknown>;
   onTurnComplete?: (input: {
     investigationId: string; environmentId: string; sessionId: string; vendorSessionId: string;
     attemptId: string; epoch: number; jobId: string; turnIndex: number; parentSessionId?: string;
@@ -72,6 +74,7 @@ type ManagedSession = {
 
 export class SessionManager {
   private readonly sessions = new Map<string, ManagedSession>();
+  private readonly sessionRegistrationErrors = new Map<string, SessionRegistrationError>();
   private readonly sessionsPerEnvironment: number;
   private readonly maxActiveTurns: number;
   private activeTurns = 0;
@@ -269,6 +272,35 @@ export class SessionManager {
     }
   }
 
+  async registerSession(
+    sessionId: string,
+    context: Pick<ToolCallContext, "attemptId" | "grantId" | "epoch" | "jobId">,
+  ): Promise<void> {
+    const session = this.requireSession(sessionId);
+    Object.assign(session.toolContext, context);
+    try {
+      const result = await this.options.onSessionReady?.({
+        attemptId: context.attemptId,
+        epoch: context.epoch,
+        session: this.toAgentSession(sessionId),
+      });
+      if (result && typeof result === "object" && "ok" in result && result.ok === false) {
+        throw new Error("session registration was rejected");
+      }
+    } catch (error) {
+      throw new SessionRegistrationError(
+        `session registration failed: ${error instanceof Error ? error.message : "unknown error"}`,
+        { cause: error },
+      );
+    }
+  }
+
+  takeSessionRegistrationError(sessionId: string): SessionRegistrationError | undefined {
+    const error = this.sessionRegistrationErrors.get(sessionId);
+    this.sessionRegistrationErrors.delete(sessionId);
+    return error;
+  }
+
   async runSubtask(input: { prompt: string; purpose: string }, parentContext: ToolCallContext): Promise<Record<string, unknown>> {
     const turnBudget = parentContext.turnBudget;
     if (!turnBudget || turnBudget.used >= turnBudget.max) return { status: "retry_later", reason: "turn_cap" };
@@ -284,6 +316,18 @@ export class SessionManager {
       return { status: "rejected", reason: error instanceof SessionCapError ? "session_cap" : "subtask_unavailable" };
     }
     try {
+      try {
+        await this.registerSession(child.sessionId, {
+          attemptId: parentContext.attemptId,
+          grantId: parentContext.grantId,
+          epoch: parentContext.epoch,
+          jobId: parentContext.jobId,
+        });
+      } catch (error) {
+        if (!(error instanceof SessionRegistrationError)) throw error;
+        this.sessionRegistrationErrors.set(parentContext.sessionId, error);
+        return { status: "rejected", reason: "session_registration_failed" };
+      }
       const turn = await this.runTurn(child.sessionId, input.prompt, {
         nonBlocking: true,
         toolContext: {

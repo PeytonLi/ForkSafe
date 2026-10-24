@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ActivityLog } from "../src/activity-log.js";
 import { FixtureFactoryAdapter } from "../src/adapter.js";
-import { SessionCapError, SessionManager } from "../src/session-manager.js";
+import { SessionCapError, SessionManager, SessionRegistrationError } from "../src/session-manager.js";
 import { UsageLedger } from "../src/usage.js";
 
 const investigations = [crypto.randomUUID(), crypto.randomUUID()];
@@ -25,7 +25,7 @@ const backend = {
 };
 async function manager(
   adapter = new FixtureFactoryAdapter(),
-  opts: Pick<ConstructorParameters<typeof SessionManager>[0], "sessionsPerEnvironment" | "maxActiveTurns" | "onTurnComplete"> = {},
+  opts: Pick<ConstructorParameters<typeof SessionManager>[0], "sessionsPerEnvironment" | "maxActiveTurns" | "onTurnComplete" | "onSessionReady"> = {},
 ) {
   const workspaceRoot = await mkdtemp(join(tmpdir(), "forksafe-sessions-"));
   dirs.push(workspaceRoot);
@@ -121,8 +121,11 @@ describe("SessionManager", () => {
 
   it("records subtask checkpoint roles and parent lineage", async () => {
     const checkpoints: any[] = [];
+    const readySessions: any[] = [];
+    const order: string[] = [];
     const sessions = await manager(new FixtureFactoryAdapter(), {
-      onTurnComplete: async (checkpoint) => { checkpoints.push(checkpoint); },
+      onTurnComplete: async (checkpoint) => { checkpoints.push(checkpoint); order.push("checkpoint"); },
+      onSessionReady: async ({ session }) => { readySessions.push(session); order.push("session"); return { ok: true }; },
     });
     const investigationId = crypto.randomUUID();
     const environmentId = crypto.randomUUID();
@@ -134,5 +137,24 @@ describe("SessionManager", () => {
     });
     expect(checkpoints).toHaveLength(1);
     expect(checkpoints[0]).toMatchObject({ role: "subtask", parentSessionId: parent.sessionId, turnIndex: 0 });
+    expect(readySessions).toHaveLength(1);
+    expect(readySessions[0]).toMatchObject({ state: "created", mode: "fixture", factorySession: { provider: "local" } });
+    expect(order).toEqual(["session", "checkpoint"]);
+  });
+
+  it("surfaces rejected subtask session registration to the parent lease", async () => {
+    const sessions = await manager(new FixtureFactoryAdapter(), {
+      onSessionReady: async () => { throw new Error("HTTP 409"); },
+    });
+    const investigationId = crypto.randomUUID();
+    const environmentId = crypto.randomUUID();
+    const parent = await sessions.createSession({ investigationId, environmentId });
+    const result = await sessions.runSubtask({ prompt: "analyze", purpose: "focused analysis" }, {
+      investigationId, environmentId, sessionId: parent.sessionId,
+      attemptId: crypto.randomUUID(), grantId: crypto.randomUUID(), epoch: 0,
+      turnBudget: { used: 0, max: 4 },
+    });
+    expect(result).toEqual({ status: "rejected", reason: "session_registration_failed" });
+    expect(sessions.takeSessionRegistrationError(parent.sessionId)).toBeInstanceOf(SessionRegistrationError);
   });
 });

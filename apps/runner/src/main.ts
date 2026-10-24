@@ -70,6 +70,8 @@ export async function main(): Promise<void> {
     maxActiveTurns: maxActiveModelCalls,
     toolBackend: activeBackend,
     log,
+    onSessionReady: async ({ attemptId, epoch, session }) =>
+      "session" in source ? source.session({ attemptId, epoch, session }) : undefined,
     onTurnComplete: async (checkpoint) => {
       if ("checkpoint" in source) {
         await source.checkpoint({

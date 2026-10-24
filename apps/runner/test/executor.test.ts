@@ -10,12 +10,16 @@ import { RunnerExecutor } from "../src/executor.js";
 import { sampleLease } from "./helpers.js";
 
 const dirs: string[] = [];
-async function setup(adapter = new FixtureFactoryAdapter(), onTurnComplete?: ConstructorParameters<typeof SessionManager>[0]["onTurnComplete"]) {
+async function setup(
+  adapter = new FixtureFactoryAdapter(),
+  onTurnComplete?: ConstructorParameters<typeof SessionManager>[0]["onTurnComplete"],
+  onSessionReady?: ConstructorParameters<typeof SessionManager>[0]["onSessionReady"],
+) {
   const dir = await mkdtemp(join(tmpdir(), "forksafe-executor-"));
   dirs.push(dir);
   const manager = new SessionManager({
     adapter, ledger: new UsageLedger(), workspaceRoot: join(dir, "workspaces"),
-    toolBackend: new LocalToolBackend(join(dir, "local")), log: new ActivityLog(), onTurnComplete,
+    toolBackend: new LocalToolBackend(join(dir, "local")), log: new ActivityLog(), onTurnComplete, onSessionReady,
   });
   return { dir, manager };
 }
@@ -25,6 +29,46 @@ afterEach(async () => {
 });
 
 describe("RunnerExecutor", () => {
+  it("registers the session with the job source before the first turn", async () => {
+    const order: string[] = [];
+    const adapter = new FixtureFactoryAdapter({ gate: async () => { order.push("runTurn"); } });
+    Object.defineProperty(adapter, "mode", { value: "live" });
+    const source = {
+      session: vi.fn(async ({ session }: {
+        attemptId: string; epoch: number; session: { state: string };
+      }) => {
+        if (session.state === "created") order.push("session");
+        return { ok: true };
+      }),
+      heartbeat: vi.fn(async () => ({ ok: true as const, leasedUntilMs: Date.now() + 30_000, epoch: 0 })),
+      complete: vi.fn(async () => ({ accepted: true })),
+    };
+    const { manager } = await setup(adapter, undefined, async ({ attemptId, epoch, session }) => {
+      expect(session.state).toBe("created");
+      expect(session.mode).toBe("live");
+      expect(session.factorySession).toMatchObject({ provider: "factory", id: "fixture-session-0001" });
+      return source.session({ attemptId, epoch, session });
+    });
+    const executor = new RunnerExecutor({ sessions: manager, source: source as never, log: new ActivityLog(), maxTurns: 1 });
+    await executor.execute(sampleLease());
+    expect(order).toEqual(["session", "runTurn"]);
+  });
+
+  it("fails the lease as infrastructure failure when session registration is rejected", async () => {
+    const { manager } = await setup(new FixtureFactoryAdapter(), undefined, async () => { throw new Error("HTTP 409"); });
+    const completions: { outcome: string; result: Record<string, unknown> }[] = [];
+    const source = {
+      heartbeat: vi.fn(async () => ({ ok: true as const, leasedUntilMs: Date.now() + 30_000, epoch: 0 })),
+      complete: vi.fn(async (completion: { outcome: string; result: Record<string, unknown> }) => {
+        completions.push(completion);
+        return { accepted: true };
+      }),
+    };
+    const executor = new RunnerExecutor({ sessions: manager, source: source as never, log: new ActivityLog() });
+    await executor.execute(sampleLease());
+    expect(completions[0]).toMatchObject({ outcome: "infra_failed" });
+    expect(completions[0]?.result.error).toContain("session registration failed");
+  });
   it("completes fixture work with usage and local vendor reference", async () => {
     const { dir, manager } = await setup();
     const jobsDir = join(dir, "jobs", "jobs");
@@ -210,7 +254,8 @@ describe("RunnerExecutor", () => {
     await expect(executor.execute(resumed)).resolves.toMatchObject({ accepted: true });
     expect(resumeSpy).toHaveBeenCalledWith(checkpoints[0].vendorSessionId, expect.any(Object));
     expect(createSpy).toHaveBeenCalledOnce();
-    expect(turnSpy.mock.calls[1]?.[1]).toContain("Continue from the latest revision head");
+    expect(turnSpy.mock.calls[1]?.[1]).toContain("about two turns total");
+    expect(turnSpy.mock.calls[1]?.[1]).toContain("submit_candidate");
     expect(checkpoints.map((checkpoint) => checkpoint.turnIndex)).toEqual([0, 1, 2, 3]);
   });
 

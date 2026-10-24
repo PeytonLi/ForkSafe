@@ -62,6 +62,12 @@ export class RunnerExecutor {
     let infrastructureFailure = false;
     const turns: TurnOutcome[] = [];
     try {
+      await this.options.sessions.registerSession(sessionId, {
+        attemptId: lease.attempt.id,
+        grantId: lease.grant.id,
+        epoch: lease.attempt.epoch,
+        jobId: lease.job.id,
+      });
       await this.options.source.start?.({ attemptId: lease.attempt.id, epoch: lease.attempt.epoch }).catch(() => undefined);
       const payload = lease.job.payload;
       const prompt = typeof payload.prompt === "string"
@@ -92,6 +98,8 @@ export class RunnerExecutor {
           },
         });
         turns.push(turn);
+        const registrationError = this.options.sessions.takeSessionRegistrationError(sessionId);
+        if (registrationError) throw registrationError;
         if (keeper.signal.aborted) return null;
         const sessionProjection = this.options.sessions.toAgentSession(sessionId);
         await this.options.source.session?.({ attemptId: lease.attempt.id, epoch: lease.attempt.epoch, session: sessionProjection }).catch(() => undefined);
@@ -180,7 +188,7 @@ export class RunnerExecutor {
   }
 }
 
-const CONTINUE_PROMPT = "Continue from the latest revision head. There is no shell or direct filesystem access. ForkSafe tools are deferred: load each needed schema with ToolSearch using `select:forksafe___<name>`, then call it from Script via `tools.forksafe___<name>(...)`; Script can reach only enabled tools. Inspect findings and the failure, read the controller, apply strict patches against the current head, and measure public cases. If a revision passes, submit_candidate. Report only measured results.";
+const CONTINUE_PROMPT = "You have about two turns total. If you have not submitted yet, promptly complete the remaining sequence in one Script: inspect_failure → read_source(task_controller.py) → apply_patch using the returned expected head → run_experiment on a public case → submit_candidate with your best measured revision, even if it does not pass. There is no shell or direct filesystem access. Load deferred schemas with ToolSearch `select:forksafe___<name>`, then call them from Script via `tools.forksafe___<name>(...)`. Report only measured results.";
 
 function submittedCandidate(turn: TurnOutcome): boolean {
   return (turn.toolCalls ?? []).some((call: unknown) => {
