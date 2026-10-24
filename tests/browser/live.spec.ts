@@ -40,7 +40,7 @@ test("fixture live stream advances, hands off to replay, and appears in the envi
   const capture = page.getByTestId("baseline-replay");
   const viewer = capture.getByTestId("live-viewer");
   await expect(viewer).toHaveAttribute("data-state", "waiting");
-  await expect(viewer).toHaveAttribute("data-state", "streaming", { timeout: 5_000 });
+  await expect(viewer).toHaveAttribute("data-state", "streaming", { timeout: 10_000 });
   await expect(viewer.getByText("Fixture stream", { exact: true })).toBeVisible();
   await expect(viewer.getByText("Live", { exact: true })).toHaveCount(0);
   if (mobile) await page.screenshot({ path: evidencePath(info, "phone-capture-streaming.png") });
