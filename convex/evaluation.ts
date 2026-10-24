@@ -7,6 +7,7 @@ import { MAX_FINALISTS } from "./lib/constants.js";
 import { caseStatus, median, rankCandidates } from "./lib/experimentStatus.js";
 import { byAppId, claimJob, completeJob, heartbeatAttempt, recordStageRow } from "./lib/jobOps.js";
 import { appId } from "./lib/validators.js";
+import { evaluatorBackend } from "./lib/evaluatorBackend.js";
 
 /** Protected evaluator. Each candidate is evaluated in a FRESH execution
  *  sandbox that never held agent session state; the evaluator attempt is a
@@ -214,6 +215,7 @@ async function freshEvaluatorSandbox(ctx: any, investigationId: string, jobId: s
 export const evaluateNext = internalAction({
   args: { investigationId: v.string() },
   handler: async (ctx, args): Promise<{ action: string; jobId?: string }> => {
+    const backend = evaluatorBackend(process.env.DAYTONA_EXECUTION_SNAPSHOT);
     const state = await ctx.runQuery(internal.evaluation.nextJob, { investigationId: args.investigationId });
     if (state.active) return { action: "busy" };
     if (!state.next) {
@@ -237,6 +239,11 @@ export const evaluateNext = internalAction({
       await ctx.runMutation(internal.evaluation.completeEvaluation, { jobId, attemptId: claimed.attemptId, epoch: claimed.epoch, outcome, error });
       await ctx.scheduler.runAfter(1_000, internal.evaluation.evaluateNext, { investigationId: args.investigationId });
     };
+    if (backend === "v2") {
+      // TODO(PR #13): python -m evaluator.run_candidate
+      await fail("infra_failed", "evaluator_v2_not_merged");
+      return { action: "evaluator_v2_not_merged", jobId };
+    }
     if (!candidate || !source) {
       await fail("failed", "candidate_source_missing");
       return { action: "failed", jobId };

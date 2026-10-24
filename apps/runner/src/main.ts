@@ -16,8 +16,22 @@ import type { Lease } from "./protocol.js";
 
 class ActiveToolBackend implements ForkSafeToolBackend {
   private current: ForkSafeToolBackend;
+  private subtaskHandler?: (input: Parameters<ForkSafeToolBackend["request_subtask"]>[0], ctx: Parameters<ForkSafeToolBackend["request_subtask"]>[1]) => Promise<unknown>;
   constructor(initial: ForkSafeToolBackend) { this.current = initial; }
   set(backend: ForkSafeToolBackend) { this.current = backend; }
+  setSubtaskHandler(handler: NonNullable<ActiveToolBackend["subtaskHandler"]>) { this.subtaskHandler = handler; }
+  inspect_failure(...args: Parameters<ForkSafeToolBackend["inspect_failure"]>) { return this.current.inspect_failure(...args); }
+  read_source(...args: Parameters<ForkSafeToolBackend["read_source"]>) { return this.current.read_source(...args); }
+  apply_patch(...args: Parameters<ForkSafeToolBackend["apply_patch"]>) { return this.current.apply_patch(...args); }
+  fork_candidate(...args: Parameters<ForkSafeToolBackend["fork_candidate"]>) { return this.current.fork_candidate(...args); }
+  async request_subtask(input: Parameters<ForkSafeToolBackend["request_subtask"]>[0], ctx: Parameters<ForkSafeToolBackend["request_subtask"]>[1]) {
+    const reservation = await this.current.request_subtask(input, ctx) as { status?: string };
+    if (reservation.status !== "reserved" || !this.subtaskHandler) return reservation;
+    const result = await this.subtaskHandler(input, ctx);
+    const completer = (this.current as HttpToolBackend & { completeSubtask?: (context: typeof ctx, result: unknown) => Promise<void> }).completeSubtask;
+    await completer?.call(this.current, ctx, result);
+    return result;
+  }
   run_experiment(...args: Parameters<ForkSafeToolBackend["run_experiment"]>) { return this.current.run_experiment(...args); }
   propose_controller_revision(...args: Parameters<ForkSafeToolBackend["propose_controller_revision"]>) { return this.current.propose_controller_revision(...args); }
   submit_candidate(...args: Parameters<ForkSafeToolBackend["submit_candidate"]>) { return this.current.submit_candidate(...args); }
@@ -46,12 +60,33 @@ export async function main(): Promise<void> {
   const activeBackend = new ActiveToolBackend(localBackend);
   const sessions = new SessionManager({
     adapter: selectFactoryAdapter(env),
-    ledger: new UsageLedger(),
+    ledger: new UsageLedger({
+      totalTokens: Number.isSafeInteger(Number(process.env.RUNNER_MAX_TOKENS_PER_INVESTIGATION))
+        && Number(process.env.RUNNER_MAX_TOKENS_PER_INVESTIGATION) > 0
+        ? Number(process.env.RUNNER_MAX_TOKENS_PER_INVESTIGATION)
+        : 100_000,
+    }),
     workspaceRoot,
     maxActiveTurns: maxActiveModelCalls,
     toolBackend: activeBackend,
     log,
+    onTurnComplete: async (checkpoint) => {
+      if ("checkpoint" in source) {
+        await source.checkpoint({
+          attemptId: checkpoint.attemptId, epoch: checkpoint.epoch,
+          checkpoint: {
+            investigationId: checkpoint.investigationId, environmentId: checkpoint.environmentId,
+            jobId: checkpoint.jobId, attemptId: checkpoint.attemptId, epoch: checkpoint.epoch,
+            sessionId: checkpoint.sessionId, vendorSessionId: checkpoint.vendorSessionId,
+            turnIndex: checkpoint.turnIndex, tokenUsage: checkpoint.tokenUsage,
+            ...(checkpoint.parentSessionId ? { parentSessionId: checkpoint.parentSessionId } : {}),
+            ...(checkpoint.revisionHeadId ? { revisionHeadId: checkpoint.revisionHeadId } : {}),
+          },
+        });
+      }
+    },
   });
+  activeBackend.setSubtaskHandler((input, context) => sessions.runSubtask(input, context));
   const executor = new RunnerExecutor({
     sessions, source, log,
     beforeJob: (lease: Lease) => {

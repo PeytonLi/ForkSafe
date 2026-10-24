@@ -81,7 +81,14 @@ export const claim = internalMutation({
         const claimed = await claimJob(ctx, job, args.workerId);
         const investigation = await byAppId(ctx, "investigations", job.investigationId);
         const environment = await byAppId(ctx, "environments", job.environmentId!);
-        return { claimed, job: { ...job, epoch: claimed.epoch, activeAttemptId: claimed.attemptId, state: "grant_pending" }, investigation, environment };
+        const checkpoints = await ctx.db.query("sessionCheckpoints").withIndex("by_environment_job", (q) =>
+          q.eq("environmentId", job.environmentId!).eq("jobId", job.appId)).collect();
+        const checkpoint = checkpoints.sort((a, b) => b.turnIndex - a.turnIndex || b.createdAtMs - a.createdAtMs)[0];
+        return {
+          claimed,
+          job: { ...job, attemptsUsed: job.attemptsUsed + 1, epoch: claimed.epoch, activeAttemptId: claimed.attemptId, state: "grant_pending" },
+          investigation, environment, checkpoint,
+        };
       } catch (error) {
         if (error instanceof ConvexError) continue;
         throw error;
@@ -184,6 +191,30 @@ export const upsertSession = internalMutation({
     await requireLease(ctx, credential, args.attemptId, args.epoch);
     await upsertSessionRow(ctx, credential, args.attemptId, args.session);
     return { ok: true };
+  },
+});
+
+export const checkpoint = internalMutation({
+  args: {
+    credentialId: v.string(), attemptId: v.string(), epoch: v.number(),
+    checkpoint: v.object({
+      investigationId: v.string(), environmentId: v.string(), jobId: v.string(), attemptId: v.string(),
+      epoch: v.number(), sessionId: v.string(), vendorSessionId: v.string(), turnIndex: v.number(),
+      parentSessionId: v.optional(v.string()), revisionHeadId: v.optional(v.string()), tokenUsage: v.optional(v.any()),
+    }),
+  },
+  handler: async (ctx, args) => {
+    const credential = await requireCredential(ctx, args.credentialId);
+    const { job } = await requireLease(ctx, credential, args.attemptId, args.epoch);
+    const row = args.checkpoint;
+    if (row.attemptId !== args.attemptId || row.epoch !== args.epoch || row.jobId !== job.appId
+      || row.environmentId !== credential.environmentId || row.investigationId !== credential.investigationId
+      || !Number.isInteger(row.turnIndex) || row.turnIndex < 0) throw new ConvexError("checkpoint_invalid");
+    const existing = await ctx.db.query("sessionCheckpoints").withIndex("by_session_turn", (q) =>
+      q.eq("sessionId", row.sessionId).eq("turnIndex", row.turnIndex)).unique();
+    if (existing) return { ok: true, duplicate: true };
+    await ctx.db.insert("sessionCheckpoints", { ...row, createdAtMs: Date.now() });
+    return { ok: true, duplicate: false };
   },
 });
 

@@ -364,6 +364,26 @@ export const submitCandidate = internalAction({
   },
 });
 
+export const recordFindingUse = internalAction({
+  args: {
+    grant: grantRef,
+    id: v.string(),
+    findingId: v.string(),
+    experimentId: v.optional(v.string()),
+    candidateId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    if ((args.experimentId === undefined) === (args.candidateId === undefined)) {
+      throw new ConvexError("finding_use_target_invalid");
+    }
+    const client = new BridgeClient(ctx);
+    return await client.call("record_finding_use", {
+      grant: args.grant, id: args.id, findingId: args.findingId,
+      experimentId: option(args.experimentId), candidateId: option(args.candidateId),
+    });
+  },
+});
+
 export const recordEvaluation = internalAction({
   args: {
     grant: grantRef,

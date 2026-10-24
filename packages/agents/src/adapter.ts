@@ -7,6 +7,7 @@ import {
   type DroidSession,
   type DroidStreamMessage,
   type SdkMcpServer,
+  type ToolInfo,
 } from "@factory/droid-sdk/node";
 import type { TokenUsage } from "./usage.js";
 
@@ -70,6 +71,7 @@ export type AdapterSessionOptions = {
 
 export interface AdapterSession {
   vendorId: string;
+  enabledToolIds?: string[];
   stream(prompt: string, options?: { abortSignal?: AbortSignal }): AsyncIterable<StreamMsg>;
   interrupt(): Promise<void>;
   close(): Promise<void>;
@@ -85,6 +87,25 @@ export class SessionMissingError extends Error {
   constructor(vendorId: string, options?: ErrorOptions) {
     super(`Factory session not found: ${vendorId}`, options);
     this.name = "SessionMissingError";
+  }
+}
+
+export type ToolInfoLike = Pick<ToolInfo, "id" | "source" | "allowed"> & {
+  serverName?: string;
+  mcpServerName?: string;
+  mcp?: { serverName?: string };
+};
+
+export function computeDisabledToolIds(tools: ToolInfoLike[], allowedMcpServer = "forksafe"): string[] {
+  return [...new Set(tools
+    .filter((tool) => tool.source !== "mcp" || (tool.serverName ?? tool.mcpServerName ?? tool.mcp?.serverName) !== allowedMcpServer)
+    .map((tool) => tool.id))];
+}
+
+export class ToolSurfaceError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "ToolSurfaceError";
   }
 }
 
@@ -115,9 +136,10 @@ function mapMessage(message: DroidStreamMessage): StreamMsg | null {
   }
 }
 
-function liveSession(session: DroidSession): AdapterSession {
+function liveSession(session: DroidSession, enabledToolIds: string[]): AdapterSession {
   return {
     vendorId: session.id,
+    enabledToolIds,
     async *stream(prompt, options) {
       for await (const message of session.stream(prompt, options as never)) {
         const mapped = mapMessage(message);
@@ -131,37 +153,106 @@ function liveSession(session: DroidSession): AdapterSession {
 
 export class LiveFactoryAdapter implements FactoryAdapter {
   readonly mode = "live" as const;
-  constructor(private readonly options: { apiKey?: string; modelId?: string; execPath?: string; autonomyLevel?: AutonomyLevel } = {}) {}
+  constructor(
+    private readonly options: { apiKey?: string; modelId?: string; execPath?: string; autonomyLevel?: AutonomyLevel } = {},
+    private readonly sessionApi: { createSession: typeof createSession; resumeSession: typeof resumeSession } = { createSession, resumeSession },
+  ) {}
 
   async createSession(opts: AdapterSessionOptions): Promise<AdapterSession> {
-    const session = await createSession({
+    const create = (disabledToolIds: string[]) => this.sessionApi.createSession({
       cwd: opts.cwd,
       modelId: opts.modelId ?? this.options.modelId ?? process.env.FACTORY_MODEL,
       autonomyLevel: opts.autonomyLevel ?? this.options.autonomyLevel ?? AutonomyLevel.Low,
-      disabledToolIds: [...DISABLED_BUILTIN_TOOL_IDS],
+      disabledToolIds,
       mcpServers: opts.mcpServers,
       permissionHandler: opts.permissionHandler as never,
       systemPrompt: opts.systemPrompt,
       apiKey: opts.apiKey ?? this.options.apiKey,
       execPath: this.options.execPath,
     });
-    return liveSession(session);
+    return this.secureSession(await create([...DISABLED_BUILTIN_TOOL_IDS]), create);
   }
 
   async resumeSession(vendorId: string, opts: AdapterSessionOptions): Promise<AdapterSession> {
     try {
-      const session = await resumeSession(vendorId, {
+      const resume = (disabledToolIds: string[]) => this.sessionApi.resumeSession(vendorId, {
         mcpServers: opts.mcpServers,
         permissionHandler: opts.permissionHandler as never,
-        disabledToolIds: [...DISABLED_BUILTIN_TOOL_IDS],
+        disabledToolIds,
         apiKey: opts.apiKey ?? this.options.apiKey,
         execPath: this.options.execPath,
       });
-      return liveSession(session);
+      const session = await resume([...DISABLED_BUILTIN_TOOL_IDS]);
+      return await this.secureSession(session, (disabledToolIds) => this.sessionApi.createSession({
+        cwd: opts.cwd,
+        modelId: opts.modelId ?? this.options.modelId ?? process.env.FACTORY_MODEL,
+        autonomyLevel: opts.autonomyLevel ?? this.options.autonomyLevel ?? AutonomyLevel.Low,
+        disabledToolIds,
+        mcpServers: opts.mcpServers,
+        permissionHandler: opts.permissionHandler as never,
+        systemPrompt: opts.systemPrompt,
+        apiKey: opts.apiKey ?? this.options.apiKey,
+        execPath: this.options.execPath,
+      }));
     } catch (error) {
+      if (error instanceof ToolSurfaceError) throw error;
       if (error instanceof Error && error.name === "SessionNotFoundError") throw new SessionMissingError(vendorId, { cause: error });
       throw error;
     }
+  }
+
+  private async secureSession(
+    initial: DroidSession,
+    recreate: (disabledToolIds: string[]) => Promise<DroidSession>,
+  ): Promise<AdapterSession> {
+    let session = initial;
+    let tools: ToolInfo[];
+    try {
+      tools = await session.listTools();
+    } catch (error) {
+      await session.close().catch(() => undefined);
+      throw new ToolSurfaceError("Factory tool surface could not be inspected", { cause: error });
+    }
+
+    const disabledToolIds = computeDisabledToolIds(tools);
+    const restrictedToolIds = [...new Set([...DISABLED_BUILTIN_TOOL_IDS, ...disabledToolIds])];
+    const hasEnabledForbiddenTool = tools.some((tool) =>
+      tool.allowed && computeDisabledToolIds([tool]).length > 0,
+    );
+    if (hasEnabledForbiddenTool) {
+      if (typeof session.updateSettings === "function") {
+        try {
+          await session.updateSettings({ disabledToolIds: restrictedToolIds });
+        } catch {
+          await session.close().catch(() => undefined);
+          try {
+            session = await recreate(restrictedToolIds);
+          } catch (error) {
+            throw new ToolSurfaceError("Factory tool restrictions could not be applied", { cause: error });
+          }
+        }
+      } else {
+        await session.close().catch(() => undefined);
+        try {
+          session = await recreate(restrictedToolIds);
+        } catch (error) {
+          throw new ToolSurfaceError("Factory session could not be recreated with restricted tools", { cause: error });
+        }
+      }
+      try {
+        tools = await session.listTools();
+      } catch (error) {
+        await session.close().catch(() => undefined);
+        throw new ToolSurfaceError("Factory tool surface could not be verified", { cause: error });
+      }
+    }
+
+    const enabledToolIds = tools.filter((tool) => tool.allowed).map((tool) => tool.id);
+    if (tools.some((tool) => tool.allowed && computeDisabledToolIds([tool]).length > 0)) {
+      await session.close().catch(() => undefined);
+      throw new ToolSurfaceError("Factory exposed an enabled tool outside the ForkSafe MCP server");
+    }
+    return liveSession(session, enabledToolIds);
   }
 }
 

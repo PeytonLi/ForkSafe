@@ -11,6 +11,11 @@ const investigations = [crypto.randomUUID(), crypto.randomUUID()];
 const environments = Array.from({ length: 7 }, () => crypto.randomUUID());
 const dirs: string[] = [];
 const backend = {
+  async inspect_failure() { return { status: "blocked" }; },
+  async read_source() { return { status: "blocked" }; },
+  async apply_patch() { return { status: "blocked" }; },
+  async fork_candidate() { return { status: "blocked" }; },
+  async request_subtask() { return { status: "blocked" }; },
   async run_experiment() { return { status: "blocked" }; },
   async propose_controller_revision() { return { status: "blocked" }; },
   async submit_candidate() { return { status: "blocked" }; },
@@ -59,6 +64,29 @@ describe("SessionManager", () => {
     for (let i = 0; i < 5; i += 1) ids.push((await sessions.createSession({ investigationId: investigations[0]!, environmentId: environments[i]! })).sessionId);
     await Promise.all(ids.map((id) => sessions.runTurn(id, "inspect")));
     expect(maximum).toBe(4);
+  });
+
+  it("returns retry_later instead of waiting when all active turn slots are occupied", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let markEntered!: () => void;
+    const entered = new Promise<void>((resolve) => { markEntered = resolve; });
+    const adapter = new FixtureFactoryAdapter({ gate: () => { markEntered(); return gate; } });
+    const sessions = await manager(adapter, { maxActiveTurns: 1 });
+    const investigationId = crypto.randomUUID();
+    const environmentId = crypto.randomUUID();
+    const parent = await sessions.createSession({ investigationId, environmentId });
+    const parentTurn = sessions.runTurn(parent.sessionId, "parent");
+    await entered;
+
+    const result = await sessions.runSubtask({ prompt: "analyze", purpose: "focused analysis" }, {
+      investigationId, environmentId, sessionId: parent.sessionId,
+      attemptId: crypto.randomUUID(), grantId: crypto.randomUUID(), epoch: 0,
+      turnBudget: { used: 1, max: 4 },
+    });
+    expect(result).toEqual({ status: "retry_later", reason: "turn_cap" });
+    release();
+    await expect(parentTurn).resolves.toMatchObject({ success: true });
   });
 
   it("reports fixture and unknown usage, and replaces missing vendor sessions with lineage", async () => {

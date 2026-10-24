@@ -24,13 +24,18 @@ export class RunnerExecutor {
     const clock = this.options.clock ?? Date.now;
     const operationId = randomUUID();
     this.options.beforeJob?.(lease);
+    const checkpoint = lease.job.payload.resume as {
+      sessionId?: string; vendorSessionId?: string; turnIndex?: number; revisionHeadId?: string;
+    } | undefined;
     let sessionId = this.options.sessions.idleSessionFor(lease.job.investigationId, lease.job.environmentId);
     if (!sessionId) {
       try {
-        const created = await this.options.sessions.createSession({
-          investigationId: lease.job.investigationId,
-          environmentId: lease.job.environmentId,
-        });
+        const created = checkpoint?.vendorSessionId && checkpoint.sessionId
+          ? await this.options.sessions.resumeFromCheckpoint({
+            investigationId: lease.job.investigationId, environmentId: lease.job.environmentId,
+            sessionId: checkpoint.sessionId, vendorSessionId: checkpoint.vendorSessionId,
+          })
+          : await this.options.sessions.createSession({ investigationId: lease.job.investigationId, environmentId: lease.job.environmentId });
         sessionId = created.sessionId;
       } catch (error) {
         // Any session-open failure is reported on the lease instead of being left to expire:
@@ -63,19 +68,33 @@ export class RunnerExecutor {
         : payload.repair
           ? buildRepairPrompt(payload.repair as RepairPromptParams)
           : "Review the investigation and use the ForkSafe tools to report evidence-backed findings.";
-      const maxTurns = this.options.maxTurns ?? 3;
-      for (let index = 0; index < maxTurns; index += 1) {
-        turn = await this.options.sessions.runTurn(sessionId, index === 0 ? prompt : CONTINUE_PROMPT, {
+      const maxTurns = this.options.maxTurns ?? 4;
+      const startTurn = checkpoint?.turnIndex !== undefined ? checkpoint.turnIndex + 1 : 0;
+      const turnBudget = { used: startTurn, max: maxTurns };
+      const revisionState = { headRevisionId: checkpoint?.revisionHeadId };
+      for (let index = startTurn; index < maxTurns; index += 1) {
+        if (turnBudget.used >= turnBudget.max) break;
+        turnBudget.used += 1;
+        const turnPrompt = index === startTurn && checkpoint
+          ? `Continue from checkpoint at revision head ${checkpoint.revisionHeadId ?? "baseline"}. ${CONTINUE_PROMPT}`
+          : index === 0 ? prompt : CONTINUE_PROMPT;
+        turn = await this.options.sessions.runTurn(sessionId, turnPrompt, {
           abortSignal: keeper.signal,
           toolContext: {
             attemptId: lease.attempt.id,
             grantId: lease.grant.id,
             epoch: lease.attempt.epoch,
+            turnBudget,
+            revisionState,
+            jobId: lease.job.id,
+            turnIndex: turnBudget.used - 1,
           },
         });
         turns.push(turn);
         if (keeper.signal.aborted) return null;
-        await this.options.source.session?.({ attemptId: lease.attempt.id, epoch: lease.attempt.epoch, session: this.options.sessions.toAgentSession(sessionId) }).catch(() => undefined);
+        const sessionProjection = this.options.sessions.toAgentSession(sessionId);
+        await this.options.source.session?.({ attemptId: lease.attempt.id, epoch: lease.attempt.epoch, session: sessionProjection }).catch(() => undefined);
+        if (!this.options.sessions.revisionHeadId(sessionId)) revisionState.headRevisionId = checkpoint?.revisionHeadId;
         // A failed live turn (e.g. a denied built-in tool cancelling the turn) is not fatal:
         // the next turn re-anchors the agent on the ForkSafe tools. Fixture/local turns run once.
         if (turn.mode !== "live" || submittedCandidate(turn)) break;
@@ -158,7 +177,7 @@ export class RunnerExecutor {
   }
 }
 
-const CONTINUE_PROMPT = "Continue the repair. You have no shell, script or file tools here (they are denied); use only the forksafe tools. If a revision already passes the baseline case, submit_candidate with its revisionId now; otherwise fix the controller with propose_controller_revision and measure it with run_experiment. Report only measured results.";
+const CONTINUE_PROMPT = "Continue from the latest revision head. You have no shell, script or file tools here; use only ForkSafe tools. Inspect findings and the failure, read the controller, apply strict patches against the current head, and measure public cases. If a revision passes, submit_candidate. Report only measured results.";
 
 function submittedCandidate(turn: TurnOutcome): boolean {
   return (turn.toolCalls ?? []).some((call: unknown) => {
