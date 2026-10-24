@@ -104,6 +104,20 @@ def test_noop_and_raising_controllers_fail_closed(tmp_path):
     assert cli_result["failureKinds"] == ["invalid_run"]
 
 
+def test_cli_arguments_are_not_visible_to_controller(tmp_path):
+    case = SimCase(caseId="argv-check", suite="public", seed=0, sceneOverrides={})
+    controller = _controller(
+        tmp_path,
+        "import json\nimport sys\nfrom pathlib import Path\n"
+        "Path(__file__).with_name('argv.json').write_text(json.dumps(sys.argv))\n"
+        "def plan(scene):\n    return []\n",
+    )
+    _run_cli(tmp_path, controller, case, 0)
+    controller_argv = json.loads((controller / "argv.json").read_text())
+    assert "--case-json" not in controller_argv
+    assert str(tmp_path / "case.json") not in controller_argv
+
+
 def test_asset_hash_mismatch_is_refused(tmp_path, monkeypatch):
     manifest = tmp_path / "manifest.json"
     manifest.write_text(json.dumps({"sha256": "0" * 64}))

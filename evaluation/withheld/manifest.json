@@ -1,0 +1,160 @@
+{
+  "version": "1",
+  "generatorSeed": 8182731,
+  "domain": {
+    "cubeDx": [
+      -0.02,
+      0.02
+    ],
+    "cubeDy": [
+      -0.02,
+      0.02
+    ],
+    "targetDx": [
+      -0.02,
+      0.02
+    ],
+    "targetDy": [
+      -0.02,
+      0.02
+    ],
+    "dividerDx": [
+      -0.03,
+      0.03
+    ],
+    "dividerDy": [
+      -0.03,
+      0.03
+    ],
+    "dividerHeight": [
+      0.08,
+      0.12
+    ],
+    "speedScale": [
+      0.8,
+      1.2
+    ]
+  },
+  "cases": [
+    {
+      "caseId": "withheld-01",
+      "suite": "withheld",
+      "seed": 333357791,
+      "sceneOverrides": {
+        "cubeDx": -0.01611,
+        "cubeDy": 0.00304,
+        "targetDx": 0.01289,
+        "targetDy": 0.01549,
+        "dividerDx": -0.0118,
+        "dividerDy": -0.0117,
+        "dividerHeight": 0.09072,
+        "speedScale": 1.05003
+      }
+    },
+    {
+      "caseId": "withheld-02",
+      "suite": "withheld",
+      "seed": 1574489193,
+      "sceneOverrides": {
+        "cubeDx": 0.01131,
+        "cubeDy": 0.01225,
+        "targetDx": 0.00114,
+        "targetDy": -0.01728,
+        "dividerDx": 0.00453,
+        "dividerDy": -0.00331,
+        "dividerHeight": 0.10903,
+        "speedScale": 0.92261
+      }
+    },
+    {
+      "caseId": "withheld-03",
+      "suite": "withheld",
+      "seed": 969449893,
+      "sceneOverrides": {
+        "cubeDx": 0.01883,
+        "cubeDy": 0.01514,
+        "targetDx": -0.00418,
+        "targetDy": -0.00206,
+        "dividerDx": -0.00758,
+        "dividerDy": 0.02306,
+        "dividerHeight": 0.11621,
+        "speedScale": 1.1476
+      }
+    },
+    {
+      "caseId": "withheld-04",
+      "suite": "withheld",
+      "seed": 2087312353,
+      "sceneOverrides": {
+        "cubeDx": 0.00835,
+        "cubeDy": -0.00801,
+        "targetDx": 0.00736,
+        "targetDy": -0.00909,
+        "dividerDx": -0.02561,
+        "dividerDy": -0.01885,
+        "dividerHeight": 0.10331,
+        "speedScale": 1.02779
+      }
+    },
+    {
+      "caseId": "withheld-05",
+      "suite": "withheld",
+      "seed": 996213472,
+      "sceneOverrides": {
+        "cubeDx": -0.00608,
+        "cubeDy": 0.00219,
+        "targetDx": 0.00336,
+        "targetDy": 0.01597,
+        "dividerDx": 0.01061,
+        "dividerDy": 0.01721,
+        "dividerHeight": 0.08183,
+        "speedScale": 1.01071
+      }
+    },
+    {
+      "caseId": "withheld-06",
+      "suite": "withheld",
+      "seed": 962478185,
+      "sceneOverrides": {
+        "cubeDx": 0.01291,
+        "cubeDy": -0.01114,
+        "targetDx": -0.01276,
+        "targetDy": -0.00514,
+        "dividerDx": 0.00444,
+        "dividerDy": -0.00068,
+        "dividerHeight": 0.08676,
+        "speedScale": 0.91221
+      }
+    },
+    {
+      "caseId": "withheld-07",
+      "suite": "withheld",
+      "seed": 1165341151,
+      "sceneOverrides": {
+        "cubeDx": -0.01623,
+        "cubeDy": 0.01788,
+        "targetDx": -0.01795,
+        "targetDy": 0.00291,
+        "dividerDx": -0.02451,
+        "dividerDy": 0.00314,
+        "dividerHeight": 0.11229,
+        "speedScale": 1.00294
+      }
+    },
+    {
+      "caseId": "withheld-08",
+      "suite": "withheld",
+      "seed": 1140239062,
+      "sceneOverrides": {
+        "cubeDx": -0.00952,
+        "cubeDy": -0.01772,
+        "targetDx": -0.01412,
+        "targetDy": -0.01203,
+        "dividerDx": -0.02187,
+        "dividerDy": -0.00402,
+        "dividerHeight": 0.10415,
+        "speedScale": 0.94321
+      }
+    }
+  ]
+}

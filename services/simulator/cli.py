@@ -27,6 +27,7 @@ def _arguments() -> argparse.Namespace:
 
 def main() -> int:
     args = _arguments()
+    sys.argv[:] = sys.argv[:1]
     args.out_dir.mkdir(parents=True, exist_ok=True)
     try:
         case = (
