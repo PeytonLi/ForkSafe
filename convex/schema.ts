@@ -93,10 +93,12 @@ export default defineSchema({
     candidatesUsed: v.number(),
     runnerCredentialId: v.optional(uuid),
     runnerSandboxOpId: v.optional(uuid),
+    poolWorkerId: v.optional(v.string()),
+    leasedUntilMs: v.optional(v.number()),
     queuedReason: v.optional(v.string()),
     queuedAtMs: v.optional(v.number()),
     lastError: v.optional(v.string()),
-  }).index("by_appId", ["appId"]).index("by_investigation", ["investigationId"]),
+  }).index("by_appId", ["appId"]).index("by_investigation", ["investigationId"]).index("by_state", ["state"]),
 
   jobs: defineTable({
     appId: uuid,
@@ -529,7 +531,8 @@ export default defineSchema({
     commitError: v.optional(v.string()),
     updatedAtMs: v.number(),
   }).index("by_appId", ["appId"]).index("by_candidate", ["candidateId"])
-    .index("by_investigation", ["investigationId"]).index("by_commitStatus", ["commitStatus"]),
+    .index("by_investigation", ["investigationId"]).index("by_commitStatus", ["commitStatus"])
+    .index("by_spacetimeCommitted", ["spacetimeCommitted"]),
 
   /** Human reviews bound to the exact controller sha. */
   reviews: defineTable({

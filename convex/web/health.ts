@@ -20,6 +20,9 @@ export const pipeline = query({
     }
     const pending = await ctx.db.query("outbox").withIndex("by_status_next", (q) => q.eq("status", "pending")).take(SCAN);
     const dead = await ctx.db.query("outbox").withIndex("by_status_next", (q) => q.eq("status", "dead")).take(SCAN);
+    const failedEvaluationCommits = await ctx.db.query("evaluations")
+      .withIndex("by_commitStatus", (q) => q.eq("commitStatus", "commit_failed"))
+      .take(SCAN);
     const credentials = await ctx.db.query("runnerCredentials").order("desc").take(SCAN);
     const runners = credentials.filter((c) => !c.revokedAtMs && c.expiresAtMs > now).length;
     const sessions = await ctx.db.query("sessions").order("desc").take(SCAN);
@@ -34,6 +37,12 @@ export const pipeline = query({
       unknownUsageTurns,
       outboxBacklog: pending.length,
       outboxDead: dead.length,
+      failedEvaluationCommits: failedEvaluationCommits.length,
+      deadRows: {
+        total: dead.length + failedEvaluationCommits.length,
+        evaluations: failedEvaluationCommits.length,
+        outbox: dead.length,
+      },
       ...(oldest !== undefined ? { oldestBacklogAtMs: oldest } : {}),
     };
   },
