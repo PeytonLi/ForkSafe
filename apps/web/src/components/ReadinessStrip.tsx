@@ -55,12 +55,12 @@ export function ReadinessStrip({ clientSource }: { clientSource: { kind: string;
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls="readiness-detail"
-        aria-label={`${fixture ? "Showing recorded fixture data, not live results" : "Web data status"}; ${live} live, ${configured} configured, ${blocked} blocked, ${notBuilt} not built${fixtureCount ? `, ${fixtureCount} fixture` : ""}. Open integration details`}
+        aria-label={`${fixture ? "Showing recorded fixture data, not live results" : "Web data status"}; ${live} ${fixture ? "ready" : "live"}, ${configured} configured, ${blocked} blocked, ${notBuilt} not built${fixtureCount ? `, ${fixtureCount} fixture` : ""}. Open integration details`}
         onClick={() => setOpen((wasOpen) => !wasOpen)}
       >
         <span className={styles.statusDot} aria-hidden="true" />
         <span>{fixture ? "Fixture data" : `${human(src.mode)} data`}</span>
-        <span className={styles.count}>· {live} live</span>
+        <span className={styles.count}>· {live} {fixture ? "ready" : "live"}</span>
         <span className={`${styles.count} ${styles.configuredFull}`}>· {configured} configured</span>
         <span className={`${styles.count} ${styles.configuredShort}`}>· {configured} set</span>
         <span className={styles.count}>· {blocked} blocked</span>

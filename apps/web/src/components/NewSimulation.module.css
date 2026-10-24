@@ -9,7 +9,8 @@
 .stepTrack span[data-active="true"] { background: var(--accent); }
 .card { display: grid; gap: 1rem; min-width: 0; padding: 1.1rem; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); box-shadow: var(--shadow-card); }
 .card h2 { color: var(--ink); font-size: var(--text-xl); letter-spacing: -0.02em; }
-.sceneLayout { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(330px, 0.9fr); align-items: start; gap: 1rem; min-width: 0; }
+.sceneLayout { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); align-items: start; gap: 1rem; min-width: 0; }
+.scenePreviewColumn { display: grid; align-content: start; gap: 0.8rem; min-width: 0; }
 .scenePreview { position: sticky; top: 1rem; min-width: 0; }
 .sceneControls { display: grid; align-content: start; gap: 1rem; min-width: 0; }
 .environmentFieldset { display: grid; gap: 0.55rem; margin: 0; padding: 0; border: 0; }
@@ -25,6 +26,7 @@
 .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.55rem; }
 .searchRow { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; }
 .searchResult { flex: 1 1 100%; margin: 0; padding: 0.65rem 0.75rem; border-radius: 9px; background: var(--accent-soft); color: var(--ink); font-size: var(--text-sm); line-height: 1.45; }
+.modeBadge { display: inline-block; margin-right: 0.45rem; padding: 0.15rem 0.4rem; border-radius: 99px; background: var(--panel); color: var(--muted); font-size: var(--text-xs); font-weight: 650; }
 .validation, .refusal { margin: 0; padding: 0.65rem 0.75rem; border-radius: 9px; background: var(--amber-bg); color: var(--amber); font-size: var(--text-sm); line-height: 1.45; }
 .titleField { display: grid; gap: 0.4rem; color: var(--muted); font-size: var(--text-sm); }
 .titleField input { width: 100%; min-height: 42px; padding: 0.5rem 0.65rem; color: var(--ink); }

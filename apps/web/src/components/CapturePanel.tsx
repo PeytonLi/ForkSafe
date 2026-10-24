@@ -10,6 +10,7 @@ import { Badge, Panel } from "./Panel";
 import { human, stateTone, words } from "./tone";
 import styles from "./CapturePanel.module.css";
 import { useBrowserAccess } from "../services/browserAccess";
+import { sceneActionMessage } from "../services/sceneActionMessage";
 import { changedOverrides, defaultOverride } from "../scene";
 import { SceneFields } from "./SceneFields";
 import { CaptureProgress } from "./CaptureProgress";
@@ -213,10 +214,16 @@ function SceneEditor({ scene, taskFamily: taskFamilyInput, seed, envs, open, onO
         {outcome && (
           <p role="status" className={"error" in outcome || !outcome.accepted ? styles.warn : styles.ok} data-testid="capture-outcome">
             {"error" in outcome
-              ? `Request failed: ${outcome.error}`
+              ? <>
+                  <span className={styles.modeBadge}>{sceneActionMessage("blocked", outcome.error, "capture").label}</span>
+                  {sceneActionMessage("blocked", outcome.error, "capture").message}
+                </>
               : outcome.accepted
                 ? `Capture accepted as investigation ${outcome.investigationId.slice(0, 8)}.`
-                : `Not recorded (${human(outcome.mode)}): ${outcome.reason}`}
+                : <>
+                    <span className={styles.modeBadge}>{sceneActionMessage(outcome.mode, outcome.reason, "capture").label}</span>
+                    {sceneActionMessage(outcome.mode, outcome.reason, "capture").message}
+                  </>}
           </p>
         )}
       </section>

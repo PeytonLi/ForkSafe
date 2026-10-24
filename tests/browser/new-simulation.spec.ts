@@ -30,6 +30,9 @@ test("scene capture journey, fixture limits, and scenario reset", async ({ page 
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Let’s work out what went wrong." })).toBeVisible();
   await expect(page.getByText("Loading investigations…")).toHaveCount(0);
+  const readinessStrip = page.getByTestId("readiness-strip");
+  await expect(readinessStrip).toContainText(/\d+ ready/);
+  await expect(readinessStrip).not.toContainText(/\d+ live/);
   const overviewCta = page.getByRole("main").getByRole("link", { name: "New simulation", exact: true });
   await expect(overviewCta).toHaveClass(/primary/);
   await expect(overviewCta).toHaveCSS("text-decoration-line", "none");
@@ -67,6 +70,13 @@ test("scene capture journey, fixture limits, and scenario reset", async ({ page 
   await expect(journey.getByLabel("Agent environments (1–4)")).toHaveCount(0);
   await waitForCanvas(page, journey.getByTestId("scene-preview"));
   await screenshot(page, "new-step2", viewport);
+  if (!mobile) {
+    const previewBox = await journey.getByTestId("scene-preview").boundingBox();
+    const searchBox = await journey.getByRole("button", { name: "Find a failure for me" }).boundingBox();
+    const runBox = await journey.getByRole("group", { name: "Run" }).boundingBox();
+    expect(searchBox!.x).toBeLessThan(runBox!.x);
+    expect(searchBox!.y).toBeGreaterThan(previewBox!.y);
+  }
 
   const gapWidth = journey.getByLabel("Gap width value");
   await gapWidth.fill("0.09");
@@ -77,9 +87,18 @@ test("scene capture journey, fixture limits, and scenario reset", async ({ page 
   await screenshot(page, "push-gap-preview", viewport);
   await expectNoHorizontalOverflow(page);
 
+  await journey.getByRole("button", { name: "Back" }).click();
+  await journey.getByRole("radio", { name: /Pick and place over a divider/ }).check();
+  await journey.getByRole("button", { name: "Next" }).click();
+  await expect(journey.getByLabel("Divider height value")).toHaveValue("0.10");
+  await waitForCanvas(page, journey.getByTestId("scene-preview"));
+  await screenshot(page, "new-step2-divider", viewport);
+
   await journey.getByRole("button", { name: "Find a failure for me" }).click();
   const searchMessage = journey.getByTestId("find-failure-result");
-  await expect(searchMessage).toContainText("Fixture mode cannot search for a failure");
+  await expect(searchMessage).toContainText("This is sample data, so ForkSafe can't run the physics needed to find a failure. On the live app, this button searches nearby scenes for one that fails.");
+  await expect(searchMessage).toContainText("Sample data");
+  await expect(searchMessage).not.toContainText("VITE_CONVEX_URL");
   await searchMessage.scrollIntoViewIfNeeded();
   await screenshot(page, "fixture-find-failure", viewport);
   await expectNoHorizontalOverflow(page);
@@ -94,7 +113,8 @@ test("scene capture journey, fixture limits, and scenario reset", async ({ page 
   await screenshot(page, "step3-environments", viewport);
   await journey.getByRole("button", { name: "Start" }).click();
   const refusal = journey.getByTestId("start-refusal");
-  await expect(refusal).toContainText("Fixture mode cannot run physics");
+  await expect(refusal).toContainText("This is sample data, so ForkSafe can't record a new robot run here. On the live app, Start records the scene and then starts the agents.");
+  await expect(refusal).toContainText("Sample data");
   await refusal.scrollIntoViewIfNeeded();
   await screenshot(page, "fixture-refusal", viewport);
 
@@ -114,6 +134,11 @@ test("scene capture journey, fixture limits, and scenario reset", async ({ page 
   await expect(editor.getByTestId("scene-preview-summary")).toHaveText("Divider height: 0.10 m");
   await waitForCanvas(page, editor.getByTestId("scene-preview"));
   await screenshot(page, "edit-scenario", viewport);
+  if (mobile) {
+    await editor.evaluate((element) => element.scrollTo({ top: element.scrollHeight, behavior: "instant" }));
+    await expect(editor.getByRole("button", { name: "Record baseline run" })).toBeInViewport();
+    await screenshot(page, "edit-scenario-scrolled", viewport);
+  }
   await dividerHeight.fill("0.20");
   await dividerHeight.press("Tab");
   await expect(editor.getByTestId("scene-preview-summary")).toHaveText("Divider height: 0.20 m");

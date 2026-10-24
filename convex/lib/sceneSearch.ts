@@ -15,6 +15,32 @@ export interface FuzzGrid {
   summary?: { failCount?: number };
 }
 
+export const FIND_FAILURE_BUDGET = {
+  sandboxReadyMs: 75_000,
+  bundleFetchSec: 45,
+  bundleExtractSec: 20,
+  bundleDepsSec: 30,
+  bundlePreflightSec: 15,
+  bundleSec: 139,
+  manifestCheckSec: 15,
+  controllerUploadSec: 20,
+  fuzzSamples: 16,
+  fuzzWorkers: 2,
+  fuzzCaseTimeoutSec: 30,
+  fuzzMarginSec: 30,
+  fuzzExecSec: 270,
+  pullSec: 20,
+} as const;
+
+export function findFailureWorstCaseSec(): number {
+  return FIND_FAILURE_BUDGET.sandboxReadyMs / 1000
+    + FIND_FAILURE_BUDGET.bundleSec
+    + FIND_FAILURE_BUDGET.manifestCheckSec
+    + FIND_FAILURE_BUDGET.controllerUploadSec
+    + FIND_FAILURE_BUDGET.fuzzExecSec
+    + FIND_FAILURE_BUDGET.pullSec;
+}
+
 export type FailureSearchResult =
   | { mode: "live"; found: true; taskFamily: TaskFamily; caseId: string; sceneOverrides: Record<string, number>; seed: number; samples: number; failures: number; failureKind?: string }
   | { mode: "live"; found: false; samples: number; failures: number; reason: string };

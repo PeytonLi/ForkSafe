@@ -25,6 +25,7 @@ interface Props {
   onEnvironmentsChange: (count: number) => void;
   onReset: () => void;
   showEnvironments?: boolean;
+  stretchGroups?: boolean;
   legacy?: boolean;
   preview?: ReactNode;
 }
@@ -45,13 +46,14 @@ export function SceneFields({
   onEnvironmentsChange,
   onReset,
   showEnvironments = true,
+  stretchGroups = false,
   legacy,
   preview,
 }: Props) {
   const keys = TASK_FAMILY_SPECS[taskFamily].overrideKeys;
   const speedScale = values.speedScale ?? 1;
   return (
-    <div className={styles.fields}>
+    <div className={styles.fields} data-stretch-groups={stretchGroups || undefined}>
       {preview && <div className={styles.preview}>{preview}</div>}
       {legacy && <p className={styles.legacy}>This recorded example uses an older scene format, so the editor starts from the standard scene.</p>}
       {FIELD_GROUPS[taskFamily].map((group) => (

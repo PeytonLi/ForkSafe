@@ -4,6 +4,7 @@ import { changedOverrides, defaultOverride } from "../scene";
 import { useClient } from "../hooks";
 import type { FailureSearchOutcome } from "../services";
 import { useBrowserAccess } from "../services/browserAccess";
+import { sceneActionMessage } from "../services/sceneActionMessage";
 import { human } from "./tone";
 import { ReplayViewer } from "../viewer/ReplayViewer";
 import { SceneFields } from "./SceneFields";
@@ -123,8 +124,27 @@ export function NewSimulation({ onAccepted }: { onAccepted: (investigationId: st
           <h2 id="scene-heading">Set up the scene</h2>
           <p className={styles.description}>{TASK_FAMILY_SPECS[taskFamily].description}</p>
           <div className={styles.sceneLayout}>
-            <div className={styles.scenePreview}>
+            <div className={styles.scenePreviewColumn}>
+              <div className={styles.scenePreview}>
               <ReplayViewer taskFamily={taskFamily} scene={overrides} />
+              </div>
+              <div className={styles.searchRow}>
+                <button type="button" onClick={findFailure} disabled={searching}>
+                  {searching ? "Searching…" : "Find a failure for me"}
+                </button>
+                {searchResult && (
+                  <p className={styles.searchResult} role="status" data-testid="find-failure-result" data-found={searchResult.found || undefined}>
+                    {searchResult.found
+                      ? `Found a failing scene: ${human(searchResult.failureKind ?? "failure")}.`
+                      : (
+                        <>
+                          <span className={styles.modeBadge}>{sceneActionMessage(searchResult.mode, searchResult.reason, "search").label}</span>
+                          {sceneActionMessage(searchResult.mode, searchResult.reason, "search").message}
+                        </>
+                      )}
+                  </p>
+                )}
+              </div>
             </div>
             <div className={styles.sceneControls}>
               <SceneFields
@@ -136,6 +156,7 @@ export function NewSimulation({ onAccepted }: { onAccepted: (investigationId: st
                 environments={environments}
                 onEnvironmentsChange={setEnvironments}
                 showEnvironments={false}
+                stretchGroups
                 onReset={() => {
                   setOverrides(defaultOverride(taskFamily));
                   setSeed(1);
@@ -145,18 +166,6 @@ export function NewSimulation({ onAccepted }: { onAccepted: (investigationId: st
               />
               {!validation.ok && <p className={styles.validation} role="alert">{validation.reason}</p>}
               {!seedValid && <p className={styles.validation} role="alert">Seed must be a non-negative integer.</p>}
-              <div className={styles.searchRow}>
-                <button type="button" onClick={findFailure} disabled={searching}>
-                  {searching ? "Searching…" : "Find a failure for me"}
-                </button>
-                {searchResult && (
-                  <p className={styles.searchResult} role="status" data-testid="find-failure-result" data-found={searchResult.found || undefined}>
-                    {searchResult.found
-                      ? `Found a failing scene: ${human(searchResult.failureKind ?? "failure")}.`
-                      : `${searchResult.mode === "fixture" ? "Fixture: " : ""}${searchResult.reason}`}
-                  </p>
-                )}
-              </div>
               <div className={styles.actions}>
                 <button type="button" onClick={() => setStep(1)}>Back</button>
                 <button type="button" className="primary" disabled={!validation.ok || !seedValid} onClick={() => setStep(3)}>Next</button>
@@ -210,7 +219,8 @@ export function NewSimulation({ onAccepted }: { onAccepted: (investigationId: st
           </div>
           {startResult && (
             <p className={styles.refusal} role="status" data-testid="start-refusal">
-              {startResult.mode === "fixture" ? "Fixture: " : `${human(startResult.mode)}: `}{startResult.reason}
+              <span className={styles.modeBadge}>{sceneActionMessage(startResult.mode, startResult.reason, "capture").label}</span>
+              {sceneActionMessage(startResult.mode, startResult.reason, "capture").message}
             </p>
           )}
         </section>

@@ -1,4 +1,6 @@
 .fields { display: grid; align-content: start; align-items: start; gap: 0.65rem; min-width: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.fields[data-stretch-groups="true"] { align-content: stretch; align-items: stretch; }
+.fields[data-stretch-groups="true"] .group { align-self: stretch; }
 .group { display: grid; align-self: start; gap: 0.6rem; min-width: 0; margin: 0; padding: 0.75rem; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
 .group legend { padding: 0 0.25rem; font-size: var(--text-sm); font-weight: 650; }
 .field { display: grid; gap: 0.3rem; min-width: 0; color: var(--muted); font-size: var(--text-xs); }

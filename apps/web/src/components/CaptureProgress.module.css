@@ -4,10 +4,11 @@
 .step[data-state="complete"] { color: var(--muted); }
 .step[data-state="active"] { color: var(--ink); }
 .marker { width: 9px; height: 9px; border-radius: 50%; background: var(--line); }
-.step[data-state="complete"] .marker { background: var(--muted); }
+.step[data-state="complete"] .marker { background: var(--accent); }
 .step[data-state="active"] .marker { background: var(--accent); animation: capture-pulse 1.8s ease-in-out infinite; }
 .label { font-weight: 600; }
 .stepStatus { color: var(--ink); font-size: var(--text-xs); font-weight: 650; }
+.step[data-state="complete"] .stepStatus { color: var(--accent); }
 .current strong { display: block; font-size: var(--text-sm); font-weight: 650; }
 .current p { margin: 0.2rem 0 0; color: var(--muted); font-size: var(--text-xs); line-height: 1.45; }
 @keyframes capture-pulse { 50% { box-shadow: 0 0 0 5px var(--accent-soft); } }

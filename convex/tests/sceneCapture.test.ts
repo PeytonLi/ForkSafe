@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../_generated/api.js";
 import schema from "../schema.js";
 import { caseJsonFor } from "../lib/caseJson.js";
-import { pickFirstFailure, type FuzzGrid } from "../lib/sceneSearch.js";
+import { FIND_FAILURE_BUDGET, findFailureWorstCaseSec, pickFirstFailure, type FuzzGrid } from "../lib/sceneSearch.js";
 import dividerGrid from "./fuzz-divider.json";
 import pushGapGrid from "./fuzz-push-gap.json";
 
@@ -100,6 +100,21 @@ describe("scene capture contract", () => {
 });
 
 describe("generated scene payload and fuzz selection", () => {
+  it("keeps failure search within the action budget while allowing the worst-case fuzz grid", () => {
+    expect(FIND_FAILURE_BUDGET.bundleSec).toBeGreaterThanOrEqual(
+      FIND_FAILURE_BUDGET.bundleFetchSec
+        + FIND_FAILURE_BUDGET.bundleExtractSec * 2
+        + FIND_FAILURE_BUDGET.bundleDepsSec
+        + FIND_FAILURE_BUDGET.bundlePreflightSec,
+    );
+    expect(FIND_FAILURE_BUDGET.fuzzExecSec).toBeGreaterThanOrEqual(
+      FIND_FAILURE_BUDGET.fuzzSamples * FIND_FAILURE_BUDGET.fuzzCaseTimeoutSec / FIND_FAILURE_BUDGET.fuzzWorkers
+        + FIND_FAILURE_BUDGET.fuzzMarginSec,
+    );
+    expect(FIND_FAILURE_BUDGET.fuzzExecSec).toBeLessThanOrEqual(360);
+    expect(findFailureWorstCaseSec()).toBeLessThan(540);
+  });
+
   it("includes taskFamily in the case payload when present", () => {
     expect(caseJsonFor({
       caseId: "push-gap-aligned",

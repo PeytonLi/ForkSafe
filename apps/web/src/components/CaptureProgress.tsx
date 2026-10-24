@@ -27,8 +27,13 @@ export function CaptureProgress({ workspace }: { workspace: InvestigationWorkspa
           >
             <span className={styles.marker} aria-hidden="true" />
             <span className={styles.label}>{label}</span>
-            {index === 2 && <strong className={styles.stepStatus}>{progress.resultTitle}</strong>}
-            {index === 3 && <strong className={styles.stepStatus}>{progress.agentsTitle}</strong>}
+            {index < progress.activeStep
+              ? <strong className={styles.stepStatus}>Done</strong>
+              : index === progress.activeStep && index === 2
+                ? <strong className={styles.stepStatus}>{progress.resultTitle}</strong>
+                : index === progress.activeStep && index === 3
+                  ? <strong className={styles.stepStatus}>{progress.agentsTitle}</strong>
+                  : null}
           </li>
         ))}
       </ol>

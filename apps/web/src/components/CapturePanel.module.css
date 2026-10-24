@@ -21,7 +21,8 @@
 .fieldGroup legend { padding: 0 0.2rem; color: var(--ink); font-size: var(--text-xs); font-weight: 650; }
 .field { display: grid; min-width: 0; gap: 0.25rem; margin-top: 0.5rem; color: var(--muted); font-size: var(--text-xs); }
 .field input { width: 100%; min-height: 38px; }
-.actions { position: sticky; z-index: 1; bottom: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0.55rem; margin-top: 0.85rem; padding: 0.65rem 0; background: var(--panel); }
+.actions { position: sticky; z-index: 1; bottom: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0.55rem; margin-top: 0.85rem; padding: 0.65rem 0 max(0.65rem, env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background-color: var(--panel); box-shadow: 0 -8px 18px rgba(29, 44, 44, 0.08); }
+.modeBadge { display: inline-block; margin-right: 0.45rem; padding: 0.15rem 0.4rem; border-radius: 99px; background: var(--panel); color: var(--muted); font-size: var(--text-xs); font-weight: 650; }
 .warn { padding: 0.55rem 0.7rem; border-radius: 9px; background: var(--amber-bg); color: var(--amber); font-size: var(--text-sm); }
 .ok { padding: 0.55rem 0.7rem; border-radius: 9px; background: var(--green-bg); color: var(--green); font-size: var(--text-sm); }
 @keyframes backdrop-in { from { opacity: 0; } to { opacity: 1; } }
