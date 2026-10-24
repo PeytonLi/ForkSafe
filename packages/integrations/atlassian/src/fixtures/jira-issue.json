@@ -1,0 +1,10 @@
+{
+  "_fixture": "recorded response shape; illustrative data, not a live Atlassian call",
+  "id": "10001",
+  "key": "FS-1",
+  "fields": {
+    "summary": "Investigate divider contact",
+    "labels": ["forksafe-inv-00000000-0000-4000-8000-000000000001"],
+    "status": { "name": "Open" }
+  }
+}

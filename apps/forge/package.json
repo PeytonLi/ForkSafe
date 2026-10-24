@@ -1,0 +1,27 @@
+{
+  "name": "@forksafe/forge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@forge/api": "^8",
+    "@forge/bridge": "^7",
+    "@forge/react": "^12",
+    "@forge/resolver": "^2",
+    "@forksafe/contracts": "workspace:*",
+    "@forksafe/integrations-atlassian": "workspace:*",
+    "react": "^18",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/react": "^18",
+    "typescript": "~5.9.3",
+    "vitest": "^3.2.4",
+    "yaml": "^2"
+  }
+}

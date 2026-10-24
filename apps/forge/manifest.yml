@@ -1,0 +1,36 @@
+modules:
+  jira:issuePanel:
+    - key: forksafe-issue-panel
+      resource: panel
+      resolver: { function: resolver }
+      render: native
+      title: ForkSafe investigation
+      icon: resource:static;forksafe.svg
+  jira:issueAction:
+    - key: forksafe-start-investigation
+      resource: start
+      resolver: { function: resolver }
+      render: native
+      title: Start ForkSafe investigation
+function:
+  - key: resolver
+    handler: index.handler
+resources:
+  - key: panel
+    path: src/frontend/panel.tsx
+  - key: start
+    path: src/frontend/start.tsx
+  - key: static
+    path: static
+remotes:
+  - key: forksafe-backend
+    baseUrl: https://forksafe-backend.example.invalid
+    operations: [compute, storage]
+    storage: { inScopeEUD: false }
+permissions:
+  scopes:
+    - read:jira-work
+app:
+  id: ari:cloud:ecosystem::app/00000000-0000-0000-0000-000000000000 # replaced by forge register
+  runtime:
+    name: nodejs22.x
