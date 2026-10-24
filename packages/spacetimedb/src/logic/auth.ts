@@ -58,7 +58,6 @@ export interface BridgeIdentityLike {
   role: string;
 }
 
-/** Every other "convex" identity loses bridge authority when the caller rotates in. */
 export function planBridgeRotation(
   rows: readonly BridgeIdentityLike[],
   senderHex: string,

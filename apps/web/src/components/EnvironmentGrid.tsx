@@ -25,6 +25,9 @@ export function EnvironmentGrid({ workspace: w }: { workspace: InvestigationWork
         const elapsed = e.startedAtMs ? (e.closedAtMs ?? w.asOfMs) - e.startedAtMs : undefined;
         const open = openId === e.id;
         const shown = showAll && open ? exps : exps.slice(0, TIMELINE_CAP);
+        const maxSessions = e.budgets.maxFactorySessions;
+        const usedSessions = Math.min(sessions.length, maxSessions);
+        const experimentCount = Math.min(exps.length, e.budgets.maxExperiments);
         return (
           <article key={e.id} className={styles.tile} data-testid={`env-tile-${e.index + 1}`} aria-labelledby={`env-${e.id}`}>
             <header className={styles.tileHead}>
@@ -49,11 +52,22 @@ export function EnvironmentGrid({ workspace: w }: { workspace: InvestigationWork
               <dt>Sandbox</dt>
               <dd>{e.daytonaSandbox ? `${e.daytonaSandbox.provider}:${e.daytonaSandbox.id}` : "pending"}</dd>
             </dl>
-            <button type="button" aria-expanded={open} aria-controls={`tl-${e.id}`} onClick={() => { setOpenId(open ? null : e.id); setShowAll(false); }}>
-              {open ? "Hide timeline" : "Experiment timeline"}
+            <div className={styles.budget}>
+              <div className={styles.progressLabel}><span>Experiments</span><strong>{exps.length}/{e.budgets.maxExperiments}</strong></div>
+              <div className={styles.progressTrack} role="progressbar" aria-label={`Experiment budget for Env ${e.index + 1}`} aria-valuemin={0} aria-valuemax={e.budgets.maxExperiments} aria-valuenow={experimentCount}>
+                <span style={{ width: `${e.budgets.maxExperiments ? (experimentCount / e.budgets.maxExperiments) * 100 : 0}%` }} />
+              </div>
+              <div className={styles.progressLabel}><span>Agent session budget</span><strong>{usedSessions}/{maxSessions}</strong></div>
+              <div className={styles.progressTrack} role="progressbar" aria-label={`Agent session budget for Env ${e.index + 1}`} aria-valuemin={0} aria-valuemax={maxSessions} aria-valuenow={usedSessions}>
+                <span className={styles.sessionProgress} style={{ width: `${maxSessions ? (usedSessions / maxSessions) * 100 : 0}%` }} />
+              </div>
+            </div>
+            <button type="button" className={styles.timelineToggle} aria-expanded={open} aria-controls={`tl-${e.id}`} onClick={() => { setOpenId(open ? null : e.id); setShowAll(false); }}>
+              <span>{open ? "Timeline" : "Timeline"} <span aria-hidden="true">{open ? "▾" : "▸"}</span></span>
+              <span>{exps.length} experiments</span>
             </button>
-            {open && (
-              <div id={`tl-${e.id}`} className={styles.timeline}>
+            <div id={`tl-${e.id}`} className={`${styles.timelineRegion} ${open ? styles.timelineOpen : ""}`} aria-hidden={!open} inert={!open}>
+              <div className={styles.timeline}>
                 {exps.length === 0 ? (
                   <p className={styles.empty}>No experiments yet.</p>
                 ) : (
@@ -74,7 +88,7 @@ export function EnvironmentGrid({ workspace: w }: { workspace: InvestigationWork
                   </button>
                 )}
               </div>
-            )}
+            </div>
           </article>
         );
       })}

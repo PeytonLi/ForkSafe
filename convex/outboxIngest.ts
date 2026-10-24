@@ -38,9 +38,20 @@ export function toIngestEntries(rows: Record<string, unknown>[]): { entries: Ing
 
 export const tick = internalAction({
   args: {},
-  handler: async (ctx): Promise<{ mode: string; inserted: number; duplicates: number; skipped: number; failed: number }> => {
+  handler: async (ctx): Promise<{
+    mode: string;
+    inserted: number;
+    duplicates: number;
+    skipped: number;
+    failed: number;
+    reconciliation: { checked: number; committed: number; pending: number; failed: number; notApplicable: number };
+  }> => {
     const config = spacetimeConfig(process.env);
-    if (config.mode !== "live" && config.mode !== "local") return { mode: config.mode, inserted: 0, duplicates: 0, skipped: 0, failed: 0 };
+    const emptyReconciliation = { checked: 0, committed: 0, pending: 0, failed: 0, notApplicable: 0 };
+    if (config.mode !== "live" && config.mode !== "local") {
+      return { mode: config.mode, inserted: 0, duplicates: 0, skipped: 0, failed: 0, reconciliation: emptyReconciliation };
+    }
+    const reconciliation = await ctx.runAction(internal.evaluationReconcile.reconcilePendingCommits, {});
     const token = await ctx.runAction(internal.bridge.sharedBridgeToken, {});
     const client = new SpacetimeClient(spacetimeEnvironment(token));
     const rows = await client.sql("SELECT * FROM outbox_entry WHERE status = 'pending'");
@@ -57,6 +68,6 @@ export const tick = internalAction({
         failed += 1;
       }
     }
-    return { mode: config.mode, inserted, duplicates, skipped, failed };
+    return { mode: config.mode, inserted, duplicates, skipped, failed, reconciliation };
   },
 });

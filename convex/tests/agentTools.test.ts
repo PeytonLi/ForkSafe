@@ -197,9 +197,14 @@ describe("agent tool persistence", () => {
     expect(uses).toHaveLength(1);
     expect(uses[0]).toMatchObject({ findingId, candidateId, crossEnvironment: true });
     const findingUseRequest = requests.find((request) => request.url.endsWith("/call/record_finding_use"));
+    expect(Object.keys(findingUseRequest?.body ?? {})).toEqual([
+      "grant", "id", "findingId", "experimentId", "candidateId",
+    ]);
     expect(findingUseRequest?.body).toMatchObject({
       grant: { grant_id: targetContext!.grantId, attempt_id: targetContext!.attemptId, epoch: targetContext!.epoch },
+      id: expect.any(String),
       findingId, candidateId: { some: candidateId },
+      experimentId: null,
     });
     await t.mutation(internal.agentTools.mirrorFindingUse, {
       appId: uses[0]!.appId, findingId, findingEnvironmentId: sourceContext!.environmentId,

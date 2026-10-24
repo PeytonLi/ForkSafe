@@ -12,10 +12,12 @@ interface Props<T> {
   children: (data: T) => ReactNode;
   testId?: string;
   headingLevel?: 2 | 3;
+  showHeading?: boolean;
+  bare?: boolean;
 }
 
 /** Every data panel renders loading / empty / error / permission states. */
-export function Panel<T>({ title, state, isEmpty, empty, actions, children, testId, headingLevel = 2 }: Props<T>) {
+export function Panel<T>({ title, state, isEmpty, empty, actions, children, testId, headingLevel = 2, showHeading = true, bare = false }: Props<T>) {
   const H = headingLevel === 2 ? "h2" : "h3";
   let body: ReactNode;
   if (state.status === "error") {
@@ -48,11 +50,11 @@ export function Panel<T>({ title, state, isEmpty, empty, actions, children, test
     body = isEmpty?.(data) ? <div className={styles.empty} data-testid="empty-state">{empty ?? "Nothing here yet."}</div> : children(data);
   }
   return (
-    <section className={styles.panel} aria-labelledby={`${title}-h`} data-testid={testId} aria-busy={state.status === "loading"}>
-      <header className={styles.head}>
+    <section className={`${styles.panel} ${bare ? styles.bare : ""}`} aria-label={showHeading ? undefined : title} aria-labelledby={showHeading ? `${title}-h` : undefined} data-testid={testId} aria-busy={state.status === "loading"}>
+      {showHeading && <header className={styles.head}>
         <H id={`${title}-h`}>{title}</H>
         {actions}
-      </header>
+      </header>}
       {body}
     </section>
   );

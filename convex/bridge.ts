@@ -67,6 +67,26 @@ export const resetBridgeState = internalMutation({
 });
 
 type ActionCtx = { runQuery: any; runMutation: any };
+const MAX_CALL_ATTEMPTS = 4;
+const RETRY_BACKOFF_MS = [500, 2_000, 5_000] as const;
+
+function isTransientStatus(status: number): boolean {
+  return status === 408 || status === 429 || (status >= 500 && status < 600);
+}
+
+function isTransientFailure(error: unknown): boolean {
+  if (error instanceof SpacetimeReducerError) return isTransientStatus(error.status);
+  return error instanceof TypeError;
+}
+
+function isTransientDelay(attempt: number): number {
+  const base = RETRY_BACKOFF_MS[Math.min(attempt, RETRY_BACKOFF_MS.length - 1)]!;
+  return base * (0.8 + Math.random() * 0.4);
+}
+
+function waitForRetry(attempt: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, isTransientDelay(attempt)));
+}
 
 async function fetchJson(url: string, init: RequestInit): Promise<{ status: number; text: string }> {
   const response = await fetch(url, init);
@@ -135,7 +155,7 @@ export class BridgeClient {
   }
 
   /** Calls a reducer; re-registers once if the bridge identity was lost. */
-  async call(reducer: string, args: Record<string, unknown>): Promise<{ committed: boolean; mode: SpacetimeMode }> {
+  async call(reducer: string, args: Record<string, unknown>): Promise<{ committed: boolean; mode: SpacetimeMode; reason?: string }> {
     if (!this.enabled) return { committed: false, mode: this.mode };
     if (!this.token) {
       const { token, identity } = await obtainToken(this.ctx, this.httpBase);
@@ -143,13 +163,42 @@ export class BridgeClient {
       this.identity = identity;
     }
     const body = JSON.stringify(encodeReducerArgs(args));
-    let result = await this.post(reducer, body);
-    if (result.status !== 200 && /^\s*bridge_required/.test(result.text)) {
-      await this.register();
-      result = await this.post(reducer, body);
+    let attempts = 0;
+    let transientFailures = 0;
+    let registered = false;
+    while (attempts < MAX_CALL_ATTEMPTS) {
+      attempts += 1;
+      let result: { status: number; text: string };
+      try {
+        result = await this.post(reducer, body);
+      } catch (error) {
+        if (!isTransientFailure(error)) throw error;
+        if (attempts >= MAX_CALL_ATTEMPTS) return { committed: false, mode: this.mode, reason: "spacetime_unavailable" };
+        await waitForRetry(transientFailures++);
+        continue;
+      }
+      if (result.status === 200) return { committed: true, mode: this.mode };
+      if (!registered && /^\s*bridge_required/.test(result.text)) {
+        if (attempts >= MAX_CALL_ATTEMPTS) throw classifyReducerFailure(result.status, result.text);
+        try {
+          await this.register();
+        } catch (error) {
+          if (!isTransientFailure(error)) throw error;
+          if (attempts >= MAX_CALL_ATTEMPTS) return { committed: false, mode: this.mode, reason: "spacetime_unavailable" };
+          await waitForRetry(transientFailures++);
+          continue;
+        }
+        registered = true;
+        continue;
+      }
+      if (isTransientStatus(result.status)) {
+        if (attempts >= MAX_CALL_ATTEMPTS) return { committed: false, mode: this.mode, reason: "spacetime_unavailable" };
+        await waitForRetry(transientFailures++);
+        continue;
+      }
+      throw classifyReducerFailure(result.status, result.text);
     }
-    if (result.status !== 200) throw classifyReducerFailure(result.status, result.text);
-    return { committed: true, mode: this.mode };
+    return { committed: false, mode: this.mode, reason: "spacetime_unavailable" };
   }
 
   async sql(query: string): Promise<Record<string, unknown>[]> {
@@ -401,10 +450,11 @@ export const recordFindingUse = internalAction({
       throw new ConvexError("finding_use_target_invalid");
     }
     const client = new BridgeClient(ctx);
-    return await client.call("record_finding_use", {
+    const reducerArgs = {
       grant: args.grant, id: args.id, findingId: args.findingId,
       experimentId: option(args.experimentId), candidateId: option(args.candidateId),
-    });
+    };
+    return await client.call("record_finding_use", reducerArgs);
   },
 });
 

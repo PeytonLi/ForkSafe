@@ -18,4 +18,9 @@ export function stateTone(s: string): Tone {
   return "gray";
 }
 
-export const human = (s: string) => s.replace(/_/g, " ");
+export const words = (s: string) => s.replace(/_/g, " ");
+
+export const human = (s: string) => {
+  const label = words(s);
+  return label ? `${label[0]!.toUpperCase()}${label.slice(1)}` : label;
+};

@@ -7,6 +7,7 @@ import {
 } from "@forksafe/contracts";
 
 type Name = IntegrationReadiness["name"];
+export type WebIntegrationReadiness = IntegrationReadiness & { probed: boolean };
 
 const MODE_VAR: Partial<Record<Name, string>> = {
   convex: "CONVEX_MODE",
@@ -38,12 +39,12 @@ export async function buildReadiness(
   rawEnv: Record<string, string | undefined>,
   probe: Probe = httpProbe,
   now = Date.now(),
-): Promise<IntegrationReadiness[]> {
+): Promise<WebIntegrationReadiness[]> {
   const env = EnvConfig.parse(Object.fromEntries(Object.entries(rawEnv).filter(([, v]) => v !== "")));
   const missing = missingForMode(env);
-  const out: IntegrationReadiness[] = [];
-  const push = (name: Name, mode: IntegrationMode, detail: string) =>
-    out.push({ name, mode, detail: detail.slice(0, 1000), checkedAtMs: now });
+  const out: WebIntegrationReadiness[] = [];
+  const push = (name: Name, mode: IntegrationMode, detail: string, wasProbed = false) =>
+    out.push({ name, mode, detail: detail.slice(0, 1000), checkedAtMs: now, probed: wasProbed });
 
   for (const [name, modeVar] of Object.entries(MODE_VAR) as [Name, string][]) {
     const mode = effectiveMode(env, modeVar);
@@ -64,9 +65,9 @@ export async function buildReadiness(
     if (configured === "fixture") return push(name, "fixture", `${modeVar}=fixture`);
     if (configured === "disabled") return push(name, "not_implemented", `${modeVar}=disabled`);
     const r = await probe(url, 1500);
-    if (r.status === 404) return push(name, "blocked", `${label} not found at ${url} (HTTP 404)`);
-    if (!r.ok) return push(name, "blocked", `${label} unreachable (${r.error ?? `HTTP ${r.status}`})`);
-    push(name, configured === "local" ? "local" : "live", `${label} reachable (HTTP ${r.status})`);
+    if (r.status === 404) return push(name, "blocked", `${label} not found at ${url} (HTTP 404)`, true);
+    if (!r.ok) return push(name, "blocked", `${label} unreachable (${r.error ?? `HTTP ${r.status}`})`, true);
+    push(name, configured === "local" ? "local" : "live", `${label} reachable (HTTP ${r.status})`, true);
   };
 
   const stdbHttp = env.SPACETIMEDB_URI.replace(/^ws/, "http").replace(/\/$/, "");

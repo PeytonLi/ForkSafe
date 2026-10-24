@@ -34,3 +34,22 @@ export async function bootstrapIndices(client: IndexAdmin) {
     }
   }
 }
+
+/** Dispatcher-recorded per-document indexing failures; never searched as evidence. */
+export const INDEX_ERRORS_INDEX = "forksafe-index-errors";
+export const indexErrorMapping: estypes.MappingTypeMapping = {
+  dynamic: "strict",
+  properties: {
+    ...Object.fromEntries(["id", "index", "docId", "idempotencyKey", "errorType", "errorCode", "investigationId"].map(key => [key, { type: "keyword" }])),
+    status: { type: "integer" },
+    attempt: { type: "integer" },
+    recordedAt: { type: "date", format: "epoch_millis" },
+  },
+};
+export async function bootstrapErrorIndex(client: IndexAdmin) {
+  if (await client.indices.exists({ index: INDEX_ERRORS_INDEX })) return;
+  try { await client.indices.create({ index: INDEX_ERRORS_INDEX, mappings: indexErrorMapping }); }
+  catch (error) {
+    if ((error as { meta?: { body?: { error?: { type?: string } } } }).meta?.body?.error?.type !== "resource_already_exists_exception") throw new Error("Elastic index bootstrap failed");
+  }
+}

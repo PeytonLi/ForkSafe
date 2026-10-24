@@ -1,4 +1,4 @@
-import { useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useBrowserAccess } from "../services/browserAccess";
 import { fmtTime, shortId, useClient, useLoad } from "../hooks";
 import { errorCode } from "../services";
@@ -27,6 +27,12 @@ export function InvestigationView({ id, tab, onTab }: { id: string; tab: string;
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const active = TABS.some(([k]) => k === tab) ? tab : "capture";
 
+  useEffect(() => {
+    if (window.matchMedia("(max-width: 560px)").matches) return;
+    const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+    tabRefs.current[TABS.findIndex(([key]) => key === active)]?.scrollIntoView({ behavior, block: "nearest", inline: "start" });
+  }, [active]);
+
   const onTabKey = (e: KeyboardEvent, i: number) => {
     const n = e.key === "ArrowRight" ? i + 1 : e.key === "ArrowLeft" ? i - 1 : e.key === "Home" ? 0 : e.key === "End" ? TABS.length - 1 : null;
     if (n === null) return;
@@ -51,7 +57,7 @@ export function InvestigationView({ id, tab, onTab }: { id: string; tab: string;
   };
 
   return (
-    <Panel title="Investigation" state={ws} testId="investigation-view">
+    <Panel title="Investigation workspace" state={ws} showHeading={false} bare testId="investigation-view">
       {(w) => {
         const inv = w.investigation;
         const running = RUNNING.includes(inv.state);
@@ -63,7 +69,7 @@ export function InvestigationView({ id, tab, onTab }: { id: string; tab: string;
                 <div className={styles.meta}>
                   <Badge tone={stateTone(inv.state)}>{human(inv.state)}</Badge>
                   {w.cancellation === "requested" && <Badge tone="amber">cancellation pending</Badge>}
-                  <span>id {shortId(inv.id)}</span>
+                  <span className={styles.id}>id {shortId(inv.id)}</span>
                   <span>{inv.requestedEnvironments} environments</span>
                   {inv.jiraIssueKey && <span>Jira {inv.jiraIssueKey}</span>}
                   <span>updated {fmtTime(inv.updatedAtMs)}</span>
@@ -76,6 +82,12 @@ export function InvestigationView({ id, tab, onTab }: { id: string; tab: string;
               )}
             </div>
             {cancelErr && <p role="alert" className={styles.err}>Cancel failed: {cancelErr}</p>}
+            <label className={styles.mobileTabSelect}>
+              <span className="visually-hidden">Investigation sections</span>
+              <select value={active} onChange={(e) => onTab(e.target.value)} aria-label="Investigation sections">
+                {TABS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+              </select>
+            </label>
             <div role="tablist" aria-label="Investigation sections" className={styles.tabs}>
               {TABS.map(([k, label], i) => (
                 <button
