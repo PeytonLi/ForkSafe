@@ -5,6 +5,7 @@ export const TABS = [
   ["ask", "Ask why"],
   ["timeline", "Timeline"],
   ["compare", "Compare & review"],
+  ["learning", "What we learned"],
 ] as const;
 
 export type SectionKey = (typeof TABS)[number][0];

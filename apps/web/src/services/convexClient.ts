@@ -24,6 +24,8 @@ import type {
   HandoffEvent,
   InvestigationListItem,
   InvestigationWorkspace,
+  CurrentController,
+  LearningView,
   PipelineHealth,
   ReviewInput,
 } from "./types";
@@ -49,6 +51,12 @@ export const CONVEX_WEB_FUNCTIONS = {
   pipelineHealth: "web/health:pipeline",
   ask: "web/ask:ask",
   handoffs: "web/timeline:handoffs",
+} as const;
+
+export const CONVEX_LEARNING_FUNCTIONS = {
+  learning: "learning:view",
+  retry: "learning:retry",
+  currentController: "learning:currentController",
 } as const;
 
 const q = (name: string) => makeFunctionReference<"query">(name);
@@ -95,6 +103,70 @@ export const FailureSearch = z.union([
     failureKind: z.string().optional(),
   }),
 ]);
+
+const LearningExperiment = z.object({
+  experimentId: z.string(),
+  status: z.string(),
+  completed: z.boolean(),
+  completionTimeSec: z.number().optional(),
+  firstFailure: z.object({ kind: z.string(), tSec: z.number(), detail: z.string() }).optional(),
+  replayArtifactId: z.string().optional(),
+  controllerSha256: z.string(),
+  failureKinds: z.array(z.string()).default([]),
+});
+export const LearningViewSchema = z.object({
+  taskFamily: z.string().default("divider_pick_place"),
+  lineage: z.array(z.object({
+    version: z.number(),
+    controllerSha256: z.string(),
+    label: z.string(),
+    investigationId: z.string().optional(),
+    investigationTitle: z.string().optional(),
+    candidateId: z.string().optional(),
+    approvedAtMs: z.number().optional(),
+  })).default([]),
+  current: z.object({ version: z.number(), controllerSha256: z.string() }).nullable().default(null),
+  thisRun: z.object({
+    controllerSha256: z.string().nullable().default(null),
+    version: z.number().nullable().default(null),
+    choice: z.enum(["approved", "baseline"]).nullable().default(null),
+  }).default({ controllerSha256: null, version: null, choice: null }),
+  retry: z.object({
+    available: z.boolean().default(false),
+    reason: z.string().optional(),
+    latest: z.object({
+      investigationId: z.string(),
+      state: z.string(),
+      captureStatus: z.string().nullable(),
+      controllerSha256: z.string().nullable(),
+      controllerVersion: z.number().nullable(),
+      before: LearningExperiment.nullable(),
+      after: LearningExperiment.nullable(),
+      recorded: z.boolean().optional(),
+    }).optional(),
+  }).default({ available: false }),
+  priorHints: z.array(z.object({
+    findingId: z.string(),
+    sourceInvestigationId: z.string(),
+    sourceTitle: z.string(),
+    summary: z.string(),
+    used: z.boolean().default(false),
+  })).default([]),
+});
+export const CurrentControllerSchema = z.object({
+  taskFamily: z.string().default("divider_pick_place"),
+  approved: z.object({
+    version: z.number(),
+    controllerSha256: z.string(),
+    investigationTitle: z.string().optional(),
+  }).nullable().default(null),
+  baseline: z.object({ version: z.literal(1), controllerSha256: z.string() }).nullable().default(null),
+});
+export const CONVEX_LEARNING_SCHEMAS = {
+  learning: LearningViewSchema,
+  retry: Capture,
+  currentController: CurrentControllerSchema,
+} as const;
 
 const Mode = z.enum(["live", "local", "fixture", "blocked", "not_implemented"]);
 export const PipelineHealthSchema = z.object({
@@ -240,10 +312,26 @@ export class ConvexForkSafeClient implements ForkSafeClient {
       mapError(e);
     }
   }
+  async getLearning(investigationId: string): Promise<LearningView> {
+    return parse(LearningViewSchema, await this.query(CONVEX_LEARNING_FUNCTIONS.learning, { investigationId }), "Learning view");
+  }
+  async retryWithImprovedController(investigationId: string): Promise<CaptureOutcome> {
+    try {
+      const result = await this.client.mutation(makeFunctionReference<"mutation">(CONVEX_LEARNING_FUNCTIONS.retry), { investigationId });
+      return parse(CONVEX_RESPONSE_SCHEMAS.capture, result, "Retry outcome");
+    } catch (e) {
+      mapError(e);
+    }
+  }
+  async getCurrentController(taskFamily?: string): Promise<CurrentController> {
+    const args = taskFamily ? { taskFamily } : {};
+    return parse(CurrentControllerSchema, await this.query(CONVEX_LEARNING_FUNCTIONS.currentController, args), "Current controller");
+  }
   subscribe(investigationId: string, onChange: () => void): () => void {
     const watches = [
       this.client.watchQuery(q(CONVEX_FUNCTIONS.workspace), { investigationId }),
       this.client.watchQuery(q(CONVEX_FUNCTIONS.findings), { investigationId }),
+      this.client.watchQuery(q(CONVEX_LEARNING_FUNCTIONS.learning), { investigationId }),
     ];
     const offs = watches.map((w) => w.onUpdate(onChange));
     return () => offs.forEach((off) => off());

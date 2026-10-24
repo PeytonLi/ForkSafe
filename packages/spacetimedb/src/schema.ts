@@ -294,6 +294,31 @@ export const humanReview = table(
   },
 );
 
+export const controllerPromotion = table(
+  {
+    name: "controller_promotion",
+    public: true,
+    indexes: [
+      {
+        accessor: "by_task_family",
+        algorithm: "btree",
+        columns: ["taskFamily"],
+      },
+    ],
+  },
+  {
+    id: t.string().primaryKey(),
+    taskFamily: t.string(),
+    version: t.u32(),
+    controllerSha256: t.string(),
+    parentControllerSha256: t.string(),
+    investigationId: t.string(),
+    candidateId: t.string(),
+    reviewId: t.string(),
+    createdAtMs: t.i64(),
+  },
+);
+
 export const outboxEntry = table(
   { name: "outbox_entry", public: true },
   {
@@ -372,6 +397,7 @@ const databaseSchema = schema(
     candidate,
     evaluation,
     humanReview,
+    controllerPromotion,
     outboxEntry,
     tombstone,
     attemptHeartbeat,

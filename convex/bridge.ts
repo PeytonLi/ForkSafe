@@ -409,6 +409,24 @@ export const recordFindingUse = internalAction({
   },
 });
 
+export const recordControllerPromotion = internalAction({
+  args: {
+    id: v.string(),
+    taskFamily: v.string(),
+    version: v.number(),
+    controllerSha256: v.string(),
+    parentControllerSha256: v.string(),
+    investigationId: v.string(),
+    candidateId: v.string(),
+    reviewId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const client = new BridgeClient(ctx);
+    return await client.call("record_controller_promotion", args);
+  },
+});
+
+
 export const recordEvaluation = internalAction({
   args: {
     grant: grantRef,
