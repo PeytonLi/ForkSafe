@@ -5,6 +5,7 @@ import importlib.util
 import json
 import math
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -64,13 +65,18 @@ def _resolve_case(case_id: str) -> SimCase:
     raise ValueError(f"caseId is not in the public manifest: {case_id}")
 
 
-def _set_initial_state(scene: BuiltScene, data: mujoco.MjData, seed: int) -> None:
+def _set_initial_state(
+    scene: BuiltScene,
+    data: mujoco.MjData,
+    seed: int,
+    rng: np.random.Generator | None = None,
+) -> None:
     mujoco.mj_resetDataKeyframe(scene.model, data, scene.home_key_id)
     free_joint = mujoco.mj_name2id(
         scene.model, mujoco.mjtObj.mjOBJ_JOINT, "cube_free"
     )
     address = int(scene.model.jnt_qposadr[free_joint])
-    generator = np.random.default_rng(seed)
+    generator = rng if rng is not None else np.random.default_rng(seed)
     data.qpos[address] += generator.uniform(-0.001, 0.001)
     data.qpos[address + 1] += generator.uniform(-0.001, 0.001)
     yaw = generator.uniform(-0.05, 0.05)
@@ -227,6 +233,264 @@ def _result(
     return result
 
 
+class RunSession:
+    def __init__(self) -> None:
+        raise TypeError("use RunSession.start()")
+
+    @classmethod
+    def start(
+        cls,
+        controller_dir: Path,
+        case: SimCase,
+        seed: int,
+        experiment_id: UUID,
+        timeout_sec: float = 30,
+        *,
+        base_config: dict[str, object] | None = None,
+    ) -> RunSession:
+        session = cls.__new__(cls)
+        session.start_wall = time.perf_counter()
+        session.controller_dir = Path(controller_dir)
+        session.case = case
+        session.seed = int(seed)
+        session.experiment_id = experiment_id
+        session.asset_hash = verify_assets()
+        controller, session.controller_hash = _load_controller(session.controller_dir)
+        session.scene = build_scene(case, base_config=base_config)
+        with tempfile.TemporaryDirectory() as directory:
+            model_path = Path(directory) / "compiled.mjb"
+            mujoco.mj_saveModel(session.scene.model, str(model_path))
+            session.compiled_model_hash = hashlib.sha256(model_path.read_bytes()).hexdigest()
+        session.data = mujoco.MjData(session.scene.model)
+        session.rng = np.random.default_rng(seed)
+        _set_initial_state(session.scene, session.data, seed, session.rng)
+        controller_input = _controller_scene(session.scene, session.data)
+        session.plan = controller.plan(controller_input)
+        if not isinstance(session.plan, list) or any(
+            not isinstance(skill, dict) for skill in session.plan
+        ):
+            raise ValueError("controller plan must return a list of skill objects")
+        session.executor = SkillExecutor(
+            session.scene, session.data, session.plan, session.scene.speed_scale
+        )
+        session.allowed_pairs, session.forbidden_pairs = _contact_pairs(session.scene)
+        session.frames = [_frame(session.scene, session.data, session.executor)]
+        session.counters: dict[tuple[int, int], int] = {}
+        session.failure: tuple[str, float, str] | None = None
+        session.settled_since: float | None = None
+        session.idle_since: float | None = None
+        session.plan_finished_since: float | None = None
+        session.completed = False
+        session.completion_time: float | None = None
+        session.max_time = min(float(timeout_sec), 30.0)
+        session.sample_steps = round(0.1 / session.scene.model.opt.timestep)
+        session.control_steps = round(CONTROL_PERIOD / session.scene.model.opt.timestep)
+        session.step_count = 0
+        session.pre_step_state = np.zeros(
+            mujoco.mj_stateSize(
+                session.scene.model, mujoco.mjtState.mjSTATE_INTEGRATION
+            ),
+            dtype=np.float64,
+        )
+        session.finished = False
+        session.restored_from: dict[str, Any] | None = None
+        return session
+
+    def step(self) -> bool:
+        if self.finished:
+            return False
+        if not self.data.time < self.max_time:
+            self.failure = (
+                "timeout",
+                float(self.data.time),
+                f"simulation exceeded {self.max_time:.3f} seconds",
+            )
+            self.finished = True
+            return False
+
+        if self.step_count % self.control_steps == 0:
+            try:
+                self.executor.tick(float(self.data.time))
+                self.executor.maybe_attach(float(self.data.time))
+            except Exception as exc:  # noqa: BLE001
+                self.executor.error = (
+                    "invalid_run",
+                    f"controller execution failed: {type(exc).__name__}: {exc}",
+                )
+            if self.executor.error:
+                self.failure = (
+                    self.executor.error[0],
+                    float(self.data.time),
+                    self.executor.error[1],
+                )
+                self.finished = True
+                return False
+        mujoco.mj_getState(
+            self.scene.model,
+            self.data,
+            self.pre_step_state,
+            mujoco.mjtState.mjSTATE_INTEGRATION,
+        )
+        try:
+            mujoco.mj_step(self.scene.model, self.data)
+        except Exception as exc:  # noqa: BLE001
+            self.failure = (
+                "engine_error",
+                float(self.data.time),
+                f"mj_step raised {type(exc).__name__}: {exc}",
+            )
+            self.finished = True
+            return False
+        self.step_count += 1
+        warning = _engine_warning(self.scene.model, self.data)
+        if warning:
+            self.failure = ("engine_error", float(self.data.time), warning)
+            self.finished = True
+            return False
+        limit = _joint_limit(self.scene, self.data)
+        if limit:
+            self.failure = ("joint_limit", float(self.data.time), limit)
+            self.finished = True
+            return False
+
+        current_depths: dict[tuple[int, int], float] = {}
+        for contact in self.data.contact[: self.data.ncon]:
+            a, b = int(contact.geom1), int(contact.geom2)
+            pair = tuple(sorted((a, b)))
+            if pair in self.forbidden_pairs and -float(contact.dist) > 0.001:
+                current_depths[pair] = max(
+                    current_depths.get(pair, 0.0), -float(contact.dist)
+                )
+        for pair in list(self.counters):
+            if pair not in current_depths:
+                self.counters[pair] = 0
+        for pair, depth in current_depths.items():
+            self.counters[pair] = self.counters.get(pair, 0) + 1
+            if self.counters[pair] >= 5:
+                self.failure = (
+                    "forbidden_contact",
+                    float(self.data.time),
+                    (
+                        f"{_geom_name(self.scene.model, pair[0])} vs "
+                        f"{_geom_name(self.scene.model, pair[1])}; depthM={depth:.6f}"
+                    ),
+                )
+                break
+        if self.failure:
+            self.finished = True
+            return False
+
+        cube_position = self.data.xpos[self.scene.cube_body_id]
+        target = np.asarray(self.scene.config["target"], dtype=float)
+        cube_joint = mujoco.mj_name2id(
+            self.scene.model, mujoco.mjtObj.mjOBJ_JOINT, "cube_free"
+        )
+        cube_dof = int(self.scene.model.jnt_dofadr[cube_joint])
+        cube_speed = float(np.linalg.norm(self.data.qvel[cube_dof : cube_dof + 3]))
+        settled = (
+            not self.executor.attached
+            and float(np.linalg.norm(cube_position - target)) <= 0.03
+            and cube_speed < 0.01
+            and abs(float(cube_position[2]) - 0.02) <= 0.005
+        )
+        if settled:
+            if self.settled_since is None:
+                self.settled_since = float(self.data.time)
+            elif self.data.time - self.settled_since >= 0.5:
+                if self.step_count % self.sample_steps == 0:
+                    self.frames.append(_frame(self.scene, self.data, self.executor))
+                self.completed = True
+                self.completion_time = float(self.data.time)
+                self.finished = True
+                return False
+        else:
+            self.settled_since = None
+
+        if self.executor.current_skill is None:
+            if self.plan_finished_since is None:
+                self.plan_finished_since = float(self.data.time)
+            elif self.data.time - self.plan_finished_since >= 2.0:
+                self.failure = (
+                    "stalled",
+                    float(self.data.time),
+                    "plan finished without satisfying completion criteria",
+                )
+                self.finished = True
+                return False
+        else:
+            self.plan_finished_since = None
+
+        quiet = float(np.linalg.norm(self.data.qvel)) < 1e-3 and cube_speed < 1e-3
+        if quiet:
+            if self.idle_since is None:
+                self.idle_since = float(self.data.time)
+            elif (
+                self.executor.current_skill is not None
+                and self.data.time - self.idle_since >= 3.0
+            ):
+                self.failure = (
+                    "stalled",
+                    float(self.data.time),
+                    "controller and cube remained motionless with plan unfinished",
+                )
+                self.finished = True
+                return False
+        else:
+            self.idle_since = None
+        if self.step_count % self.sample_steps == 0:
+            self.frames.append(_frame(self.scene, self.data, self.executor))
+        return True
+
+    def run_to_end(self) -> None:
+        while self.step():
+            pass
+
+    def finish(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        if not self.finished:
+            self.run_to_end()
+        if (
+            not self.frames
+            or self.step_count % self.sample_steps != 0
+            or self.frames[-1]["tSec"] != float(self.data.time)
+        ):
+            self.frames.append(_frame(self.scene, self.data, self.executor))
+        result = _result(
+            self.experiment_id,
+            self.frames,
+            self.asset_hash,
+            self.controller_hash,
+            completed=self.completed,
+            completion_time=self.completion_time,
+            failure=self.failure,
+        )
+        trace = {
+            "case": self.case.model_dump(by_alias=True),
+            "sceneConfig": self.scene.config,
+            "geomIds": {name: geom_id for name, geom_id in self.scene.geom_ids.items()},
+            "allowedPairs": _pair_names(self.scene, self.allowed_pairs),
+            "forbiddenPairs": _pair_names(self.scene, self.forbidden_pairs),
+            "mujocoVersion": mujoco.__version__,
+            "assetsSha256": self.asset_hash,
+            "controllerSha256": self.controller_hash,
+            "graspModel": "idealized_grasp",
+            "frames": self.frames,
+            "attachmentEvents": self.executor.attachment_events,
+            "finalState": {
+                "controllerState": self.executor.state(),
+                "simTimeSec": float(self.data.time),
+                "qpos": self.data.qpos.copy().tolist(),
+                "qvel": self.data.qvel.copy().tolist(),
+                "ctrl": self.data.ctrl.copy().tolist(),
+                "completed": self.completed,
+                "failure": result.get("firstFailure"),
+            },
+            "wallTimeSec": time.perf_counter() - self.start_wall,
+        }
+        if self.restored_from is not None:
+            trace["restoredFrom"] = self.restored_from
+        return result, trace
+
+
 def run_case(
     controller_dir: Path,
     case: SimCase,
@@ -234,159 +498,27 @@ def run_case(
     experiment_id: UUID,
     timeout_sec: float = 30,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    start_wall = time.perf_counter()
-    asset_hash = verify_assets()
-    controller, controller_hash = _load_controller(controller_dir)
-    scene = build_scene(case)
-    data = mujoco.MjData(scene.model)
-    _set_initial_state(scene, data, seed)
-    controller_input = _controller_scene(scene, data)
-    plan = controller.plan(controller_input)
-    if not isinstance(plan, list) or any(not isinstance(skill, dict) for skill in plan):
-        raise ValueError("controller plan must return a list of skill objects")
-    executor = SkillExecutor(scene, data, plan, scene.speed_scale)
-    allowed_pairs, forbidden_pairs = _contact_pairs(scene)
-    frames: list[dict[str, Any]] = [_frame(scene, data, executor)]
-    counters: dict[tuple[int, int], int] = {}
-    failure: tuple[str, float, str] | None = None
-    settled_since: float | None = None
-    idle_since: float | None = None
-    plan_finished_since: float | None = None
-    max_time = min(float(timeout_sec), 30.0)
-    sample_steps = round(0.1 / scene.model.opt.timestep)
-    control_steps = round(CONTROL_PERIOD / scene.model.opt.timestep)
-    step_count = 0
-
-    while data.time < max_time:
-        if step_count % control_steps == 0:
-            try:
-                executor.tick(float(data.time))
-                executor.maybe_attach(float(data.time))
-            except Exception as exc:  # noqa: BLE001
-                executor.error = ("invalid_run", f"controller execution failed: {type(exc).__name__}: {exc}")
-            if executor.error:
-                failure = (executor.error[0], float(data.time), executor.error[1])
-                break
-        try:
-            mujoco.mj_step(scene.model, data)
-        except Exception as exc:  # noqa: BLE001
-            failure = ("engine_error", float(data.time), f"mj_step raised {type(exc).__name__}: {exc}")
-            break
-        step_count += 1
-        warning = _engine_warning(scene.model, data)
-        if warning:
-            failure = ("engine_error", float(data.time), warning)
-            break
-        limit = _joint_limit(scene, data)
-        if limit:
-            failure = ("joint_limit", float(data.time), limit)
-            break
-
-        current_depths: dict[tuple[int, int], float] = {}
-        for contact in data.contact[: data.ncon]:
-            a, b = int(contact.geom1), int(contact.geom2)
-            pair = tuple(sorted((a, b)))
-            if pair in forbidden_pairs and -float(contact.dist) > 0.001:
-                current_depths[pair] = max(current_depths.get(pair, 0.0), -float(contact.dist))
-        for pair in list(counters):
-            if pair not in current_depths:
-                counters[pair] = 0
-        for pair, depth in current_depths.items():
-            counters[pair] = counters.get(pair, 0) + 1
-            if counters[pair] >= 5:
-                failure = (
-                    "forbidden_contact",
-                    float(data.time),
-                    f"{_geom_name(scene.model, pair[0])} vs {_geom_name(scene.model, pair[1])}; depthM={depth:.6f}",
-                )
-                break
-        if failure:
-            break
-
-        cube_position = data.xpos[scene.cube_body_id]
-        target = np.asarray(scene.config["target"], dtype=float)
-        cube_joint = mujoco.mj_name2id(scene.model, mujoco.mjtObj.mjOBJ_JOINT, "cube_free")
-        cube_dof = int(scene.model.jnt_dofadr[cube_joint])
-        cube_speed = float(np.linalg.norm(data.qvel[cube_dof : cube_dof + 3]))
-        settled = (
-            not executor.attached
-            and float(np.linalg.norm(cube_position - target)) <= 0.03
-            and cube_speed < 0.01
-            and abs(float(cube_position[2]) - 0.02) <= 0.005
-        )
-        if settled:
-            if settled_since is None:
-                settled_since = float(data.time)
-            elif data.time - settled_since >= 0.5:
-                if step_count % sample_steps == 0:
-                    frames.append(_frame(scene, data, executor))
-                completed = True
-                completion_time = float(data.time)
-                break
-        else:
-            settled_since = None
-
-        if executor.current_skill is None:
-            if plan_finished_since is None:
-                plan_finished_since = float(data.time)
-            elif data.time - plan_finished_since >= 2.0:
-                failure = ("stalled", float(data.time), "plan finished without satisfying completion criteria")
-                break
-        else:
-            plan_finished_since = None
-
-        quiet = float(np.linalg.norm(data.qvel)) < 1e-3 and cube_speed < 1e-3
-        if quiet:
-            if idle_since is None:
-                idle_since = float(data.time)
-            elif executor.current_skill is not None and data.time - idle_since >= 3.0:
-                failure = ("stalled", float(data.time), "controller and cube remained motionless with plan unfinished")
-                break
-        else:
-            idle_since = None
-        if step_count % sample_steps == 0:
-            frames.append(_frame(scene, data, executor))
-    else:
-        failure = ("timeout", float(data.time), f"simulation exceeded {max_time:.3f} seconds")
-
-    if step_count % sample_steps != 0 or (frames and frames[-1]["tSec"] != float(data.time)):
-        frames.append(_frame(scene, data, executor))
-    if "completed" not in locals():
-        completed = False
-        completion_time = None
-    result = _result(
-        experiment_id,
-        frames,
-        asset_hash,
-        controller_hash,
-        completed=completed,
-        completion_time=completion_time,
-        failure=failure,
+    return _run_case_with_config(
+        controller_dir, case, seed, experiment_id, timeout_sec
     )
-    geom_id_map = {
-        name: geom_id for name, geom_id in scene.geom_ids.items()
-    }
-    trace = {
-        "case": case.model_dump(by_alias=True),
-        "sceneConfig": scene.config,
-        "geomIds": geom_id_map,
-        "allowedPairs": _pair_names(scene, allowed_pairs),
-        "forbiddenPairs": _pair_names(scene, forbidden_pairs),
-        "mujocoVersion": mujoco.__version__,
-        "assetsSha256": asset_hash,
-        "controllerSha256": controller_hash,
-        "graspModel": "idealized_grasp",
-        "frames": frames,
-        "attachmentEvents": executor.attachment_events,
-        "finalState": {
-            "controllerState": executor.state(),
-            "simTimeSec": float(data.time),
-            "qpos": data.qpos.copy().tolist(),
-            "qvel": data.qvel.copy().tolist(),
-            "ctrl": data.ctrl.copy().tolist(),
-            "completed": completed,
-            "failure": result.get("firstFailure"),
-        },
-        "wallTimeSec": time.perf_counter() - start_wall,
-    }
-    return result, trace
+
+
+def _run_case_with_config(
+    controller_dir: Path,
+    case: SimCase,
+    seed: int,
+    experiment_id: UUID,
+    timeout_sec: float = 30,
+    *,
+    base_config: dict[str, object] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    session = RunSession.start(
+        controller_dir,
+        case,
+        seed,
+        experiment_id,
+        timeout_sec,
+        base_config=base_config,
+    )
+    session.run_to_end()
+    return session.finish()

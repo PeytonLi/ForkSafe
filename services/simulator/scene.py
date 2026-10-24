@@ -39,11 +39,17 @@ class BuiltScene:
     home_key_id: int
 
 
-def _scene_values(case: SimCase) -> tuple[dict[str, object], float]:
+def _scene_values(
+    case: SimCase, base_config: dict[str, object] | None = None
+) -> tuple[dict[str, object], float]:
     unknown = set(case.scene_overrides) - OVERRIDE_KEYS
     if unknown:
         raise ValueError(f"unknown scene override(s): {', '.join(sorted(unknown))}")
-    values = json.loads(SCENE_CONFIG_PATH.read_text())
+    values = (
+        json.loads(SCENE_CONFIG_PATH.read_text())
+        if base_config is None
+        else json.loads(json.dumps(base_config))
+    )
     cube = np.asarray(values["cubeStart"], dtype=float)
     target = np.asarray(values["target"], dtype=float)
     divider = np.asarray(values["dividerCenter"], dtype=float)
@@ -75,8 +81,10 @@ def _scene_values(case: SimCase) -> tuple[dict[str, object], float]:
     return values, float(speed_scale)
 
 
-def build_scene(case: SimCase) -> BuiltScene:
-    values, speed_scale = _scene_values(case)
+def build_scene(
+    case: SimCase, *, base_config: dict[str, object] | None = None
+) -> BuiltScene:
+    values, speed_scale = _scene_values(case, base_config)
     spec = mujoco.MjSpec.from_file(str(ASSET_DIR / "panda.xml"))
     spec.option.timestep = 0.002
 
