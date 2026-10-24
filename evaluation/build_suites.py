@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -130,11 +132,27 @@ def _accepted_case(
     raise RuntimeError(f"could not sample a reachable case: {candidate['caseId']}")
 
 
-def build() -> dict[str, list[dict[str, object]]]:
+def build(
+    withheld_out: Path | None = None,
+    withheld_seed: int | None = None,
+) -> dict[str, list[dict[str, object]]]:
+    if withheld_out is None and withheld_seed is not None:
+        raise ValueError("--withheld-seed requires --withheld-out")
+    if withheld_seed is not None and not 0 <= withheld_seed < 2**64:
+        raise ValueError("withheld seed must be an unsigned 64-bit integer")
+    if withheld_out is not None and withheld_out.resolve().is_relative_to(ROOT.resolve()):
+        raise ValueError("--withheld-out must be outside the repository")
+
+    if withheld_out is None:
+        actual_withheld_seed = 8182731
+    elif withheld_seed is None:
+        actual_withheld_seed = secrets.randbits(63)
+    else:
+        actual_withheld_seed = withheld_seed
     public_report: list[dict[str, object]] = []
     withheld_report: list[dict[str, object]] = []
     public_rng = np.random.default_rng(20260415)
-    withheld_rng = np.random.default_rng(8182731)
+    withheld_rng = np.random.default_rng(actual_withheld_seed)
     original = {
         "caseId": "original-divider-collision",
         "suite": "original",
@@ -161,27 +179,43 @@ def build() -> dict[str, list[dict[str, object]]]:
         candidate = _sample_case(withheld_rng, "withheld", f"withheld-{index:02d}")
         withheld_cases.append(_accepted_case(candidate, withheld_report))
 
-    public_manifest = {
-        "version": "1",
-        "generatorSeed": 20260415,
-        "domain": DOMAIN,
-        "cases": public_cases,
-    }
     withheld_manifest = {
         "version": "1",
-        "generatorSeed": 8182731,
+        "generatorSeed": actual_withheld_seed,
         "domain": DOMAIN,
         "cases": withheld_cases,
     }
-    PUBLIC_PATH.write_text(json.dumps(public_manifest, indent=2) + "\n")
-    WITHHELD_PATH.write_text(json.dumps(withheld_manifest, indent=2) + "\n")
-    lock = {
-        "public": _sha256(PUBLIC_PATH),
-        "withheld": _sha256(WITHHELD_PATH),
-    }
-    LOCK_PATH.write_text(json.dumps(lock, indent=2) + "\n")
+    withheld_path = withheld_out or WITHHELD_PATH
+    withheld_path.parent.mkdir(parents=True, exist_ok=True)
+    withheld_path.write_text(json.dumps(withheld_manifest, indent=2) + "\n")
+    if withheld_out is None:
+        public_manifest = {
+            "version": "1",
+            "generatorSeed": 20260415,
+            "domain": DOMAIN,
+            "cases": public_cases,
+        }
+        PUBLIC_PATH.write_text(json.dumps(public_manifest, indent=2) + "\n")
+        lock = {
+            "public": _sha256(PUBLIC_PATH),
+            "withheld": _sha256(withheld_path),
+        }
+        LOCK_PATH.write_text(json.dumps(lock, indent=2) + "\n")
     return {"public": public_report, "withheld": withheld_report}
 
 
 if __name__ == "__main__":
-    print(json.dumps(build(), indent=2))
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--withheld-out", type=Path)
+    parser.add_argument("--withheld-seed", type=int)
+    arguments = parser.parse_args()
+    if arguments.withheld_seed is not None and arguments.withheld_out is None:
+        parser.error("--withheld-seed requires --withheld-out")
+    report = build(arguments.withheld_out, arguments.withheld_seed)
+    output = {"report": report}
+    if arguments.withheld_out is not None:
+        output["manifestSha256"] = {
+            "public": _sha256(PUBLIC_PATH),
+            "withheld": _sha256(arguments.withheld_out),
+        }
+    print(json.dumps(output if arguments.withheld_out is not None else report, indent=2))
