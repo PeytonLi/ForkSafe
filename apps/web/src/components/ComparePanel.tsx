@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import type { CandidateEvaluation, ControllerCandidate, ReviewDecision, SimRunResult } from "@forksafe/contracts";
 import { fmtTime, shortId, shortSha, useClient, useLoad } from "../hooks";
 import { FIXTURE_REVIEWER, errorCode, type InvestigationWorkspace } from "../services";
@@ -9,6 +9,13 @@ import { useReplayClock } from "../viewer/useReplayClock";
 import { Badge, Panel } from "./Panel";
 import { human, stateTone } from "./tone";
 import styles from "./ComparePanel.module.css";
+
+const DETAIL_TABS = [
+  ["replay", "Replay"],
+  ["results", "Results"],
+  ["change", "Change"],
+  ["review", "Review"],
+] as const;
 
 export function ComparePanel({ workspace: w }: { workspace: InvestigationWorkspace }) {
   const [selected, setSelected] = useState<string | undefined>(w.candidates[0]?.id);
@@ -53,51 +60,94 @@ function CandidateDetail({ w, cand }: { w: InvestigationWorkspace; cand: Control
   );
   const diff = useLoad((c) => c.getCandidateDiff(cand.id), [cand.id]);
   const evals = w.evaluations.filter((e) => e.candidateId === cand.id);
+  const [active, setActive] = useState<(typeof DETAIL_TABS)[number][0]>("replay");
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  useEffect(() => {
+    const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+    tabRefs.current[DETAIL_TABS.findIndex(([key]) => key === active)]?.scrollIntoView({ behavior, block: "nearest", inline: "start" });
+  }, [active]);
+  const onTabKey = (e: KeyboardEvent, i: number) => {
+    const next = e.key === "ArrowRight" ? i + 1 : e.key === "ArrowLeft" ? i - 1 : e.key === "Home" ? 0 : e.key === "End" ? DETAIL_TABS.length - 1 : null;
+    if (next === null) return;
+    e.preventDefault();
+    const index = (next + DETAIL_TABS.length) % DETAIL_TABS.length;
+    tabRefs.current[index]?.focus();
+    setActive(DETAIL_TABS[index]![0]);
+  };
   return (
-    <>
-      <Panel title="Synchronized replay" headingLevel={3} state={replays} testId="comparison-replay">
-        {(r) => <SyncedReplays original={r.original} candidate={r.candidate} scene={inv.baselineCase.sceneOverrides} />}
-      </Panel>
-      <div className={styles.cols}>
-        <section className={styles.card} aria-labelledby="cand-h">
-          <h3 id="cand-h">Candidate</h3>
-          <dl className={styles.dl}>
-            <dt>Controller</dt>
-            <dd><code data-testid="candidate-sha">{cand.controllerSha256}</code></dd>
-            <dt>Original</dt>
-            <dd><code>{baseline?.controllerSha256 ?? "—"}</code></dd>
-            <dt>Status</dt>
-            <dd><Badge tone={stateTone(cand.status)}>{human(cand.status)}</Badge></dd>
-            <dt>Changed functions</dt>
-            <dd data-testid="changed-functions">{cand.changedFunctions.map((f) => <code key={f} className={styles.fn}>{f}</code>)}</dd>
-            <dt>Submitted</dt>
-            <dd>{fmtTime(cand.submittedAtMs)}</dd>
-          </dl>
-          {cand.rationale && <p className={styles.muted}>{cand.rationale}</p>}
-          <details className={styles.diff}>
-            <summary>Exact diff</summary>
-            {diff.status === "error" ? (
-              <p role="alert" className={styles.err}>Diff unavailable: {(diff.error as Error).message}</p>
-            ) : diff.data === undefined ? (
-              <p role="status" className={styles.muted}>Loading diff…</p>
-            ) : (
-              <pre data-testid="candidate-diff">
-                {diff.data.split("\n").map((l, i) => (
-                  <span key={i} className={l.startsWith("+") && !l.startsWith("+++") ? styles.add : l.startsWith("-") && !l.startsWith("---") ? styles.del : undefined}>
-                    {l + "\n"}
-                  </span>
-                ))}
-              </pre>
-            )}
-          </details>
-        </section>
-        <section className={styles.card} aria-labelledby="cases-h">
-          <h3 id="cases-h">Per-case results</h3>
-          {evals.length === 0 ? <p className={styles.muted}>Not evaluated yet.</p> : evals.map((e) => <CaseTable key={e.id} ev={e} />)}
-        </section>
+    <div className={styles.detail}>
+      <div role="tablist" aria-label="Candidate details" className={styles.subTabs} data-testid="compare-subtabs">
+        {DETAIL_TABS.map(([key, label], i) => (
+          <button
+            key={key}
+            type="button"
+            role="tab"
+            id={`compare-tab-${key}`}
+            aria-selected={active === key}
+            aria-controls={`compare-panel-${key}`}
+            tabIndex={active === key ? 0 : -1}
+            ref={(el) => { tabRefs.current[i] = el; }}
+            className={active === key ? styles.subTabActive : styles.subTab}
+            onClick={() => setActive(key)}
+            onKeyDown={(e) => onTabKey(e, i)}
+          >
+            {label}
+          </button>
+        ))}
       </div>
-      <ReviewForm w={w} cand={cand} evals={evals} />
-    </>
+      <div role="tabpanel" id={`compare-panel-${active}`} aria-labelledby={`compare-tab-${active}`} className={styles.subTabPanel} data-testid={`compare-panel-content-${active}`}>
+        {active === "replay" && (
+          <Panel title="Synchronized replay" headingLevel={3} state={replays} testId="comparison-replay">
+            {(r) => <SyncedReplays original={r.original} candidate={r.candidate} scene={inv.baselineCase.sceneOverrides} />}
+          </Panel>
+        )}
+        {active === "results" && (
+          <section className={styles.card} aria-labelledby="cases-h">
+            <h3 id="cases-h">Evaluation results</h3>
+            {evals.length === 0 ? <p className={styles.muted}>Not evaluated yet.</p> : (
+              <div className={styles.resultsGrid}>
+                {evals.map((e) => <CaseTable key={e.id} ev={e} />)}
+              </div>
+            )}
+          </section>
+        )}
+        {active === "change" && (
+          <section className={styles.card} aria-labelledby="cand-h">
+            <h3 id="cand-h">What changed</h3>
+            <dl className={styles.dl}>
+              <dt>Candidate</dt>
+              <dd><code data-testid="candidate-sha">{cand.controllerSha256}</code></dd>
+              <dt>Original</dt>
+              <dd><code>{baseline?.controllerSha256 ?? "—"}</code></dd>
+              <dt>Status</dt>
+              <dd><Badge tone={stateTone(cand.status)}>{human(cand.status)}</Badge></dd>
+              <dt>Changed functions</dt>
+              <dd data-testid="changed-functions">{cand.changedFunctions.map((f) => <code key={f} className={styles.fn}>{f}</code>)}</dd>
+              <dt>Submitted</dt>
+              <dd>{fmtTime(cand.submittedAtMs)}</dd>
+            </dl>
+            {cand.rationale && <p className={styles.muted}>{cand.rationale}</p>}
+            <details className={styles.diff}>
+              <summary>Exact diff</summary>
+              {diff.status === "error" ? (
+                <p role="alert" className={styles.err}>Diff unavailable: {(diff.error as Error).message}</p>
+              ) : diff.data === undefined ? (
+                <p role="status" className={styles.muted}>Loading diff…</p>
+              ) : (
+                <pre data-testid="candidate-diff">
+                  {diff.data.split("\n").map((line, i) => (
+                    <span key={i} className={line.startsWith("+") && !line.startsWith("+++") ? styles.add : line.startsWith("-") && !line.startsWith("---") ? styles.del : undefined}>
+                      {line + "\n"}
+                    </span>
+                  ))}
+                </pre>
+              )}
+            </details>
+          </section>
+        )}
+        {active === "review" && <ReviewForm w={w} cand={cand} evals={evals} />}
+      </div>
+    </div>
   );
 }
 
@@ -237,7 +287,8 @@ function ReviewForm({ w, cand, evals }: { w: InvestigationWorkspace; cand: Contr
             Notes (optional)
             <textarea value={notes} maxLength={4000} rows={2} onChange={(e) => setNotes(e.target.value)} />
           </label>
-          <button type="submit" className="primary" disabled={!decision || busy} data-testid="submit-review">
+          {!decision && <p className={styles.reviewHelper} id="review-help">Choose a decision to enable your review.</p>}
+          <button type="submit" className={`primary ${styles.reviewSubmit}`} disabled={!decision || busy} aria-describedby={!decision ? "review-help" : undefined} data-testid="submit-review">
             {busy ? "Recording…" : "Record review"}
           </button>
           {err && <p role="alert" className={styles.err}>{err}</p>}
