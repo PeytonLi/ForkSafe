@@ -17,7 +17,7 @@ export function AskPanel({ workspace: w }: { workspace: InvestigationWorkspace }
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const hintId = useId();
   const envIndex = new Map(w.environments.map((e) => [e.id, e.index + 1]));
-  const signedOut = client.source.kind !== "fixture" && !access.authenticated;
+  const signedOut = client.source.kind !== "fixture" && !access.canWrite;
 
   const ask = async (text: string) => {
     if (signedOut) { access.showSignIn(); return; }

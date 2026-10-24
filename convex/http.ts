@@ -144,13 +144,14 @@ router.route({
   handler: httpAction(async (ctx) => json(await ctx.runAction(internal.readiness.get, {}))),
 });
 
+// OAuth callbacks live under /api/auth/*. Register them before the /api/ catch-all.
+auth.addHttpRoutes(router);
+
 router.route({
   pathPrefix: "/api/",
   method: "GET",
   handler: httpAction(async () => json({ error: "not_found" }, 404)),
 });
-
-auth.addHttpRoutes(router);
 
 registerStaticRoutes(router, components.staticHosting);
 
