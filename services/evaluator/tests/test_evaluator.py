@@ -192,7 +192,7 @@ def test_withheld_case_spans_use_indexes_and_traceparent(monkeypatch, tmp_path):
         source_path=source_path,
     )
 
-    def fake_run_case(_state, _candidate, payload):
+    def fake_run_case(_state, _candidate, payload, _suite):
         return {
             "caseId": payload["caseId"],
             "status": "passed",

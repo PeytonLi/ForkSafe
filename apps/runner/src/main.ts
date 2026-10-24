@@ -13,7 +13,7 @@ import {
 import { EnvConfig } from "@forksafe/contracts";
 import { initTelemetry } from "@forksafe/telemetry";
 import { RunnerExecutor } from "./executor.js";
-import { FileJobSource, HttpJobSource } from "./job-source.js";
+import { FileJobSource, HttpJobSource, isSearchCompleteRevocation } from "./job-source.js";
 import { HttpToolBackend, LocalToolBackend } from "./tool-backend.js";
 import type { Lease } from "./protocol.js";
 import { RunnerTelemetry } from "./telemetry.js";
@@ -152,6 +152,10 @@ export async function main(): Promise<void> {
         claimSpan.span.setAttribute("error.type", error instanceof Error ? error.name : "Error");
         claimSpan.end();
         jobSpan.end();
+        if (isSearchCompleteRevocation(error)) {
+          process.stdout.write(`${JSON.stringify({ event: "runner.shutdown", reason: "search_complete" })}\n`);
+          break;
+        }
         throw error;
       }
       if (!lease) {

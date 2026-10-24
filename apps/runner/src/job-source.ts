@@ -28,6 +28,26 @@ export interface JobSource {
   complete(completion: z.infer<typeof CompletionRequest>): Promise<z.infer<typeof CompletionResponse>>;
 }
 
+export class RunnerHttpError extends Error {
+  constructor(
+    readonly endpoint: string,
+    readonly status: number,
+    readonly body: unknown,
+  ) {
+    super(`Runner ${endpoint} failed: HTTP ${status}`);
+    this.name = "RunnerHttpError";
+  }
+}
+
+export function isSearchCompleteRevocation(error: unknown): boolean {
+  if (!(error instanceof RunnerHttpError) || error.status !== 401) return false;
+  if (!error.body || typeof error.body !== "object" || Array.isArray(error.body)) return false;
+  const body = error.body as Record<string, unknown>;
+  return [body.error, body.reason, body.code].some(
+    (value) => typeof value === "string" && /revoked|search[_ -]?complete/i.test(value),
+  );
+}
+
 export class HttpJobSource implements JobSource {
   constructor(
     private readonly baseUrl: string,
@@ -75,7 +95,15 @@ export class HttpJobSource implements JobSource {
       },
       body: rawBody,
     });
-    if (!response.ok) throw new Error(`Runner ${endpoint} failed: HTTP ${response.status}`);
+    if (!response.ok) {
+      let errorBody: unknown;
+      try {
+        errorBody = await response.json();
+      } catch {
+        errorBody = undefined;
+      }
+      throw new RunnerHttpError(endpoint, response.status, errorBody);
+    }
     return schema.parse(await response.json());
   }
 }
