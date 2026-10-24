@@ -60,3 +60,25 @@ The caller implements authorization for its authenticated principal. `record` mu
 ## Verification
 
 `pnpm --filter @forksafe/elastic typecheck` and `pnpm --filter @forksafe/elastic test` are hermetic; no cluster or Kibana is required.
+
+## Live verification
+
+Provide `ELASTICSEARCH_URL`, `ELASTICSEARCH_API_KEY`, `KIBANA_URL`, and `KIBANA_API_KEY` through a secret manager or injected environment, never checked-in files. A Serverless key authorized for both services can be bound separately to both key names. The smoke requires index/write/search/refresh/delete-by-query privileges on the three ForkSafe indices and access to Agent Builder converse. It does not create or modify Kibana agents or tools.
+
+```sh
+pnpm install
+export ELASTIC_MODE=cloud ELASTIC_AGENT_BUILDER_MODE=cloud
+pnpm --filter @forksafe/elastic bootstrap
+pnpm --filter @forksafe/elastic bootstrap # idempotency check
+pnpm --filter @forksafe/elastic smoke
+# Optional: retain the synthetic records for inspection
+pnpm --filter @forksafe/elastic smoke --keep
+pnpm typecheck
+pnpm --filter @forksafe/elastic test
+```
+
+`smoke` uses the lightweight `tsx` development runner to resolve the contracts package's source `.js` imports to TypeScript. It creates a fresh UUID investigation, a synthetic Finding with two evidence items, and an ExperimentResult. It indexes twice, refreshes, compares actual stored document bodies, searches all records within the investigation, and verifies the in-memory canonical resolver drops one revoked evidence item. It then asks `elastic-ai-agent` a read-only question with index and investigation hints. JSON output contains readiness, indexing results, hit IDs, dropped reasons, a validated answer excerpt, citation counts, conversation ID and response-shape metadata, never credentials or raw transport errors. An unavailable converse produces a nonzero CLI exit even if indexing succeeded.
+
+Cleanup runs in `finally`: delete-by-query is restricted to the fresh investigation ID across the three ForkSafe indices, with refresh enabled. `--keep` explicitly skips cleanup; use the printed investigation ID to remove retained smoke documents later. Do not run a broad delete against shared indices. The Agent Builder conversation is retained in Kibana; cleanup deletes indexed smoke documents only.
+
+Live Serverless verification succeeded with all four documents created then updated with identical bodies, three authorized hits, and one revoked hit dropped. Both bootstrap calls succeeded without Serverless mapping/settings changes. The real converse response was HTTP 200 with `conversation_id`, `steps` and `response.message` (a string), matching the existing parser. The default agent did not supply resolvable structured citations: the integration honestly returned **No fully validated answer available. Inspect authorized citations directly.**, with zero authorized citations. A successful converse is not proof of a grounded or canonically authorized answer.
