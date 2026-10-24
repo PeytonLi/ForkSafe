@@ -234,6 +234,31 @@ async function run() {
     call("register_bridge", { secret });
   });
 
+  await step("rotate_bridge_identity revokes every other convex identity atomically", async () => {
+    const fresh = async () => (await fetch(`${httpUri}/v1/identity`, { method: "POST" })).json();
+    const http = (token, reducer, body) => fetch(`${httpUri}/v1/database/${dbName}/call/${reducer}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const probe = async (token) => {
+      const response = await http(token, "install_grant", grantInput(uuid(), uuid(), uuid(), 1, primaryExpiry));
+      return { status: response.status, text: await response.text() };
+    };
+    const stale = await fresh();
+    const rotator = await fresh();
+    assert((await http(stale.token, "register_bridge", { secret })).status === 200, "stale identity could not register");
+    const wrong = await http(rotator.token, "rotate_bridge_identity", { secret: `${secret}wrong` });
+    assert(wrong.status !== 200 && (await wrong.text()).includes("bridge_secret_mismatch"), "rotation accepted a wrong secret");
+    assert((await http(rotator.token, "rotate_bridge_identity", { secret })).status === 200, "rotation failed");
+    const staleProbe = await probe(stale.token);
+    assert(staleProbe.status !== 200 && staleProbe.text.includes("bridge_required"), "stale identity kept bridge authority");
+    expectError("install_grant", grantInput(uuid(), uuid(), uuid(), 1, primaryExpiry), "bridge_required");
+    call("rotate_bridge_identity", { secret });
+    const rotatorProbe = await probe(rotator.token);
+    assert(rotatorProbe.status !== 200 && rotatorProbe.text.includes("bridge_required"), "previous rotator kept bridge authority");
+  });
+
   await step("install scoped grant and record source artifact", () => {
     primaryGrant = uuid();
     call("install_grant", grantInput(primaryGrant, jobId, attemptId, 1, primaryExpiry));
@@ -309,6 +334,13 @@ async function run() {
       { ...candidate, controllerSha256: sha("b") },
       "immutable_candidate",
     );
+  });
+
+  await step("record_finding_use rejects same-environment and invalid targets", () => {
+    const use = { grant: grantRef(), id: uuid(), findingId, experimentId: { none: [] }, candidateId: some(candidateId) };
+    expectError("record_finding_use", use, "finding_use_same_environment");
+    expectError("record_finding_use", { ...use, experimentId: some(uuid()) }, "finding_use_target_invalid");
+    expectError("record_finding_use", { ...use, findingId: uuid() }, "finding_missing");
   });
 
   await step("reject superseded, revoked, and expired grants atomically", async () => {
