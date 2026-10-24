@@ -4,6 +4,9 @@ import panelFixture from "./fixtures/panel.json" with { type: "json" };
 import reviewContextFixture from "./fixtures/review-context.json" with { type: "json" };
 import {
   FORGE_BACKEND_PATHS,
+  FORGE_FEATURE_PATHS,
+  MoreInvestigationRequest,
+  MoreInvestigationResponse,
   PanelData,
   PanelRequest,
   RecordReviewRequest,
@@ -13,6 +16,8 @@ import {
   StartInvestigationRequest,
   StartInvestigationResponse,
   type PanelData as PanelDataType,
+  type MoreInvestigationRequest as MoreInvestigationRequestType,
+  type MoreInvestigationResponse as MoreInvestigationResponseType,
   type PanelRequest as PanelRequestType,
   type RecordReviewRequest as RecordReviewRequestType,
   type RecordReviewResponse as RecordReviewResponseType,
@@ -24,6 +29,23 @@ import { z } from "zod";
 
 type ReviewContextValue = z.infer<typeof ReviewContext>;
 
+export class BackendHttpError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code?: string,
+  ) {
+    super("ForkSafe backend request failed.");
+    this.name = "BackendHttpError";
+  }
+}
+
+export class FeatureUnavailableError extends Error {
+  constructor() {
+    super("Asking for more investigation is unavailable.");
+    this.name = "FeatureUnavailableError";
+  }
+}
+
 export interface ForkSafeBackend {
   mode: IntegrationMode;
   getPanel(req: PanelRequestType): Promise<PanelDataType>;
@@ -34,6 +56,9 @@ export interface ForkSafeBackend {
   recordReview(
     req: RecordReviewRequestType,
   ): Promise<RecordReviewResponseType>;
+  requestMoreInvestigation(
+    req: MoreInvestigationRequestType,
+  ): Promise<MoreInvestigationResponseType>;
 }
 
 export function remoteBackend(): ForkSafeBackend {
@@ -66,6 +91,24 @@ export function remoteBackend(): ForkSafeBackend {
         RecordReviewRequest.parse(req),
         RecordReviewResponse,
       );
+    },
+    async requestMoreInvestigation(req) {
+      try {
+        return await invokeBackend(
+          FORGE_FEATURE_PATHS.requests,
+          MoreInvestigationRequest.parse(req),
+          MoreInvestigationResponse,
+        );
+      } catch (error) {
+        if (
+          error instanceof BackendHttpError &&
+          error.status === 404 &&
+          error.code === undefined
+        ) {
+          throw new FeatureUnavailableError();
+        }
+        throw error;
+      }
     },
   };
 }
@@ -121,6 +164,13 @@ export function fixtureBackend(): ForkSafeBackend & {
         recorded: true,
       });
     },
+    async requestMoreInvestigation(req) {
+      const parsed = MoreInvestigationRequest.parse(req);
+      return MoreInvestigationResponse.parse({
+        requestId: parsed.idempotencyKey,
+        accepted: true,
+      });
+    },
   };
 }
 
@@ -144,7 +194,22 @@ async function invokeBackend<T>(
     body: JSON.stringify(req),
   });
   if (!response.ok) {
-    throw new Error(`ForkSafe backend returned HTTP ${response.status}.`);
+    let code: string | undefined;
+    try {
+      const body: unknown = await response.json();
+      if (
+        body !== null &&
+        typeof body === "object" &&
+        "error" in body &&
+        typeof body.error === "string" &&
+        /^[a-z_]{1,64}$/.test(body.error)
+      ) {
+        code = body.error;
+      }
+    } catch {
+      code = undefined;
+    }
+    throw new BackendHttpError(response.status, code);
   }
   return schema.parse(await response.json());
 }
