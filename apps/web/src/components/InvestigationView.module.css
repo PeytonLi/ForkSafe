@@ -1,0 +1,10 @@
+.wrap { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.9rem; }
+.head { display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: space-between; align-items: flex-start; }
+.titleBlock { min-width: 0; flex: 1 1 18rem; }
+.title { font-size: 1.25rem; overflow-wrap: anywhere; }
+.meta { display: flex; flex-wrap: wrap; gap: 0.3rem 0.8rem; margin-top: 0.4rem; color: var(--muted); font-size: 0.82rem; align-items: center; }
+.err { color: var(--red); margin: 0; }
+.tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: thin; }
+.tab, .tabActive { border: none; border-radius: 8px 8px 0 0; background: transparent; padding: 0.5rem 0.85rem; white-space: nowrap; color: var(--muted); border-bottom: 3px solid transparent; }
+.tabActive { color: var(--blue); border-bottom-color: var(--blue); font-weight: 600; }
+.tabPanel { min-width: 0; }
