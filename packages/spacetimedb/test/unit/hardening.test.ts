@@ -4,6 +4,7 @@ import {
   canonicalJson,
   experimentIdentity,
   findingUseKey,
+  planBridgeRotation,
   partitionCandidates,
   partitionFindings,
   planBaselineRegister,
@@ -42,6 +43,16 @@ describe("pure hashing and canonical JSON", () => {
     [1n],
   ])("rejects unsupported value %s", (value) => {
     expect(() => canonicalJson(value)).toThrow(TypeError);
+  });
+});
+
+describe("bridge identity rotation", () => {
+  it("revokes every other convex identity and preserves the caller and other roles", () => {
+    expect(planBridgeRotation([
+      { identityHex: "caller", role: "convex" },
+      { identityHex: "stale", role: "convex" },
+      { identityHex: "runner", role: "runner" },
+    ], "caller")).toEqual({ revokeHex: ["stale"] });
   });
 });
 

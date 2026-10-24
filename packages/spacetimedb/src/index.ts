@@ -16,6 +16,7 @@ import {
   isSha256,
   isUuid,
   planBaselineRegister,
+  planBridgeRotation,
   planExperimentCommit,
   planFindingUse,
   planEvaluationWrite,
@@ -128,6 +129,27 @@ function requireBridge(ctx: Ctx): void {
   if (!ctx.db.bridgeIdentity.identity.find(ctx.sender)) {
     reject("bridge_required", "Bridge identity is not registered");
   }
+}
+
+function requireBridgeSecret(ctx: Ctx, secret: string): void {
+  const configured = ctx.env.FORKSAFE_BRIDGE_SECRET;
+  if (configured === undefined || configured.length === 0) {
+    reject("bridge_secret_not_configured", "bridge secret not configured");
+  }
+  if (!secretsMatch(configured, secret)) {
+    reject("bridge_secret_mismatch", "Bridge secret does not match");
+  }
+}
+
+function upsertBridgeIdentity(ctx: Ctx): void {
+  const existing = ctx.db.bridgeIdentity.identity.find(ctx.sender);
+  const row = {
+    identity: ctx.sender,
+    role: "convex",
+    registeredAtMs: BigInt(nowMs(ctx)),
+  };
+  if (existing) ctx.db.bridgeIdentity.identity.update({ ...existing, ...row });
+  else ctx.db.bridgeIdentity.insert(row);
 }
 
 function grantLike(row: GrantRow): GrantLike {
@@ -571,21 +593,25 @@ function writeFindingUse(ctx: Ctx, grant: GrantRow, input: FindingUseReducerInpu
 export const registerBridge = databaseSchema.reducer(
   { secret: t.string() },
   (ctx, { secret }) => {
-    const configured = ctx.env.FORKSAFE_BRIDGE_SECRET;
-    if (configured === undefined || configured.length === 0) {
-      reject("bridge_secret_not_configured", "bridge secret not configured");
+    requireBridgeSecret(ctx, secret);
+    upsertBridgeIdentity(ctx);
+  },
+);
+
+export const rotateBridgeIdentity = databaseSchema.reducer(
+  { secret: t.string() },
+  (ctx, { secret }) => {
+    requireBridgeSecret(ctx, secret);
+    const rows = [...ctx.db.bridgeIdentity.iter()];
+    const { revokeHex } = planBridgeRotation(
+      rows.map((row) => ({ identityHex: row.identity.toHexString(), role: row.role })),
+      ctx.sender.toHexString(),
+    );
+    const revoke = new Set(revokeHex);
+    for (const row of rows) {
+      if (revoke.has(row.identity.toHexString())) ctx.db.bridgeIdentity.identity.delete(row.identity);
     }
-    if (!secretsMatch(configured, secret)) {
-      reject("bridge_secret_mismatch", "Bridge secret does not match");
-    }
-    const existing = ctx.db.bridgeIdentity.identity.find(ctx.sender);
-    const row = {
-      identity: ctx.sender,
-      role: "convex",
-      registeredAtMs: BigInt(nowMs(ctx)),
-    };
-    if (existing) ctx.db.bridgeIdentity.identity.update({ ...existing, ...row });
-    else ctx.db.bridgeIdentity.insert(row);
+    upsertBridgeIdentity(ctx);
   },
 );
 
