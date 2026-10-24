@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { fmtTime, shortId, useLoad } from "../hooks";
+import { fmtTime, shortId, useLoad, useNarrow } from "../hooks";
 import type { HandoffEvent, InvestigationWorkspace } from "../services";
 import { Panel } from "./Panel";
 import { human, words } from "./tone";
@@ -83,18 +83,6 @@ export function buildMarks(w: InvestigationWorkspace, handoffs: HandoffEvent[]):
     });
   }
   return marks.sort((a, b) => a.startMs - b.startMs);
-}
-
-function useNarrow() {
-  const query = "(max-width: 560px)";
-  const [narrow, setNarrow] = useState(() => typeof window !== "undefined" && window.matchMedia(query).matches);
-  useEffect(() => {
-    const m = window.matchMedia(query);
-    const on = () => setNarrow(m.matches);
-    m.addEventListener("change", on);
-    return () => m.removeEventListener("change", on);
-  }, []);
-  return narrow;
 }
 
 export function TimelinePanel({ workspace: w, focus }: { workspace: InvestigationWorkspace; focus?: string }) {
@@ -198,7 +186,12 @@ function TimelineChart({ w, marks, focus }: { w: InvestigationWorkspace; marks: 
 function TimelineList({ w, marks, focus }: { w: InvestigationWorkspace; marks: Mark[]; focus?: string }) {
   const focused = marks.find((m) => m.id === focus);
   const [envId, setEnvId] = useState(focused?.envId ?? w.environments[0]?.id);
-  const items = marks.filter((m) => m.envId === envId);
+  const [steps, setSteps] = useState(focused?.row === "stages");
+  const [all, setAll] = useState(false);
+  const envMarks = marks.filter((m) => m.envId === envId && (steps || m.row !== "stages"));
+  const focusAt = focused ? envMarks.findIndex((m) => m.id === focused.id) : -1;
+  const cap = Math.max(LIST_CAP, focusAt + 1);
+  const items = all ? envMarks : envMarks.slice(0, cap);
   useEffect(() => {
     if (focused) document.getElementById(`tl-${focused.id}`)?.focus();
   }, [focused]);
@@ -206,12 +199,15 @@ function TimelineList({ w, marks, focus }: { w: InvestigationWorkspace; marks: M
     <div data-testid="timeline-list">
       <div className={styles.envPicker} role="group" aria-label="Environment">
         {w.environments.map((e) => (
-          <button key={e.id} type="button" aria-pressed={envId === e.id} className={envId === e.id ? styles.envActive : styles.env} onClick={() => setEnvId(e.id)}>
+          <button key={e.id} type="button" aria-pressed={envId === e.id} className={envId === e.id ? styles.envActive : styles.env} onClick={() => { setEnvId(e.id); setAll(false); }}>
             Env {e.index + 1}
           </button>
         ))}
       </div>
       <Legend />
+      <label className={styles.stepsToggle}>
+        <input type="checkbox" checked={steps} onChange={(e) => setSteps(e.target.checked)} /> Include handoff steps
+      </label>
       {items.length === 0 ? <p className={styles.note}>Nothing has happened in this environment yet.</p> : (
         <ol className={styles.list}>
           {items.map((m) => (
@@ -226,9 +222,14 @@ function TimelineList({ w, marks, focus }: { w: InvestigationWorkspace; marks: M
           ))}
         </ol>
       )}
+      {envMarks.length > items.length && (
+        <button type="button" className={styles.more} onClick={() => setAll(true)} data-testid="timeline-more">Show all {envMarks.length} events</button>
+      )}
     </div>
   );
 }
+
+const LIST_CAP = 8;
 
 function Legend() {
   return (

@@ -5,7 +5,7 @@ import { ConvexError } from "convex/values";
 import { internal } from "../_generated/api.js";
 import { action } from "../_generated/server.js";
 import { UnauthorizedError } from "../lib/auth.js";
-import { notConnected, parseAsk, toWebAnswer } from "./askPolicy.js";
+import { notConnected, parseAsk, toWebAnswer, type WebAnswer } from "./askPolicy.js";
 import { AgentBuilder, agentBuilderReadiness, toDocuments, type CanonicalRecord, type CanonicalResolver } from "./elasticAgent.js";
 
 /** Web: `web/ask:ask`. "Why did this fail?" — an investigation-scoped,
@@ -13,7 +13,7 @@ import { AgentBuilder, agentBuilderReadiness, toDocuments, type CanonicalRecord,
  *  identity; answers are evidence-only and never affect scores. */
 export const ask = action({
   args: { investigationId: v.string(), question: v.string() },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<WebAnswer> => {
     if (!await ctx.auth.getUserIdentity()) throw new UnauthorizedError();
     const { investigationId, question, mentionedIds } = parseAsk(args);
     const scope = await ctx.runQuery(internal.web.askData.scope, { investigationId, ids: mentionedIds });

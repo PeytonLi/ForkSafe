@@ -60,17 +60,18 @@ export function fixtureAnswer(findings: Finding[], question: string): EvidenceAn
   const scored = findings
     .map((f) => ({ f, score: new Set(tokens(f.summary).filter((w) => wanted.has(w))).size }))
     .filter((x) => x.score > 0)
-    .sort((a, b) => b.score - a.score || b.f.createdAtMs - a.f.createdAtMs)
-    .slice(0, 3);
+    .sort((a, b) => b.score - a.score || b.f.createdAtMs - a.f.createdAtMs);
+  const top = scored[0]?.score ?? 0;
+  const strong = scored.filter((x) => x.score >= Math.ceil(top / 2)).slice(0, 3);
   const common = { mode: "fixture" as const, label: "Recorded example answer. The Elastic evidence agent was not used." };
-  if (!scored.length) {
+  if (!strong.length) {
     return { ...common, enoughEvidence: false, citations: [], withheld: [], reason: "The recorded evidence doesn't cover that question yet." };
   }
   return {
     ...common,
     enoughEvidence: true,
-    answer: scored.map(({ f }) => f.summary).join(" "),
-    citations: scored.map(({ f }) => ({ id: f.id, docType: "finding" as const, summary: f.summary, environmentId: f.environmentId })),
+    answer: strong.map(({ f }) => f.summary).join(" "),
+    citations: strong.map(({ f }) => ({ id: f.id, docType: "finding" as const, summary: f.summary, environmentId: f.environmentId })),
     withheld: FIXTURE_WITHHELD.topic.test(question) ? [{ id: FIXTURE_WITHHELD.id, reason: FIXTURE_WITHHELD.reason }] : [],
   };
 }

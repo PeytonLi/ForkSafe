@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../_generated/api.js";
 import schema from "../schema.js";
 import { parseAsk, toWebAnswer } from "./askPolicy.js";
-import { toDocuments } from "../../packages/integrations/elastic/src/indexer.ts";
+import { toDocuments } from "./elasticAgent.js";
 
 // Vite keys files in this directory as "./x.ts"; convex-test needs paths from the convex root.
 const modules = Object.fromEntries(Object.entries(import.meta.glob("../**/*.ts")).map(([key, load]) => [key.startsWith("./") ? `../web/${key.slice(2)}` : key, load]));

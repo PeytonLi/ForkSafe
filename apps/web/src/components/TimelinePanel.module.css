@@ -44,3 +44,6 @@
 .squareMini { border-radius: 3px; }
 .listBody { display: grid; min-width: 0; font-size: var(--text-xs); }
 .listBody span { color: var(--muted); }
+.stepsToggle { display: inline-flex; align-items: center; gap: 0.4rem; margin-top: 0.55rem; color: var(--muted); font-size: var(--text-xs); }
+.stepsToggle input { width: 16px; height: 16px; accent-color: var(--accent); }
+.more { width: 100%; margin-top: 0.5rem; }

@@ -105,3 +105,16 @@ export const fmtAgo = (ms: number, now = Date.now()) => {
   const d = Math.round(h / 24);
   return `${d} day${d === 1 ? "" : "s"} ago`;
 };
+
+/** True on phone-width screens (matches the 560px CSS breakpoint). */
+export function useNarrow() {
+  const query = "(max-width: 560px)";
+  const [narrow, setNarrow] = useState(() => typeof window !== "undefined" && window.matchMedia(query).matches);
+  useEffect(() => {
+    const m = window.matchMedia(query);
+    const on = () => setNarrow(m.matches);
+    m.addEventListener("change", on);
+    return () => m.removeEventListener("change", on);
+  }, []);
+  return narrow;
+}

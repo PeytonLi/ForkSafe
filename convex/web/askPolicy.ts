@@ -45,11 +45,13 @@ function summarize(docType: string, canonical: unknown): { summary: string; envi
 
 /** Maps the Elastic AgentBuilder answer to the web's EvidenceAnswer. Only a
  *  live answer with validated citations and nothing withheld counts as enough. */
-export function toWebAnswer(a: AgentAnswerLike): {
+export interface WebAnswer {
   mode: Mode; enoughEvidence: boolean; answer?: string; label?: string; reason?: string;
   citations: { id: string; docType: "finding" | "evidence" | "experiment_result"; summary: string; environmentId?: string }[];
   withheld: { id: string; reason: string }[];
-} {
+}
+
+export function toWebAnswer(a: AgentAnswerLike): WebAnswer {
   const citations = (a.citations ?? []).flatMap((c) => {
     const docType = DOC_TYPES.find((d) => d === c.docType);
     return docType ? [{ id: c.id, docType, ...summarize(docType, c.canonical) }] : [];
@@ -64,7 +66,7 @@ export function toWebAnswer(a: AgentAnswerLike): {
   };
 }
 
-export const notConnected = (mode: Mode) => ({
+export const notConnected = (mode: Mode): WebAnswer => ({
   mode, enoughEvidence: false, citations: [], withheld: [],
   reason: mode === "blocked" ? "The evidence agent isn't set up on this deployment yet." : "The evidence agent isn't switched on for this deployment.",
 });

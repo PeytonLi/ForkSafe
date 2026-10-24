@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { fmtAgo, fmtTime, useClient, useLoad, type AsyncState } from "../hooks";
+import { fmtAgo, fmtTime, useClient, useLoad, useNarrow, type AsyncState } from "../hooks";
 import { errorCode, type PipelineHealth, type WebIntegrationReadiness } from "../services";
 import { Badge } from "./Panel";
 import { integrationLabel, readinessGroup, readinessTone, type ReadinessGroup } from "./ReadinessStrip";
@@ -112,12 +112,24 @@ export function HealthPage() {
 
 function ServiceCard({ r }: { r: WebIntegrationReadiness }) {
   const group = readinessGroup(r);
+  const narrow = useNarrow();
+  const [open, setOpen] = useState(false);
+  const head = (
+    <>
+      <h2>{integrationLabel(r.name)}</h2>
+      <Badge tone={readinessTone(r)}>{GROUP_LABEL[group]}</Badge>
+    </>
+  );
+  if (narrow && !open) {
+    return (
+      <li className={styles.card} data-testid={`health-${r.name}`} data-group={group}>
+        <button type="button" className={styles.cardToggle} aria-expanded={false} onClick={() => setOpen(true)}>{head}</button>
+      </li>
+    );
+  }
   return (
     <li className={styles.card} data-testid={`health-${r.name}`} data-group={group}>
-      <div className={styles.cardHead}>
-        <h2>{integrationLabel(r.name)}</h2>
-        <Badge tone={readinessTone(r)}>{GROUP_LABEL[group]}</Badge>
-      </div>
+      {narrow ? <button type="button" className={styles.cardToggle} aria-expanded onClick={() => setOpen(false)}>{head}</button> : <div className={styles.cardHead}>{head}</div>}
       <p className={styles.note}>{healthNote(r)}</p>
       <div className={styles.cardFoot}>
         <time dateTime={new Date(r.checkedAtMs).toISOString()} title={fmtTime(r.checkedAtMs)}>Checked {fmtAgo(r.checkedAtMs)}</time>

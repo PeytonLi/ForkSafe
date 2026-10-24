@@ -101,7 +101,12 @@ function AnswerCard({ result, investigationId, envIndex, onRetry }: { result: Re
         {head}
         <h3>We don't have enough evidence to answer that yet</h3>
         <p>{a.mode === "blocked" ? "The evidence agent isn't reachable right now." : a.reason ?? "None of the recorded findings cover this question."} Try one of the suggested questions, or ask again once the environments have recorded more findings.</p>
-        {a.withheld.length > 0 && <Withheld items={a.withheld} />}
+        {a.withheld.length > 0 && (
+          <>
+            <ul className={styles.chips} aria-label="Sources not shown">{a.withheld.map((x) => <WithheldChip key={x.id} id={x.id} reason={x.reason} />)}</ul>
+            <Withheld items={a.withheld} />
+          </>
+        )}
       </article>
     );
   }
@@ -113,13 +118,7 @@ function AnswerCard({ result, investigationId, envIndex, onRetry }: { result: Re
       <h3 className={styles.sourcesH}>Sources</h3>
       <ul className={styles.chips} aria-label="Sources">
         {a.citations.map((c) => <CitationChip key={c.id} c={c} investigationId={investigationId} envIndex={envIndex} />)}
-        {a.withheld.map((x) => (
-          <li key={x.id}>
-            <span className={styles.chipRevoked} data-testid="citation-withheld" aria-label={`Source ${shortId(x.id)} not shown: it ${withheldReason(x.reason)}`}>
-              <s>Source {shortId(x.id)}</s>
-            </span>
-          </li>
-        ))}
+        {a.withheld.map((x) => <WithheldChip key={x.id} id={x.id} reason={x.reason} />)}
       </ul>
       {a.withheld.length > 0 && <Withheld items={a.withheld} />}
     </article>
@@ -136,6 +135,16 @@ function CitationChip({ c, investigationId, envIndex }: { c: EvidenceCitation; i
         {env !== undefined && <span className={styles.chipEnv}>Env {env}</span>}
         {kind} {shortId(c.id)}
       </a>
+    </li>
+  );
+}
+
+function WithheldChip({ id, reason }: { id: string; reason: string }) {
+  return (
+    <li>
+      <span className={styles.chipRevoked} data-testid="citation-withheld" aria-label={`Source ${shortId(id)} not shown: it ${withheldReason(reason)}`}>
+        <s>Source {shortId(id)}</s>
+      </span>
     </li>
   );
 }

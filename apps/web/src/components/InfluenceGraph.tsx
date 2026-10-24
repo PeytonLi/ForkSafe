@@ -1,6 +1,6 @@
 import type { Finding } from "@forksafe/contracts";
 import { useState } from "react";
-import { shortId } from "../hooks";
+import { shortId, useNarrow } from "../hooks";
 import type { InvestigationWorkspace } from "../services";
 import { human } from "./tone";
 import styles from "./InfluenceGraph.module.css";
@@ -21,12 +21,20 @@ export function influenceEdges(w: InvestigationWorkspace, findings: Finding[]): 
   );
 }
 
-const W = 640;
+const SHORT_KIND: Record<string, string> = {
+  collision_frame: "Collision",
+  limit_violation: "Limit hit",
+  behavioral_note: "Behavior note",
+  candidate_hypothesis: "Hypothesis",
+  cross_environment_pattern: "Cross-env pattern",
+};
 const ROW = 44;
 const PAD = 26;
 
 export function InfluenceGraph({ w, findings }: { w: InvestigationWorkspace; findings: Finding[] }) {
   const edges = influenceEdges(w, findings);
+  const narrow = useNarrow();
+  const W = narrow ? 360 : 640;
   const [hot, setHot] = useState<string | null>(null);
   const envIndex = new Map(w.environments.map((e) => [e.id, e.index]));
   const used = findings.filter((f) => edges.some((e) => e.findingId === f.id))
@@ -37,8 +45,8 @@ export function InfluenceGraph({ w, findings }: { w: InvestigationWorkspace; fin
   const height = PAD * 2 + Math.max(used.length, w.candidates.length) * ROW;
   const fy = (i: number) => PAD + (i + 0.5) * ((height - PAD * 2) / used.length);
   const cy = (i: number) => PAD + (i + 0.5) * ((height - PAD * 2) / w.candidates.length);
-  const fx = 210;
-  const cx = W - 170;
+  const fx = narrow ? 120 : 270;
+  const cx = narrow ? 250 : W - 150;
   const isHot = (e: InfluenceEdge) => !hot || hot === e.findingId || hot === e.candidateId;
   const cross = edges.filter((e) => e.crossEnvironment).length;
   return (
@@ -69,8 +77,8 @@ export function InfluenceGraph({ w, findings }: { w: InvestigationWorkspace; fin
               aria-label={`Finding ${shortId(f.id)} from Env ${idx + 1}: ${f.summary}`}
               onMouseEnter={() => setHot(f.id)} onMouseLeave={() => setHot(null)} onFocus={() => setHot(f.id)} onBlur={() => setHot(null)}>
               <circle cx={fx} cy={fy(i)} r={8} fill={envColor(idx)} />
-              <text x={fx - 16} y={fy(i) - 3} textAnchor="end" className={styles.label}>Env {idx + 1} · {human(f.kind)}</text>
-              <text x={fx - 16} y={fy(i) + 12} textAnchor="end" className={styles.sub}>finding {shortId(f.id)}</text>
+              <text x={fx - 16} y={fy(i) - 3} textAnchor="end" className={styles.label}>{narrow ? `Env ${idx + 1}` : `Env ${idx + 1} · ${human(f.kind)}`}</text>
+              <text x={fx - 16} y={fy(i) + 12} textAnchor="end" className={styles.sub}>{narrow ? SHORT_KIND[f.kind] ?? human(f.kind) : `finding ${shortId(f.id)}`}</text>
             </g>
           );
         })}
@@ -81,7 +89,7 @@ export function InfluenceGraph({ w, findings }: { w: InvestigationWorkspace; fin
               aria-label={`Fix ${shortId(c.id)} from Env ${idx + 1}, used ${edges.filter((e) => e.candidateId === c.id).length} findings`}
               onMouseEnter={() => setHot(c.id)} onMouseLeave={() => setHot(null)} onFocus={() => setHot(c.id)} onBlur={() => setHot(null)}>
               <rect x={cx - 9} y={cy(i) - 9} width={18} height={18} rx={4} fill="#fff" stroke={envColor(idx)} strokeWidth={3} />
-              <text x={cx + 18} y={cy(i) - 3} className={styles.label}>Fix {shortId(c.id)}</text>
+              <text x={cx + 18} y={cy(i) - 3} className={styles.label}>Fix {narrow ? shortId(c.id).slice(0, 4) : shortId(c.id)}</text>
               <text x={cx + 18} y={cy(i) + 12} className={styles.sub}>from Env {idx + 1}</text>
             </g>
           );
