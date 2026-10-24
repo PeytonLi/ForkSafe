@@ -16,6 +16,7 @@ from simulator.runner import FAILURE_KINDS
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE = ROOT / "controllers/baseline"
 REFERENCE = ROOT / "evaluation/reference_controller"
+PUSH_REFERENCE = ROOT / "evaluation/push_gap/reference_controller"
 TSX = ROOT / "node_modules/.pnpm/tsx@4.23.15/node_modules/tsx/dist/cli.mjs"
 VALIDATOR = ROOT / "tests/contracts/validate_sim.mts"
 CASE_ID = "original-divider-collision"
@@ -172,7 +173,28 @@ def test_typescript_python_sim_contract_agreement(tmp_path: Path) -> None:
     assert restored_raw["failureKinds"] == ["forbidden_contact"]
     assert json.loads((restored_dir / "trace.json").read_text())["restoredFrom"]
 
-    for result_dir in (baseline_dir, reference_dir, invalid_dir, restored_dir):
+    push_dir = tmp_path / "push"
+    push = _simulator_cli(
+        "--controller-dir",
+        str(PUSH_REFERENCE),
+        "--case-id",
+        "push-gap-aligned",
+        "--seed",
+        "0",
+        "--out-dir",
+        str(push_dir),
+        "--experiment-id",
+        str(UUID(int=24)),
+    )
+    assert push.returncode == 0
+    push_raw, push_python = _validate_result(push_dir / "result.json")
+    assert push_raw["completed"] is True
+    assert push_python.completion_time_sec is not None
+    assert json.loads((push_dir / "trace.json").read_text())["case"][
+        "taskFamily"
+    ] == "push_through_gap"
+
+    for result_dir in (baseline_dir, reference_dir, invalid_dir, restored_dir, push_dir):
         trace = json.loads((result_dir / "trace.json").read_text())
         if trace["frames"]:
             _check_frame(trace["frames"][0], tmp_path)

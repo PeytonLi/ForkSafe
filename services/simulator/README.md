@@ -36,6 +36,17 @@ ordered deterministic scene gates and checks that the selected configuration
 matches `scene_config.json`. Use `--out PATH` to write the generated scene
 configuration, or `--report PATH` to save the candidate and gate measurements.
 
+The optional `push_through_gap` task family uses `taskFamily` on its case
+definition and is available through the `push-gap-aligned` and
+`push-gap-offset` public cases. Generate deterministic scenario grids and SVG
+heatmaps with:
+
+```sh
+PYTHONPATH=services .venv/bin/python -m simulator.fuzz \
+  --controller controllers/baseline --around original-divider-collision \
+  --n 64 --workers 8 --out grid.json --svg grid.svg
+```
+
 Start the local API from the repository root with
 `PYTHONPATH=services .venv/bin/uvicorn simulator.app:app --host 127.0.0.1 --port 8000`.
 `/runs` accepts only public case IDs and writes artifacts below `var/artifacts`

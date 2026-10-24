@@ -21,6 +21,7 @@ from simulator.skills import CONTROL_PERIOD, SkillExecutor
 
 SIMULATOR_ROOT = Path(__file__).resolve().parents[2]
 PUBLIC_MANIFEST = SIMULATOR_ROOT / "evaluation/public/manifest.json"
+PUSH_GAP_MANIFEST = SIMULATOR_ROOT / "evaluation/push_gap/manifest.json"
 FAILURE_KINDS = {
     "forbidden_contact",
     "joint_limit",
@@ -62,6 +63,10 @@ def _resolve_case(case_id: str) -> SimCase:
     for case in manifest["cases"]:
         if case["caseId"] == case_id:
             return SimCase.model_validate(case)
+    push_manifest = json.loads(PUSH_GAP_MANIFEST.read_text())
+    for case in push_manifest["cases"]:
+        if case["caseId"] == case_id:
+            return SimCase.model_validate(case)
     raise ValueError(f"caseId is not in the public manifest: {case_id}")
 
 
@@ -98,17 +103,29 @@ def _body_name(model: mujoco.MjModel, body_id: int) -> str:
 
 
 def _contact_pairs(scene: BuiltScene) -> tuple[set[tuple[int, int]], set[tuple[int, int]]]:
-    barriers = {
-        geom_id
-        for name, geom_id in scene.geom_ids.items()
-        if name in {"divider", "wall_near", "wall_far", "wall_left", "wall_right"}
+    barrier_names = {
+        name
+        for name in scene.geom_ids
+        if name in {"wall_near", "wall_far", "wall_left", "wall_right"}
     }
+    barrier_names.update(
+        {"gap_wall_left", "gap_wall_right"}
+        if scene.task_family == "push_through_gap"
+        else {"divider"}
+    )
+    barriers = {scene.geom_ids[name] for name in barrier_names}
     forbidden = {
         tuple(sorted((robot_geom, barrier)))
         for robot_geom in scene.robot_geom_ids
         for barrier in barriers
     }
-    forbidden.add(tuple(sorted((scene.cube_geom_id, scene.geom_ids["divider"]))))
+    if scene.task_family == "push_through_gap":
+        forbidden.update(
+            tuple(sorted((scene.cube_geom_id, scene.geom_ids[name])))
+            for name in ("gap_wall_left", "gap_wall_right")
+        )
+    else:
+        forbidden.add(tuple(sorted((scene.cube_geom_id, scene.geom_ids["divider"]))))
     hand_body = mujoco.mj_name2id(
         scene.model, mujoco.mjtObj.mjOBJ_BODY, "hand"
     )
@@ -149,6 +166,16 @@ def _contacts(scene: BuiltScene, data: mujoco.MjData) -> list[dict[str, Any]]:
 
 def _controller_scene(scene: BuiltScene, data: mujoco.MjData) -> dict[str, Any]:
     target = scene.config["target"]
+    if scene.task_family == "push_through_gap":
+        return {
+            "taskFamily": scene.task_family,
+            "cubePos": data.xpos[scene.cube_body_id].copy().tolist(),
+            "targetPos": list(target),
+            "gapCenter": list(scene.config["gapCenter"]),
+            "gapWidth": float(scene.config["gapWidth"]),
+            "wallHeight": float(scene.config["wallHeight"]),
+            "wallHalfThickness": float(scene.config["wallHalfThickness"]),
+        }
     divider = scene.config["dividerCenter"]
     return {
         "cubePos": data.xpos[scene.cube_body_id].copy().tolist(),
