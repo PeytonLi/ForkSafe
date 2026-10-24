@@ -87,6 +87,7 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, object]]:
                             "caseId": case["caseId"],
                             "repeat": repeat,
                             "status": report["status"],
+                            "failureKinds": list(report["failureKinds"]),
                             "caseWallSec": metrics["caseWallSec"],
                             "planWallSec": metrics["planWallSec"],
                             "physicsWallSec": metrics["physicsWallSec"],
@@ -109,6 +110,8 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, object]]:
             },
             "controllerSha256": controller_sha,
             "runs": runs,
+            "completed": all(run["status"] == "passed" for run in runs),
+            "failureKinds": sorted({kind for run in runs for kind in run["failureKinds"]}),
             "summary": {
                 "totalWallSec": time.perf_counter() - started,
                 "medianStepsPerSec": statistics.median(speeds),
@@ -127,6 +130,8 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, object]]:
             },
             "controllerSha256": None,
             "runs": [],
+            "completed": False,
+            "failureKinds": [],
             "summary": {"totalWallSec": time.perf_counter() - started},
             "error": f"{type(exc).__name__}: {exc}",
         }

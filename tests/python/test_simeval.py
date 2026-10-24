@@ -629,6 +629,8 @@ def test_benchmark_reports_nominal_measurements(tmp_path: Path) -> None:
     assert document["schema"] == "forksafe.benchmark.v1"
     assert len(document["runs"]) == 1
     assert document["runs"][0]["stepsPerSec"] > 0
+    assert document["completed"] is True
+    assert document["failureKinds"] == []
 
 
 def test_withheld_seed_rotates_without_changing_repository_manifests(
