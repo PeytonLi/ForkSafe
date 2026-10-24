@@ -1,5 +1,8 @@
+import { createHash } from "node:crypto";
 import { HumanReview, type ReviewId } from "@forksafe/contracts";
 import {
+  MoreInvestigationRequest,
+  MoreInvestigationResponse,
   PanelData,
   PanelRequest,
   RecordReviewResponse,
@@ -9,10 +12,16 @@ import {
   ReviewRequest,
   validateReview,
   type PanelData as PanelDataType,
+  type MoreInvestigationRequest as MoreInvestigationRequestType,
+  type MoreInvestigationResponse as MoreInvestigationResponseType,
   type StartInvestigationResponse as StartResponse,
 } from "@forksafe/integrations-atlassian";
 import { z } from "zod";
-import type { ForkSafeBackend } from "./backend.js";
+import {
+  BackendHttpError,
+  FeatureUnavailableError,
+  type ForkSafeBackend,
+} from "./backend.js";
 
 export type ForgeContext = {
   accountId?: string | null;
@@ -42,14 +51,40 @@ const StartPayload = z
   })
   .strict();
 
+const ReviewSubmitPayload = ReviewRequest.extend({
+  notes: z.string().trim().min(1).max(4000),
+  submitKey: z.string().uuid(),
+}).strict();
+
+const MoreInvestigationPayload = z.object({
+  investigationId: z.string().uuid(),
+  note: z.string().trim().min(1).max(500),
+  extraEnvironments: z.coerce.number().int().min(1).max(3).optional(),
+  submitKey: z.string().uuid(),
+}).strict();
+
 export function createHandlers(
   backend: ForkSafeBackend,
-  {
-    now = Date.now,
-    newId = () => globalThis.crypto.randomUUID(),
-  }: { now?: () => number; newId?: () => string } = {},
+  { now = Date.now }: { now?: () => number } = {},
 ): {
   getPanel(req: HandlerRequest): Promise<HandlerResult<PanelDataType>>;
+  getReviewDetails(req: HandlerRequest): Promise<HandlerResult<{
+    candidateId: string;
+    controllerSha256: string;
+    changedFunctions: string[];
+    rationale?: string;
+    evaluation: {
+      id: string;
+      suite: "public" | "withheld";
+      status: string;
+      allRequiredPassed: boolean;
+      passedCases: number;
+      failedCases: number;
+      totalCases: number;
+      failedCaseIds?: string[];
+    };
+    evidencePackUrl?: string;
+  }>>;
   startInvestigation(
     req: HandlerRequest,
   ): Promise<HandlerResult<StartResponse>>;
@@ -58,16 +93,81 @@ export function createHandlers(
   ): Promise<
     HandlerResult<{ reviewId: string; recorded: boolean }>
   >;
+  requestMoreInvestigation(
+    req: HandlerRequest,
+  ): Promise<HandlerResult<MoreInvestigationResponseType>>;
 } {
   return {
     async getPanel({ context }) {
       const issue = issueContext(context);
       if (!issue) return noIssueContext();
       try {
-        const data = PanelData.parse(await backend.getPanel(PanelRequest.parse(issue)));
+        const parsed = PanelData.parse(
+          await backend.getPanel(PanelRequest.parse(issue)),
+        );
+        const data = PanelData.parse({
+          ...parsed,
+          candidates: parsed.candidates.map((candidate) => ({
+            ...candidate,
+            suites: candidate.suites?.map((suite) => {
+              if (suite.suite !== "withheld") return suite;
+              const { failedCaseIds: _withheldCaseIds, ...redacted } = suite;
+              return redacted;
+            }),
+          })),
+        });
         return { ok: true, mode: data.mode, data };
-      } catch {
-        return backendFailure();
+      } catch (error) {
+        return mapHandlerError(error);
+      }
+    },
+
+    async getReviewDetails({ payload, context }) {
+      if (!issueContext(context)) return noIssueContext();
+      let request: z.infer<typeof ReviewContextRequest>;
+      try {
+        request = ReviewContextRequest.strict().parse(payload);
+      } catch (error) {
+        return mapHandlerError(error);
+      }
+      try {
+        const reviewContext = await backend.getReviewContext(request);
+        const evaluation = reviewContext.evaluation;
+        const passedCases = evaluation.cases.filter(
+          (item) => item.status === "passed",
+        );
+        const failedCases = evaluation.cases.filter(
+          (item) => item.status === "failed",
+        );
+        return {
+          ok: true,
+          mode: backend.mode,
+          data: {
+            candidateId: reviewContext.candidate.id,
+            controllerSha256: reviewContext.candidate.controllerSha256,
+            changedFunctions: reviewContext.candidate.changedFunctions,
+            ...(reviewContext.candidate.rationale === undefined
+              ? {}
+              : { rationale: reviewContext.candidate.rationale }),
+            evaluation: {
+              id: evaluation.id,
+              suite: evaluation.suite,
+              status: evaluation.status,
+              allRequiredPassed: evaluation.allRequiredPassed,
+              passedCases: passedCases.length,
+              failedCases: failedCases.length,
+              totalCases: evaluation.cases.length,
+              ...(evaluation.suite === "public"
+                ? { failedCaseIds: failedCases.map((item) => item.caseId).slice(0, 50) }
+                : {}),
+            },
+            ...(reviewContext.evidencePackUrl === undefined
+              ? {}
+              : { evidencePackUrl: reviewContext.evidencePackUrl }),
+          },
+        };
+      } catch (error) {
+        return mapHandlerError(error);
       }
     },
 
@@ -77,8 +177,8 @@ export function createHandlers(
       let form: z.infer<typeof StartPayload>;
       try {
         form = StartPayload.parse(payload ?? {});
-      } catch {
-        return invalidRequest();
+      } catch (error) {
+        return mapHandlerError(error);
       }
       try {
         const request = StartInvestigationRequest.parse({
@@ -94,7 +194,7 @@ export function createHandlers(
         );
         return { ok: true, mode: data.mode, data };
       } catch (error) {
-        return error instanceof z.ZodError ? invalidRequest() : backendFailure();
+        return mapHandlerError(error);
       }
     },
 
@@ -108,11 +208,11 @@ export function createHandlers(
       }
       const issue = issueContext(context);
       if (!issue) return noIssueContext();
-      let request: z.infer<typeof ReviewRequest>;
+      let request: z.infer<typeof ReviewSubmitPayload>;
       try {
-        request = ReviewRequest.parse(payload);
-      } catch {
-        return invalidRequest();
+        request = ReviewSubmitPayload.parse(payload);
+      } catch (error) {
+        return mapHandlerError(error);
       }
       try {
         const reviewContext = await backend.getReviewContext(
@@ -124,16 +224,12 @@ export function createHandlers(
         );
         const validated = validateReview(request, reviewContext, {
           reviewerIdentity: `atlassian:${context.accountId}`,
-          reviewId: newId() as ReviewId,
+          reviewId: deterministicReviewId(context.accountId, request.submitKey),
           nowMs: now(),
           jiraIssueKey: issue.issueKey,
         });
         if (!validated.ok) {
-          return {
-            ok: false,
-            code: validated.code,
-            message: validated.message,
-          };
+          return mapDomainError(validated.code);
         }
         const recorded = RecordReviewResponse.parse(
           await backend.recordReview({ review: HumanReview.parse(validated.review) }),
@@ -143,8 +239,46 @@ export function createHandlers(
           mode: backend.mode,
           data: { reviewId: recorded.reviewId, recorded: recorded.recorded },
         };
-      } catch {
-        return backendFailure();
+      } catch (error) {
+        return mapHandlerError(error);
+      }
+    },
+
+    async requestMoreInvestigation({ payload, context }) {
+      if (!context.accountId) {
+        return {
+          ok: false,
+          code: "unauthenticated",
+          message: "Sign in to Jira before asking for more investigation.",
+        };
+      }
+      const issue = issueContext(context);
+      if (!issue) return noIssueContext();
+      let form: z.infer<typeof MoreInvestigationPayload>;
+      try {
+        form = MoreInvestigationPayload.parse(payload);
+      } catch (error) {
+        return mapHandlerError(error);
+      }
+      try {
+        const { submitKey, investigationId, ...formData } = form;
+        const request = MoreInvestigationRequest.parse({
+          investigationId,
+          issueKey: issue.issueKey,
+          projectKey: issue.projectKey,
+          ...formData,
+          requestedBy: `atlassian:${context.accountId}`,
+          ...(form.extraEnvironments === undefined
+            ? {}
+            : { extraEnvironments: form.extraEnvironments }),
+          idempotencyKey: submitKey,
+        });
+        const data = MoreInvestigationResponse.parse(
+          await backend.requestMoreInvestigation(request),
+        );
+        return { ok: true, mode: backend.mode, data };
+      } catch (error) {
+        return mapHandlerError(error);
       }
     },
   };
@@ -170,18 +304,94 @@ function noIssueContext(): HandlerResult<never> {
   };
 }
 
-function invalidRequest(): HandlerResult<never> {
-  return {
-    ok: false,
-    code: "invalid_request",
-    message: "Check the submitted values and try again.",
+function deterministicReviewId(accountId: string, submitKey: string): ReviewId {
+  const bytes = createHash("sha256")
+    .update(`${accountId}:${submitKey}`)
+    .digest();
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = bytes.toString("hex").slice(0, 32);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}` as ReviewId;
+}
+
+function mapHandlerError(error: unknown): HandlerResult<never> {
+  if (error instanceof FeatureUnavailableError) {
+    return {
+      ok: false,
+      code: "not_available_yet",
+      message: "Asking for more investigation from Jira isn't available yet.",
+    };
+  }
+  if (error instanceof BackendHttpError) {
+    if (error.status === 401) {
+      return {
+        ok: false,
+        code: "unauthorized",
+        message: "Sign in to Jira again before continuing.",
+      };
+    }
+    if (error.status === 403) {
+      return {
+        ok: false,
+        code: "forbidden",
+        message: "You don't have access to this ForkSafe investigation.",
+      };
+    }
+    if (error.status === 404) {
+      return {
+        ok: false,
+        code: "not_found",
+        message: "This ForkSafe investigation could not be found.",
+      };
+    }
+    if (error.status === 409) return mapDomainError(error.code);
+  }
+  return backendFailure();
+}
+
+function mapDomainError(code: string | undefined): HandlerResult<never> {
+  if (
+    code === "sha_mismatch" ||
+    code === "candidate_mismatch" ||
+    code === "evaluation_mismatch"
+  ) {
+    return {
+      ok: false,
+      code: "version_changed",
+      message:
+        "This candidate changed since you opened it. Reload the panel to review the latest version.",
+    };
+  }
+  if (code === "review_conflict") {
+    return {
+      ok: false,
+      code: "review_conflict",
+      message:
+        "This review conflicts with one already recorded. Reload the panel before trying again.",
+    };
+  }
+  const validationMessages: Record<string, string> = {
+    not_awaiting_review: "This investigation is no longer waiting for review.",
+    candidate_not_evaluated: "This candidate has not finished evaluation yet.",
+    evaluation_not_passed: "Only a candidate that passed all required checks can be approved.",
   };
+  if (code && code in validationMessages) {
+    return { ok: false, code, message: validationMessages[code]! };
+  }
+  if (code === "unauthenticated") {
+    return {
+      ok: false,
+      code,
+      message: "Sign in to Jira before submitting a review.",
+    };
+  }
+  return backendFailure();
 }
 
 function backendFailure(): HandlerResult<never> {
   return {
     ok: false,
     code: "backend_error",
-    message: "The ForkSafe backend request could not be completed.",
+    message: "ForkSafe couldn't complete that request. Try again shortly.",
   };
 }
