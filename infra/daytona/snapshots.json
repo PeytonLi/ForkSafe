@@ -1,14 +1,24 @@
 {
   "runner": {
-    "name": "forksafe-runner-v1",
+    "name": "forksafe-runner-v2",
     "dockerfile": "infra/daytona/runner/Dockerfile",
     "resources": {
-      "cpu": 2,
-      "memory": 4,
-      "disk": 10
+      "cpu": 1,
+      "memory": 2,
+      "disk": 5
     },
-    "id": "06355f66-f6a0-416a-bced-c28a711af037",
-    "state": "active"
+    "id": "43b502ed-5a92-4e1d-946f-9ab52acf622e",
+    "state": "active",
+    "previous": {
+      "name": "forksafe-runner-v1",
+      "id": "06355f66-f6a0-416a-bced-c28a711af037",
+      "resources": {
+        "cpu": 2,
+        "memory": 4,
+        "disk": 10
+      }
+    },
+    "note": "Daytona org total-memory cap is 10 GiB; 4 GiB runners could not coexist with the 4 GiB execution sandbox for a 2-environment run."
   },
   "execution": {
     "name": "forksafe-exec-v1",

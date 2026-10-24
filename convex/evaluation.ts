@@ -197,7 +197,7 @@ async function freshEvaluatorSandbox(ctx: any, investigationId: string, jobId: s
   const provider = process.env.DAYTONA_MODE === "local" ? "local" : "daytona";
   const requested = await ctx.runMutation(internal.sandboxes.requestSandbox, {
     purpose: "evaluator", investigationId, jobId, attemptId, snapshot: process.env.DAYTONA_EXECUTION_SNAPSHOT ?? "forksafe-exec-v1",
-    resources: { cpu: 2, memoryGiB: 4, diskGiB: 10 }, provider,
+    resources: { cpu: 2, memoryGiB: 2, diskGiB: 10 }, provider,
   });
   const deadline = Date.now() + 240_000;
   let op = await ctx.runQuery(internal.sandboxes.getSandboxOp, { sandboxOpId: requested.sandboxOpId });

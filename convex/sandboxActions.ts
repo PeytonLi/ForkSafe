@@ -96,12 +96,17 @@ export const terminate = internalAction({
     if (op.status === "terminated") return { alreadyGone: true };
     await ctx.runMutation(internal.sandboxes.updateSandboxOp, { sandboxOpId: op.appId, status: "terminating" });
     if (!op.sandbox) {
+      // Nothing addressable was ever created (create failed or was rejected), so there is nothing
+      // to destroy; release the reservation so cancellation can finalize. Untracked sandboxes are
+      // caught by the label-based orphan sweep, not by this op.
       await ctx.runMutation(internal.sandboxes.updateSandboxOp, {
         sandboxOpId: op.appId,
-        status: "ambiguous_terminate",
+        status: "terminated",
+        terminatedAtMs: Date.now(),
+        releaseReservation: true,
         lastError: "sandbox_reference_missing",
       });
-      return { ambiguous: true };
+      return { alreadyGone: true, noSandbox: true };
     }
     try {
       const provider = createCloudProvider();

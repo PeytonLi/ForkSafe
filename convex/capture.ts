@@ -15,7 +15,7 @@ export async function ensureExecutionSandbox(ctx: any, investigationId: string, 
     const provider = process.env.DAYTONA_MODE === "local" ? "local" : "daytona";
     const requested = await ctx.runMutation(internal.sandboxes.requestSandbox, {
       purpose: "execution", investigationId, snapshot: process.env.DAYTONA_EXECUTION_SNAPSHOT ?? "forksafe-exec-v1",
-      resources: { cpu: 2, memoryGiB: 4, diskGiB: 10 }, provider,
+      resources: { cpu: 2, memoryGiB: 2, diskGiB: 10 }, provider,
     });
     op = await ctx.runQuery(internal.sandboxes.getSandboxOp, { sandboxOpId: requested.sandboxOpId });
   }

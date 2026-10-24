@@ -14,15 +14,20 @@ export const investigationWorkflow = workflow.define({
   returns: v.null(),
 }).handler(async (step, args) => {
   const environments = await step.runQuery(internal.workflows.getEnvironments, { investigationId: args.investigationId });
-  await step.runMutation(internal.sandboxes.requestSandbox, {
-    purpose: "execution", investigationId: args.investigationId, snapshot: args.executionSnapshot,
-    resources: { cpu: 2, memoryGiB: 4, diskGiB: 10 }, provider: args.provider,
-  });
+  // Reuse the execution sandbox the baseline capture already provisioned: the Daytona org has a
+  // total-memory cap (10 GiB), so every extra sandbox costs runner capacity.
+  const existingExecution = await step.runQuery(internal.sandboxes.readyOperationFor, { investigationId: args.investigationId, purpose: "execution" });
+  if (!existingExecution) {
+    await step.runMutation(internal.sandboxes.requestSandbox, {
+      purpose: "execution", investigationId: args.investigationId, snapshot: args.executionSnapshot,
+      resources: { cpu: 2, memoryGiB: 2, diskGiB: 10 }, provider: args.provider,
+    });
+  }
   const runnerOps: { environmentId: string; sandboxOpId: string }[] = [];
   for (const environment of environments as any[]) {
     const requested = await step.runMutation(internal.sandboxes.requestSandbox, {
       purpose: "runner", investigationId: args.investigationId, environmentId: environment.appId, snapshot: args.runnerSnapshot,
-      resources: { cpu: 2, memoryGiB: 4, diskGiB: 10 }, provider: args.provider,
+      resources: { cpu: 2, memoryGiB: 2, diskGiB: 10 }, provider: args.provider,
     });
     runnerOps.push({ environmentId: environment.appId, sandboxOpId: requested.sandboxOpId });
   }

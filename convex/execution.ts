@@ -24,18 +24,27 @@ const SIM_PYTHONPATH = `${SIM_ROOT}/services:${SIM_ROOT}/pydeps`;
 // storage so 37 MB tars never enter the action's memory budget.
 const PY_WRITE_B64 = "import base64,pathlib,sys; p=pathlib.Path(sys.argv[1]); p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(base64.b64decode(sys.argv[2]))";
 const PY_FETCH = "import pathlib,sys,urllib.request; p=pathlib.Path(sys.argv[2]); p.parent.mkdir(parents=True, exist_ok=True); urllib.request.urlretrieve(sys.argv[1], p); print(p.stat().st_size)";
+// Runner sandboxes (forksafe-runner-v1) ship node but no python.
+const JS_WRITE_B64 = "const [p,b]=process.argv.slice(1);const fs=require(\"fs\");fs.mkdirSync(require(\"path\").dirname(p),{recursive:true});fs.writeFileSync(p,Buffer.from(b,\"base64\"))";
+const JS_FETCH = "const [u,p]=process.argv.slice(1);const fs=require(\"fs\");fetch(u).then(r=>{if(!r.ok)throw new Error(String(r.status));return r.arrayBuffer()}).then(b=>{fs.mkdirSync(require(\"path\").dirname(p),{recursive:true});fs.writeFileSync(p,Buffer.from(b));console.log(b.byteLength)}).catch(e=>{console.error(e.message);process.exit(1)})";
 const SAFE_REMOTE_PATH = /^\/workspace\/[A-Za-z0-9._\/-]+$/;
 const SAFE_BASE64 = /^[A-Za-z0-9+/=]*$/;
 const SAFE_URL = /^https:\/\/[A-Za-z0-9.-]+\/[A-Za-z0-9._\/?=&%-]*$/;
 
-async function trustedExec(ref: VendorRef, command: string, timeoutSec: number): Promise<{ exitCode: number; output: string }> {
+type TrustedSandbox = { sandbox: Awaited<ReturnType<Daytona["get"]>>; purpose: "execution" | "runner" | "evaluator" };
+
+async function trustedSandbox(ref: VendorRef): Promise<TrustedSandbox> {
   const config = loadDaytonaConfig();
   if (config.mode !== "cloud" || !config.apiKey) throw new ConvexError("daytona_cloud_provider_blocked");
   const sandbox = await new Daytona({ apiKey: config.apiKey, apiUrl: config.apiUrl }).get(ref.id);
   const purpose = sandbox.labels["forksafe.purpose"];
   if (purpose !== "execution" && purpose !== "runner" && purpose !== "evaluator") throw new ConvexError("sandbox_not_owned");
+  return { sandbox, purpose };
+}
+
+async function trustedExec(trusted: TrustedSandbox, command: string, timeoutSec: number): Promise<{ exitCode: number; output: string }> {
   try {
-    const result = await sandbox.process.executeCommand(command, "/workspace", undefined, timeoutSec);
+    const result = await trusted.sandbox.process.executeCommand(command, "/workspace", undefined, timeoutSec);
     return { exitCode: result.exitCode ?? 1, output: (result.result ?? "").slice(-2000) };
   } catch (error) {
     throw new ConvexError(`daytona_exec_failed:${error instanceof Error ? error.name : "unknown"}`);
@@ -46,14 +55,46 @@ async function putSmallFile(_daytona: unknown, ref: VendorRef, remotePath: strin
   if (bytes.byteLength > 96_000) throw new ConvexError("file_too_large_for_inline_transfer");
   const encoded = Buffer.from(bytes).toString("base64");
   if (!SAFE_REMOTE_PATH.test(remotePath) || !SAFE_BASE64.test(encoded)) throw new ConvexError("file_transfer_input_rejected");
-  const result = await trustedExec(ref, `python3 -c '${PY_WRITE_B64}' ${remotePath} ${encoded}`, 60);
+  const trusted = await trustedSandbox(ref);
+  const command = trusted.purpose === "runner" ? `node -e '${JS_WRITE_B64}' ${remotePath} ${encoded}` : `python3 -c '${PY_WRITE_B64}' ${remotePath} ${encoded}`;
+  const result = await trustedExec(trusted, command, 60);
   if (result.exitCode !== 0) throw new ConvexError(`file_write_failed:${remotePath}`);
+}
+
+// Artifact pull: the sandbox POSTs the file to a one-shot Convex storage upload URL (write-only,
+// single use) and Convex reads it back from storage. sandbox.fs.downloadFile from the Convex Node
+// runtime failed intermittently on ~0.5 MB files, so it is only the fallback.
+const PY_PUSH = "import json,sys,urllib.request; r=urllib.request.Request(sys.argv[1], data=open(sys.argv[2],'rb').read(), headers={'Content-Type':'application/json'}, method='POST'); print(urllib.request.urlopen(r, timeout=120).read().decode())";
+const JS_PUSH = "const [u,p]=process.argv.slice(1);const fs=require(\"fs\");fetch(u,{method:\"POST\",headers:{\"Content-Type\":\"application/json\"},body:fs.readFileSync(p)}).then(r=>r.text()).then(t=>console.log(t)).catch(e=>{console.error(e.message);process.exit(1)})";
+
+async function pullFile(ctx: { runMutation: Function; storage: { get: Function; delete: Function } }, daytona: { downloadFile: Function }, ref: VendorRef, remotePath: string): Promise<Uint8Array> {
+  if (!SAFE_REMOTE_PATH.test(remotePath)) throw new ConvexError("file_transfer_input_rejected");
+  try {
+    const uploadUrl = (await ctx.runMutation(internal.bundles.createUploadUrl, {})) as string;
+    if (!SAFE_URL.test(uploadUrl)) throw new ConvexError("upload_url_rejected");
+    const trusted = await trustedSandbox(ref);
+    const command = trusted.purpose === "runner" ? `node -e '${JS_PUSH}' '${uploadUrl}' ${remotePath}` : `python3 -c '${PY_PUSH}' '${uploadUrl}' ${remotePath}`;
+    const result = await trustedExec(trusted, command, 180);
+    const match = /"storageId"\s*:\s*"([A-Za-z0-9_-]+)"/.exec(result.output);
+    if (result.exitCode !== 0 || !match) throw new ConvexError(`artifact_push_failed:${remotePath}`);
+    const storageId = match[1];
+    const blob = await ctx.storage.get(storageId);
+    if (!blob) throw new ConvexError("artifact_storage_missing");
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    await ctx.storage.delete(storageId);
+    return bytes;
+  } catch (error) {
+    console.log("pullFile:storage_path_failed", remotePath, error instanceof Error ? error.message.slice(0, 160) : "unknown");
+    return (await daytona.downloadFile(ref, remotePath)) as Uint8Array;
+  }
 }
 
 async function fetchToFile(_daytona: unknown, ref: VendorRef, url: string, remotePath: string): Promise<void> {
   if (!SAFE_REMOTE_PATH.test(remotePath) || !SAFE_URL.test(url)) throw new ConvexError("file_transfer_input_rejected");
-  const result = await trustedExec(ref, `python3 -c '${PY_FETCH}' '${url}' ${remotePath}`, 300);
-  if (result.exitCode !== 0) throw new ConvexError(`file_fetch_failed:${remotePath}`);
+  const trusted = await trustedSandbox(ref);
+  const command = trusted.purpose === "runner" ? `node -e '${JS_FETCH}' '${url}' ${remotePath}` : `python3 -c '${PY_FETCH}' '${url}' ${remotePath}`;
+  const result = await trustedExec(trusted, command, 300);
+  if (result.exitCode !== 0) throw new ConvexError(`file_fetch_failed:${remotePath}:${result.output.slice(-120)}`);
 }
 
 function provider(): CloudDaytonaProvider {
@@ -183,9 +224,10 @@ export const runCase = internalAction({
     let resultBytes: Uint8Array | undefined;
     let traceBytes: Uint8Array | undefined;
     try {
-      resultBytes = await daytona.downloadFile(ref, `${runDir}/out/result.json`);
-      traceBytes = await daytona.downloadFile(ref, `${runDir}/out/trace.json`);
-    } catch {
+      resultBytes = await pullFile(ctx, daytona, ref, `${runDir}/out/result.json`);
+      traceBytes = await pullFile(ctx, daytona, ref, `${runDir}/out/trace.json`);
+    } catch (error) {
+      console.log("runCase:artifact_pull_failed", args.experimentId, error instanceof Error ? error.message.slice(0, 200) : "unknown");
       resultBytes = undefined;
     }
     const base = {

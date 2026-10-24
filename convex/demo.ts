@@ -7,9 +7,9 @@ import { action } from "./_generated/server.js";
  *  viewable investigation exists. It never fabricates physics: without
  *  Daytona + published bundles it reports accepted:false with the reason. */
 export const seed = action({
-  args: { requestedEnvironments: v.optional(v.number()), autoStart: v.optional(v.boolean()), retryFailedCapture: v.optional(v.boolean()), serviceToken: v.optional(v.string()) },
+  args: { requestedEnvironments: v.optional(v.number()), autoStart: v.optional(v.boolean()), retryFailedCapture: v.optional(v.boolean()), idempotencyKey: v.optional(v.string()), serviceToken: v.optional(v.string()) },
   handler: async (ctx, args): Promise<Record<string, unknown>> => {
-    const idempotencyKey = "demo-seed-v1";
+    const idempotencyKey = args.idempotencyKey ?? "demo-seed-v1";
     const outcome = await ctx.runMutation(api.investigations.capture, {
       title: "Demo: Panda collides with divider while carrying the cube",
       seed: 0, sceneOverrides: {}, requestedEnvironments: args.requestedEnvironments ?? 2,

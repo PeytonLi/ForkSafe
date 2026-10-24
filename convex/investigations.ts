@@ -235,7 +235,7 @@ export const enterEvaluation = internalMutation({
       environmentId,
       jobId,
       snapshot: process.env.DAYTONA_EXECUTION_SNAPSHOT ?? "forksafe-exec-v1",
-      resources: { cpu: 2, memoryGiB: 4, diskGiB: 10 },
+      resources: { cpu: 2, memoryGiB: 2, diskGiB: 10 },
       provider,
     });
     return { scheduled: true };

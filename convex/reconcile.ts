@@ -6,6 +6,10 @@ import { decideExpiry } from "./lib/leasing.js";
 import { reconcileHandoff } from "./lib/handoff.js";
 import { assertUUID } from "./lib/validators.js";
 
+// A sandbox op that never produced a sandbox (create failed or was ambiguous and the sweep could not
+// find anything to destroy) must not block cancellation from finalizing.
+const SETTLED_SANDBOX_STATES = new Set(["terminated", "error", "ambiguous_create"]);
+
 export const tick = internalMutation({
   args: { now: v.optional(v.number()), scheduleNext: v.optional(v.boolean()) },
   handler: async (ctx, args) => {
@@ -153,7 +157,7 @@ export const tick = internalMutation({
         .withIndex("by_investigation", (q) => q.eq("investigationId", investigation.appId))
         .take(100);
       if (investigationJobs.every((job) => ["succeeded", "failed", "cancelled"].includes(job.state)) &&
-          operations.every((operation) => operation.status === "terminated")) {
+          operations.every((operation) => SETTLED_SANDBOX_STATES.has(operation.status) || (operation.status === "ambiguous_terminate" && !operation.sandbox))) {
         await ctx.db.patch(investigation._id, {
           state: "cancelled", cancelStatus: "cancelled", updatedAtMs: now,
         });
