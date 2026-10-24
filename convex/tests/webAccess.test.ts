@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import schema from "../schema.js";
 import { api } from "../_generated/api.js";
 import { internalAction } from "../_generated/server.js";
-import { requireWriteIdentity, validateInvite } from "../lib/webAccess.js";
+import { accessGrantedForUser, newOAuthAccountNeedsInvite, requireWriteIdentity, validateInvite } from "../lib/webAccess.js";
 
 const modules = { ...import.meta.glob("../**/*.ts"), "../bridge.ts": async () => ({
   recordReview: internalAction({ args: {}, handler: async () => ({ committed: false }) }),
@@ -48,6 +48,56 @@ describe("invite gate", () => {
     for (const inviteCode of [undefined, "wrong", 123]) expect(() => validateInvite({ flow: "signUp", inviteCode }, { FORKSAFE_INVITE_CODE: "right" })).toThrow("Invalid invite code");
     expect(() => validateInvite({ flow: "signUp", inviteCode: "right" }, { FORKSAFE_INVITE_CODE: "right" })).not.toThrow();
     expect(() => validateInvite({ flow: "signIn" }, {})).not.toThrow();
+  });
+
+  it("holds only a brand-new OAuth account for the invite", () => {
+    expect(newOAuthAccountNeedsInvite("oauth", null)).toBe(true);
+    expect(newOAuthAccountNeedsInvite("oauth", "user")).toBe(false);
+    expect(newOAuthAccountNeedsInvite("credentials", null)).toBe(false);
+    expect(accessGrantedForUser(null)).toBe(true);
+    expect(accessGrantedForUser({})).toBe(true);
+    expect(accessGrantedForUser({ accessGranted: false })).toBe(false);
+  });
+});
+
+describe("google invite gate", () => {
+  it("keeps a new Google account closed until the invite is redeemed", async () => {
+    const t = await seeded();
+    vi.stubEnv("FORKSAFE_INVITE_CODE", "right");
+    const userId = await t.run((ctx) => ctx.db.insert("users", { email: "person@example.com", accessGranted: false }));
+    const caller = t.withIdentity({ subject: `${userId}|session`, tokenIdentifier: `trusted|${userId}` });
+    expect(await caller.query(api.auth.viewer, {})).toMatchObject({ email: "person@example.com", accessGranted: false });
+    expect((await caller.query(api.investigations.list, {}))[0]?.title).toBe("Restricted investigation");
+    await expect(caller.query(api.investigations.workspace, { investigationId: id })).rejects.toThrow("unauthorized");
+    await expect(caller.mutation(api.investigations.capture, capture)).rejects.toThrow("unauthorized");
+    await expect(caller.action(api.reviews.record, review)).rejects.toThrow("unauthorized");
+    await expect(caller.mutation(api.auth.redeemInvite, { inviteCode: "nope" })).resolves.toEqual({ ok: false });
+    await expect(caller.action(api.web.ask.ask, { investigationId: id, question: "why did it fail?" })).rejects.toThrow("unauthorized");
+    expect((await caller.query(api.investigations.list, {}))[0]?.title).toBe("Restricted investigation");
+    await expect(caller.mutation(api.auth.redeemInvite, { inviteCode: "right" })).resolves.toEqual({ ok: true });
+    expect(await caller.query(api.auth.viewer, {})).toMatchObject({ accessGranted: true });
+    expect((await caller.query(api.investigations.list, {}))[0]?.title).toBe("Private title");
+    await expect(caller.mutation(api.investigations.capture, capture)).resolves.toMatchObject({ accepted: false });
+  });
+
+  it("stops invite guessing for an hour after eight misses", async () => {
+    const t = await seeded();
+    vi.stubEnv("FORKSAFE_INVITE_CODE", "right");
+    const userId = await t.run((ctx) => ctx.db.insert("users", { email: "guess@example.com", accessGranted: false }));
+    const caller = t.withIdentity({ subject: `${userId}|session` });
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      await expect(caller.mutation(api.auth.redeemInvite, { inviteCode: `miss-${attempt}` })).resolves.toEqual({ ok: false });
+    }
+    await expect(caller.mutation(api.auth.redeemInvite, { inviteCode: "right" })).resolves.toEqual({ ok: false });
+    expect(await caller.query(api.auth.viewer, {})).toMatchObject({ accessGranted: false });
+  });
+
+  it("leaves an account from before Google sign-in able to read", async () => {
+    const t = await seeded();
+    const userId = await t.run((ctx) => ctx.db.insert("users", { email: "legacy@example.com" }));
+    const caller = t.withIdentity({ subject: `${userId}|session` });
+    expect((await caller.query(api.investigations.list, {}))[0]?.title).toBe("Private title");
+    expect(await caller.query(api.auth.viewer, {})).toMatchObject({ accessGranted: true });
   });
 });
 

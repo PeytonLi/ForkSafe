@@ -176,6 +176,9 @@ importers:
 
   convex:
     dependencies:
+      '@auth/core':
+        specifier: 0.41.3
+        version: 0.41.3
       '@convex-dev/auth':
         specifier: ^0.0.96
         version: 0.0.96(@auth/core@0.41.3)(convex@1.48.0(react@19.3.1))(react@19.3.1)

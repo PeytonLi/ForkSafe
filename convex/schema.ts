@@ -24,8 +24,24 @@ const attemptState = v.union(
   v.literal("succeeded"), v.literal("failed"), v.literal("expired"), v.literal("fenced"),
 );
 
+const { users: _authUsers, ...authTablesWithoutUsers } = authTables;
+
 export default defineSchema({
-  ...authTables,
+  ...authTablesWithoutUsers,
+  users: defineTable({
+    name: v.optional(v.string()),
+    image: v.optional(v.string()),
+    email: v.optional(v.string()),
+    emailVerificationTime: v.optional(v.number()),
+    phone: v.optional(v.string()),
+    phoneVerificationTime: v.optional(v.number()),
+    isAnonymous: v.optional(v.boolean()),
+    // False until a new Google account redeems the shared invite. Absent on
+    // accounts created before Google sign-in, which already passed the invite.
+    accessGranted: v.optional(v.boolean()),
+    inviteFailures: v.optional(v.number()),
+    inviteFailureWindowStartMs: v.optional(v.number()),
+  }).index("email", ["email"]).index("phone", ["phone"]),
   forgeRequests: defineTable({
     idempotencyKey: v.string(), payload: v.string(), requestId: uuid,
     parentInvestigationId: uuid, followUpInvestigationId: uuid,

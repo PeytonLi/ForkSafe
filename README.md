@@ -20,8 +20,9 @@ while placing a block. ForkSafe then:
    file (its SHA-256), so nobody can swap the code after it was approved.
 
 **Hosted app:** https://giant-jellyfish-684.convex.site
-Signed-out visitors see a short list of public investigations. Ask Peyton for
-an invite code to sign in and start or review runs.
+Signed-out visitors see a short list of public investigations. Sign in with
+Google, then ask Peyton for an invite code to start or review runs. An existing
+email account can still sign in with its password.
 
 > **Honest labels.** Fixture mode shows a recorded story, not live physics.
 > `pnpm benchmark` runs real physics on your machine. The hosted health page
@@ -89,8 +90,9 @@ The hosted Convex deployment also needs some variables that live only in Convex
 SpacetimeDB module), `FORKSAFE_EVAL_SIGNING_KEY` and `FORKSAFE_EVAL_TRUSTED_KEYS`
 (evaluator signing), `RUNNER_LAUNCH_MODE=external` (see below),
 `FORKSAFE_INVITE_CODE`, `FORKSAFE_PUBLIC_INVESTIGATION_IDS`, `FORKSAFE_WEB_URL`,
-`FORGE_ALLOWED_INSTALLATION_IDS`, and the Convex Auth keys `JWT_PRIVATE_KEY`,
-`JWKS`, `SITE_URL`. See [Convex](docs/integrations/convex.md),
+`FORGE_ALLOWED_INSTALLATION_IDS`, the Convex Auth keys `JWT_PRIVATE_KEY`,
+`JWKS`, `SITE_URL`, and the Google client `AUTH_GOOGLE_ID` /
+`AUTH_GOOGLE_SECRET`. See [Convex](docs/integrations/convex.md),
 [web access](docs/web-access-control.md) and the
 [on-call runbook](docs/operations/runbook.md).
 

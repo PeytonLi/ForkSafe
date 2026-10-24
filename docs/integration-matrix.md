@@ -39,7 +39,7 @@ Readiness may also say `not_verified`; that is a probe result, not a mode.
 | Jira (project `FS`) | live, review projection | Issues `FS-3` (run `195d5a1f...`) and `FS-4` (run `fbdc8b1c...`) exist, both in To Do on 2026-10-24 (#11, #21). | FS-3 stayed in To Do even though the run was approved; status names are project-specific. |
 | Forge review panel | configured | App `66bb7292-9ddc-4529-aa0f-db7b15fc667a` installed on the dev site (installation `3c0775f6-4d23-4a64-b3bb-d32c0f084a66`). Convex `/forge/v1/*` routes answer 401 without a token (#11, #18, #20). | A real Forge Invocation Token (FIT) from inside Jira has not been used yet, so live review context and submitting a review from Forge are not verified. |
 | Confluence (requirements page) | configured | Page `327681` in space `TWC` was created and read in #11. | Readiness reports `not_implemented`; not separately probed. |
-| Web app | live | Served from Convex static hosting; invite-gated sign-in; public list holds two investigation IDs (#20). | The two live runs below are not on the public list. Fixture mode stays available with `VITE_FORKSAFE_DATA=fixture`. |
+| Web app | live | Served from Convex static hosting; Google sign-in plus the shared invite; public list holds two investigation IDs (#20). | The two live runs below are not on the public list. Fixture mode stays available with `VITE_FORKSAFE_DATA=fixture`. |
 | Artifacts | live in runs | Replay and log artifacts were stored with the runs (#21). | Local mode writes to `./var/artifacts`. |
 | Telemetry (OpenTelemetry) | not implemented on main | Pending in PR #24. | |
 | Chaos harness | not implemented on main | Pending in PR #25. | |

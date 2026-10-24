@@ -10,7 +10,8 @@ Hosted app: https://giant-jellyfish-684.convex.site
 - DO: open https://giant-jellyfish-684.convex.site/health. Every service you
   plan to mention should be green. Factory shows as configured but not probed;
   that is normal.
-- DO: sign in with the invite code (ask Peyton). The two live runs below are not
+- DO: sign in with Google, then enter the invite code (ask Peyton). An existing
+  email account can sign in with its password. The two live runs below are not
   on the public list, so signed-out visitors cannot open them.
 - DO: open these two investigations in tabs so you are not hunting for them:
   - `195d5a1f-aea3-4f10-af1a-c428fffffca3` (completed and approved)
