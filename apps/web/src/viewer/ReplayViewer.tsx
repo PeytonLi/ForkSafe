@@ -211,26 +211,31 @@ interface Props {
   t: number;
   label: string;
   scene: Record<string, number>;
+  compact?: boolean;
   /** Original (failing) run drawn as a translucent ghost on the same clock. */
   ghost?: SimRunResult;
 }
 
 /** Renders sampled authoritative state; it never runs physics or scores. */
-export function ReplayViewer({ replay, t, label, scene, ghost }: Props) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+export function ReplayViewer({ replay, t, label, scene, ghost, compact = false }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const s3Ref = useRef<Scene3D | null>(null);
   const [webglError, setWebglError] = useState<string | null>(null);
   const smp = sampleAt(replay.frames, t);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
     const wrap = wrapRef.current;
-    if (!canvas || !wrap) return;
+    if (!wrap) return;
+    const canvas = document.createElement("canvas");
+    canvas.className = styles.canvas!;
+    canvas.setAttribute("aria-label", `${label} replay, 3D view`);
+    canvas.setAttribute("role", "img");
+    wrap.appendChild(canvas);
     let s3: Scene3D;
     try {
       s3 = build(canvas, scene);
     } catch (e) {
+      canvas.remove();
       setWebglError((e as Error).message || "WebGL unavailable");
       return;
     }
@@ -249,9 +254,11 @@ export function ReplayViewer({ replay, t, label, scene, ghost }: Props) {
     return () => {
       ro.disconnect();
       s3.renderer.dispose();
+      s3.renderer.forceContextLoss();
       s3Ref.current = null;
+      canvas.remove();
     };
-  }, [scene]);
+  }, [label, scene]);
 
   useEffect(() => {
     const s3 = s3Ref.current;
@@ -275,22 +282,20 @@ export function ReplayViewer({ replay, t, label, scene, ghost }: Props) {
           <div className={styles.fallback} role="note">
             3D view unavailable ({webglError}). Frame data is still shown below.
           </div>
-        ) : (
-          <canvas ref={canvasRef} className={styles.canvas} aria-label={`${label} replay, 3D view`} role="img" />
-        )}
+        ) : null}
       </div>
       <figcaption className={styles.caption}>
         <strong>{label}</strong>
         <span data-testid="frame-readout">
           t={smp?.tSec.toFixed(2) ?? "0.00"} s · frame {smp ? smp.frameIndex + 1 : 0}/{replay.frames.length}
         </span>
-        {contact ? (
+        {!compact && contact ? (
           <span className={styles.contact}>
             Contact {contact.a}↔{contact.b} {(contact.depthM * 1000).toFixed(1)} mm
           </span>
-        ) : (
+        ) : !compact ? (
           <span className={styles.muted}>{smp?.attached ? "Cube grasped" : "No contact"}</span>
-        )}
+        ) : null}
       </figcaption>
     </figure>
   );

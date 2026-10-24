@@ -372,7 +372,7 @@ export const runExperiment = internalAction({
     }
     const outcome = await ctx.runAction(internal.execution.runCase, {
       sandboxOpId: sandbox.appId, investigationId: args.investigationId, attemptId: args.attemptId, experimentId,
-      simCase, controllerSource: controller.source, timeoutSec: 30,
+      environmentId: args.environmentId, simCase, controllerSource: controller.source, timeoutSec: 30,
     });
     let committed = false;
     try {

@@ -1,7 +1,9 @@
 import { useState } from "react";
-import { fmtDuration, shortSha } from "../hooks";
+import { fmtDuration, shortSha, useCompact } from "../hooks";
 import type { InvestigationWorkspace } from "../services";
+import { LiveViewer } from "../viewer/LiveViewer";
 import { Badge } from "./Panel";
+import { SegThumb } from "./SegThumb";
 import { human, stateTone } from "./tone";
 import styles from "./EnvironmentGrid.module.css";
 
@@ -10,10 +12,66 @@ const TIMELINE_CAP = 6;
 export function EnvironmentGrid({ workspace: w }: { workspace: InvestigationWorkspace }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [selectedLiveEnv, setSelectedLiveEnv] = useState(w.environments[0]?.id);
+  const compact = useCompact();
   if (!w.environments.length)
     return <p className={styles.empty} data-testid="empty-state">No environments have been provisioned for this investigation yet.</p>;
+  const selected = w.environments.find((e) => e.id === selectedLiveEnv) ?? w.environments[0]!;
+  const currentExperiment = (environmentId: string) => w.experiments
+    .filter((x) => x.environmentId === environmentId && (x.status === "running" || x.status === "queued"))
+    .sort((a, b) => b.startedAtMs - a.startedAtMs)[0];
   return (
-    <div className={styles.grid} data-testid="environment-grid">
+    <div className={styles.environmentContent} data-testid="environment-grid">
+      <section className={styles.liveWall} data-testid="live-wall" aria-labelledby="live-wall-title">
+        <h2 id="live-wall-title">Live view</h2>
+        {compact ? (
+          <>
+            <div className={`seg ${styles.liveSwitcher}`} role="tablist" aria-label="Live environments">
+              <SegThumb active={selected.id} />
+              {w.environments.map((environment) => (
+                <button
+                  key={environment.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected.id === environment.id}
+                  onClick={() => setSelectedLiveEnv(environment.id)}
+                >
+                  Env {environment.index + 1}
+                </button>
+              ))}
+            </div>
+            <div role="tabpanel" aria-label={`Env ${selected.index + 1} live view`}>
+              {currentExperiment(selected.id) ? (
+                <LiveViewer
+                  key={currentExperiment(selected.id)!.id}
+                  experimentId={currentExperiment(selected.id)!.id}
+                  scene={w.investigation.baselineCase.sceneOverrides}
+                  label={`Env ${selected.index + 1}`}
+                  compact
+                />
+              ) : <p className={styles.idle}>Idle — no experiment running</p>}
+            </div>
+          </>
+        ) : (
+          <div className={styles.liveGrid}>
+            {w.environments.map((environment) => {
+              const experiment = currentExperiment(environment.id);
+              return experiment ? (
+                <LiveViewer
+                  key={experiment.id}
+                  experimentId={experiment.id}
+                  scene={w.investigation.baselineCase.sceneOverrides}
+                  label={`Env ${environment.index + 1}`}
+                  compact
+                />
+              ) : (
+                <article key={environment.id} className={styles.idle}>Idle — no experiment running</article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+      <div className={styles.grid}>
       {w.environments.map((e) => {
         const sessions = w.sessions.filter((s) => s.environmentId === e.id);
         const exps = w.experiments.filter((x) => x.environmentId === e.id).sort((a, b) => b.startedAtMs - a.startedAtMs);
@@ -92,6 +150,7 @@ export function EnvironmentGrid({ workspace: w }: { workspace: InvestigationWork
           </article>
         );
       })}
+      </div>
     </div>
   );
 }
