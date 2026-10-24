@@ -1,0 +1,35 @@
+.wrap { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.9rem; }
+.picker { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.pick, .pickActive { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; border: 1px solid var(--line); border-radius: 10px; padding: 0.4rem 0.7rem; background: var(--panel); font-size: 0.85rem; cursor: pointer; min-width: 0; }
+.pickActive { border-color: var(--blue); background: var(--blue-bg); }
+.panes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.7rem; }
+.outcome { margin: 0.35rem 0 0; }
+.cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.9rem; align-items: start; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 0.9rem 1rem; min-width: 0; }
+.card h3 { font-size: 0.95rem; margin-bottom: 0.6rem; }
+.dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.3rem 0.8rem; margin: 0; font-size: 0.84rem; }
+.dl dt { color: var(--muted); }
+.dl dd { margin: 0; overflow-wrap: anywhere; min-width: 0; }
+.dl code { overflow-wrap: anywhere; word-break: break-all; }
+.fn { background: var(--gray-bg); padding: 0 0.3rem; border-radius: 4px; margin-right: 0.3rem; }
+.muted { color: var(--muted); font-size: 0.85rem; }
+.err { color: var(--red); }
+.diff { margin-top: 0.6rem; }
+.diff summary { cursor: pointer; font-weight: 600; font-size: 0.88rem; }
+.diff pre { margin: 0.4rem 0 0; padding: 0.6rem; background: #f8f9fb; border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; contain: inline-size; max-height: 18rem; }
+.add { color: var(--green); background: var(--green-bg); }
+.del { color: var(--red); background: var(--red-bg); }
+.suite { margin-bottom: 0.8rem; }
+.suiteHead { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0 0 0.4rem; font-size: 0.88rem; }
+.tableWrap { overflow-x: auto; contain: inline-size; }
+.tableWrap table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+.tableWrap th, .tableWrap td { text-align: left; padding: 0.3rem 0.4rem; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.suite > button { margin-top: 0.4rem; }
+.reviews { margin: 0.5rem 0; padding-left: 1.1rem; font-size: 0.85rem; display: grid; gap: 0.3rem; }
+.form { display: grid; gap: 0.6rem; justify-items: start; }
+.decisions { border: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; }
+.decisions legend { font-weight: 600; font-size: 0.85rem; margin-bottom: 0.3rem; }
+.notes { display: grid; gap: 0.25rem; width: 100%; font-size: 0.85rem; }
+.notes textarea { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 0.4rem; }
+@media (max-width: 900px) { .cols { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 640px) { .panes { grid-template-columns: minmax(0, 1fr); } }
