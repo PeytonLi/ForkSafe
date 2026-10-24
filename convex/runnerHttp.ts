@@ -140,6 +140,59 @@ export function registerRunnerRoutes(router: HttpRouter): void {
     }),
   });
 
+  for (const endpoint of ["claim", "release"] as const) {
+    router.route({
+      path: `/runner/pool/${endpoint}`,
+      method: "POST",
+      handler: httpAction(async (ctx, request) => {
+        const poolToken = process.env.RUNNER_POOL_TOKEN;
+        if (!poolToken) return json({ error: "pool_not_configured" }, 503);
+        const authorization = request.headers.get("authorization") ?? "";
+        const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : undefined;
+        try {
+          requireServiceToken(token, poolToken);
+        } catch {
+          return json({ error: "unauthorized" }, 401);
+        }
+        let body: any;
+        try {
+          const raw = await request.text();
+          if (raw.length > 4_096) return json({ error: "body_too_large" }, 413);
+          body = raw ? JSON.parse(raw) : {};
+        } catch {
+          return json({ error: "invalid_json" }, 400);
+        }
+        if (!body || typeof body !== "object" || Array.isArray(body)) return json({ error: "invalid_body" }, 400);
+        if (endpoint === "claim") {
+          if (typeof body.poolWorkerId !== "string" || !/^[A-Za-z0-9._:-]{3,120}$/.test(body.poolWorkerId)) {
+            return json({ error: "invalid_body" }, 400);
+          }
+          if (process.env.RUNNER_LAUNCH_MODE !== "external") return json({ error: "pool_disabled" }, 409);
+          try {
+            const claimed = await ctx.runMutation(internal.runnerPool.claim, { poolWorkerId: body.poolWorkerId });
+            if (!claimed) return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
+            const siteUrl = new URL(request.url).origin;
+            return json({ ...claimed, jobSourceUrl: siteUrl, controlUrl: siteUrl });
+          } catch (error) {
+            return errorResponse(error, 409);
+          }
+        }
+        if (typeof body.poolWorkerId !== "string" || !/^[A-Za-z0-9._:-]{3,120}$/.test(body.poolWorkerId)
+          || typeof body.credentialId !== "string" || !/^[0-9a-f-]{36}$/i.test(body.credentialId)) {
+          return json({ error: "invalid_body" }, 400);
+        }
+        try {
+          return json(await ctx.runMutation(internal.runnerPool.release, {
+            poolWorkerId: body.poolWorkerId,
+            credentialId: body.credentialId,
+          }));
+        } catch (error) {
+          return errorResponse(error, 409);
+        }
+      }),
+    });
+  }
+
   router.route({
     path: "/runner/heartbeat",
     method: "POST",

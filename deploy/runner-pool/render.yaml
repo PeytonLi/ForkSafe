@@ -1,0 +1,15 @@
+services:
+  - type: worker
+    name: forksafe-runner-pool
+    runtime: docker
+    dockerfilePath: deploy/runner-pool/Dockerfile
+    dockerContext: .
+    envVars:
+      - key: FACTORY_API_KEY
+        sync: false
+      - key: RUNNER_POOL_TOKEN
+        sync: false
+      - key: CONVEX_SITE_URL
+        value: https://giant-jellyfish-684.convex.site
+      - key: POOL_MAX_RUNNERS
+        value: "4"

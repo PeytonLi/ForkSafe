@@ -1,10 +1,10 @@
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api.js";
 import { internalMutation, internalQuery } from "./_generated/server.js";
-import { LEASE_EXPIRY_MS, RUNNER_CREDENTIAL_TTL_MS, readLimits } from "./lib/constants.js";
+import { LEASE_EXPIRY_MS, RUNNER_POOL_LEASE_MS, readLimits } from "./lib/constants.js";
 import { byAppId, claimJob, completeJob, currentStages, heartbeatAttempt, recordStageRow } from "./lib/jobOps.js";
 import { countsTowardCapacity } from "./lib/reservations.js";
-import { randomSecret } from "./lib/runnerAuth.js";
+import { issueRunnerCredential } from "./lib/runnerCredentials.js";
 import { appId, assertUUID } from "./lib/validators.js";
 
 /** Control plane for trusted runner sandboxes. Each sandbox holds exactly one
@@ -13,26 +13,7 @@ import { appId, assertUUID } from "./lib/validators.js";
 
 export const issueCredential = internalMutation({
   args: { investigationId: v.string(), environmentId: v.string(), sandboxOpId: v.optional(v.string()) },
-  handler: async (ctx, args) => {
-    assertUUID(args.investigationId, "investigationId");
-    assertUUID(args.environmentId, "environmentId");
-    const now = Date.now();
-    const previous = await ctx.db.query("runnerCredentials").withIndex("by_environment", (q) => q.eq("environmentId", args.environmentId)).collect();
-    for (const row of previous) {
-      if (row.revokedAtMs === undefined) await ctx.db.patch(row._id, { revokedAtMs: now, revokeReason: "superseded" });
-    }
-    const credentialId = appId();
-    const secret = randomSecret();
-    const expiresAtMs = now + RUNNER_CREDENTIAL_TTL_MS;
-    await ctx.db.insert("runnerCredentials", {
-      appId: credentialId, investigationId: args.investigationId, environmentId: args.environmentId,
-      ...(args.sandboxOpId ? { sandboxOpId: args.sandboxOpId } : {}),
-      secret, expiresAtMs, createdAtMs: now,
-    });
-    const environment = await byAppId(ctx, "environments", args.environmentId);
-    if (environment) await ctx.db.patch(environment._id, { runnerCredentialId: credentialId });
-    return { credentialId, secret, expiresAtMs };
-  },
+  handler: async (ctx, args) => await issueRunnerCredential(ctx, args),
 });
 
 export const revokeCredentials = internalMutation({
@@ -73,7 +54,12 @@ export const claim = internalMutation({
   args: { credentialId: v.string(), workerId: v.string() },
   handler: async (ctx, args) => {
     const credential = await requireCredential(ctx, args.credentialId);
-    await ctx.db.patch(credential._id, { lastSeenAtMs: Date.now(), workerId: args.workerId });
+    const now = Date.now();
+    await ctx.db.patch(credential._id, { lastSeenAtMs: now, workerId: args.workerId });
+    const environment = await byAppId(ctx, "environments", credential.environmentId);
+    if (environment?.runnerCredentialId === credential.appId && environment.poolWorkerId === args.workerId) {
+      await ctx.db.patch(environment._id, { leasedUntilMs: now + RUNNER_POOL_LEASE_MS });
+    }
     const jobs = await ctx.db.query("jobs").withIndex("by_investigation", (q) => q.eq("investigationId", credential.investigationId)).collect();
     const candidates = jobs.filter((job) =>
       job.environmentId === credential.environmentId && job.kind === "factory_session" && job.state === "reserved");
@@ -133,6 +119,10 @@ export const heartbeat = internalMutation({
       return { ok: false as const, reason: reason as "revoked" | "expired" | "fenced" };
     }
     await ctx.db.patch(credential._id, { lastSeenAtMs: Date.now() });
+    const environment = await byAppId(ctx, "environments", credential.environmentId);
+    if (environment?.runnerCredentialId === credential.appId && environment.poolWorkerId === credential.workerId) {
+      await ctx.db.patch(environment._id, { leasedUntilMs: Date.now() + RUNNER_POOL_LEASE_MS });
+    }
     const modelTurns = await ctx.db.query("reservations")
       .withIndex("by_kind_status", (q) => q.eq("kind", "model_turn").eq("status", "active"))
       .collect();
