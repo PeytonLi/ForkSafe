@@ -1,0 +1,33 @@
+{
+  "name": "@forksafe/integrations",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./daytona": {
+      "types": "./daytona/src/index.ts",
+      "default": "./daytona/src/index.ts"
+    },
+    "./artifacts": {
+      "types": "./artifacts/src/index.ts",
+      "default": "./artifacts/src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "daytona:prepare": "tsx daytona/scripts/prepare.ts",
+    "daytona:smoke": "tsx daytona/scripts/smoke.ts",
+    "daytona:cleanup": "tsx daytona/scripts/cleanup.ts"
+  },
+  "dependencies": {
+    "@daytonaio/sdk": "^0.226.1",
+    "@forksafe/contracts": "workspace:*",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.5",
+    "typescript": "~5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
