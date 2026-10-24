@@ -19,9 +19,9 @@ LOCK_PATH = DIRECTORY / "suites.lock.json"
 DOMAIN = {
     "objectDx": [-0.08, 0.08],
     "objectDy": [-0.08, 0.08],
-    "binDx": [-0.15, 0.15],
+    "binDx": [-0.15, 0.05],
     "binDy": [-0.2, 0.2],
-    "objectMass": [0.02, 0.3],
+    "objectMass": [0.01, 0.5],
     "binWallHeight": [0.03, 0.15],
     "speedScale": [0.5, 1.5],
 }

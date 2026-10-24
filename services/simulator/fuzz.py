@@ -21,6 +21,8 @@ from simulator.scene import task_family
 
 
 def _axis_values(low: float, high: float, count: int) -> list[float]:
+    if count == 1 and low <= 0.0 <= high:
+        return [0.0]
     step = (high - low) / count
     return [
         float(value)
@@ -125,7 +127,7 @@ def main(argv: list[str] | None = None) -> int:
             x_key, x_low, x_high = "dividerDx", -0.25, 0.25
             y_key, y_low, y_high = "dividerHeight", 0.03, 0.12
         elif family == "toss_into_bin":
-            x_key, x_low, x_high = "binDx", -0.15, 0.15
+            x_key, x_low, x_high = "binDx", -0.15, 0.05
             y_key, y_low, y_high = "objectMass", 0.02, 0.3
         else:
             x_key, x_low, x_high = "gapDx", -0.08, 0.08

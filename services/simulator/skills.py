@@ -1,3 +1,5 @@
+"""Controller skill execution; speedScale does not alter explicit toss speed."""
+
 from __future__ import annotations
 
 import math
@@ -12,6 +14,7 @@ from simulator.scene import BuiltScene
 CONTROL_PERIOD = 0.01
 JOINT_COUNT = 7
 TCP_TOLERANCE = 0.005
+TOSS_TCP_TOLERANCE = 0.01
 GRASP_DISTANCE = 0.02
 TOOL_QUATERNION = np.array([0.0, 1.0, 0.0, 0.0])
 TOOL_TRACKING_COMPENSATION = np.array([0.006, 0.0, 0.006])
@@ -186,7 +189,8 @@ class SkillExecutor:
             return
         default_speed = 0.1 if pushing else 0.25
         try:
-            speed = float(skill.get("speed", default_speed)) * self.speed_scale
+            speed_scale = 1.0 if skill.get("skill") == "toss" else self.speed_scale
+            speed = float(skill.get("speed", default_speed)) * speed_scale
         except (TypeError, ValueError):
             self.error = ("invalid_run", "move speed must be numeric")
             return
@@ -216,7 +220,12 @@ class SkillExecutor:
         if release_at is not None and self.progress >= release_at and self.attached:
             self._detach(time, release_mode="toss")
             self.data.ctrl[self.scene.actuator_ids[7]] = 255.0
-        if np.linalg.norm(self._site_position() - target) <= TCP_TOLERANCE and travelled >= distance:
+        tolerance = (
+            TOSS_TCP_TOLERANCE
+            if self.scene.task_family == "toss_into_bin"
+            else TCP_TOLERANCE
+        )
+        if np.linalg.norm(self._site_position() - target) <= tolerance and travelled >= distance:
             self._advance()
         elif elapsed > distance / speed + 5.0:
             self.error = ("stalled", f"move_to_pose did not reach target {target.tolist()}")

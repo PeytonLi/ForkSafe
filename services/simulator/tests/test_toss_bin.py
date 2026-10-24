@@ -24,8 +24,23 @@ def _cases() -> dict[str, SimCase]:
     }
 
 
+def _carry_and_drop_plan(object_start: list[float], bin_center: list[float]) -> list[dict[str, object]]:
+    x, y, z = object_start
+    return [
+        {"skill": "open_gripper"},
+        {"skill": "move_to_pose", "pos": [x, y, z + 0.12], "speed": 0.2},
+        {"skill": "move_to_pose", "pos": [x, y, z], "speed": 0.15},
+        {"skill": "close_gripper"},
+        {"skill": "move_to_pose", "pos": [x, y, 0.25], "speed": 0.15},
+        {"skill": "move_to_pose", "pos": [0.80, bin_center[1], 0.25], "speed": 0.15},
+        {"skill": "open_gripper"},
+        {"skill": "wait", "sec": 1.0},
+    ]
+
+
 def test_toss_default_fails_diagnosably_and_reference_passes() -> None:
-    default = _cases()["toss-bin-default"]
+    cases = _cases()
+    default = cases["toss-bin-default"]
     baseline, _ = run_case(BASELINE, default, default.seed, UUID(int=46))
     assert baseline["completed"] is False
     assert baseline["firstFailure"]["kind"] in {
@@ -35,10 +50,71 @@ def test_toss_default_fails_diagnosably_and_reference_passes() -> None:
     assert "touchdown" in baseline["firstFailure"]["detail"]
     assert "release speed" in baseline["firstFailure"]["detail"]
 
-    for case in _cases().values():
-        result, _ = run_case(REFERENCE, case, case.seed, UUID(int=47))
+    nominal, _ = run_case(
+        BASELINE, cases["toss-bin-nominal"], cases["toss-bin-nominal"].seed, UUID(int=48)
+    )
+    assert nominal["completed"] is True
+
+    for index, case in enumerate(cases.values()):
+        result, trace = run_case(REFERENCE, case, case.seed, UUID(int=49 + index))
         assert result["completed"], (case.case_id, result.get("firstFailure"))
         assert result["failureKinds"] == []
+        if case.case_id == "toss-bin-default":
+            release = next(
+                event
+                for event in trace["attachmentEvents"]
+                if not event["attached"]
+            )
+            assert release["releaseMode"] == "toss"
+            assert release["tcpSpeedMps"] >= 1.4
+
+
+def test_reference_passes_each_toss_override_extreme_and_far_corners() -> None:
+    config = json.loads(
+        (SIMULATOR_ROOT / "services/simulator/scene_configs/toss_bin.json").read_text()
+    )
+    ranges = config["overrideRanges"]
+    cases = [
+        (key, {key: bound})
+        for key, limits in ranges.items()
+        for bound in limits
+    ]
+    bin_dx_max = ranges["binDx"][1]
+    cases.extend(
+        (
+            ("binDx+max/binDy-min", {"binDx": bin_dx_max, "binDy": ranges["binDy"][0]}),
+            ("binDx+max/binDy-max", {"binDx": bin_dx_max, "binDy": ranges["binDy"][1]}),
+        )
+    )
+    for index, (name, overrides) in enumerate(cases):
+        case = SimCase(
+            caseId=f"toss-extreme-{index}",
+            suite="public",
+            taskFamily="toss_into_bin",
+            seed=0,
+            sceneOverrides=overrides,
+        )
+        result, _ = run_case(REFERENCE, case, 0, UUID(int=100 + index))
+        assert result["completed"], (name, overrides, result.get("firstFailure"))
+
+
+def test_carry_and_drop_does_not_complete_default_toss_scene() -> None:
+    case = _cases()["toss-bin-default"]
+    scene = build_scene(case)
+    plan = _carry_and_drop_plan(
+        scene.config["objectStart"], scene.config["binCenter"]
+    )
+    session = RunSession.from_plan(
+        case,
+        case.seed,
+        UUID(int=146),
+        plan,
+        "0" * 64,
+    )
+    session.run_to_end()
+    result, _ = session.finish()
+    assert result["completed"] is False
+    assert result["firstFailure"]["kind"] in {"dropped_early", "missed_bin_short"}
 
 
 def test_toss_scene_overrides_geometry_and_skill_limits() -> None:

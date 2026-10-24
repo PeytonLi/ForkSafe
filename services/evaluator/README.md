@@ -4,6 +4,10 @@
 public, withheld, or combined suite. It does not import the FastAPI service.
 Run from the repository root with `PYTHONPATH=services`, for example:
 
+For `toss_into_bin`, `speedScale` scales `move_to_pose` and `push` speeds, not
+the explicit `toss.speed` command. Toss speed remains the commanded physical
+throw speed regardless of the scene's `speedScale`.
+
 ```sh
 PYTHONPATH=services .venv/bin/python -m evaluator.run_candidate \
   --controller controllers/baseline/task_controller.py \

@@ -12,15 +12,15 @@
     ],
     "binDx": [
       -0.15,
-      0.15
+      0.05
     ],
     "binDy": [
       -0.2,
       0.2
     ],
     "objectMass": [
-      0.02,
-      0.3
+      0.01,
+      0.5
     ],
     "binWallHeight": [
       0.03,
@@ -36,15 +36,15 @@
       "caseId": "withheld-toss-01",
       "suite": "withheld",
       "taskFamily": "toss_into_bin",
-      "seed": 1659561258,
+      "seed": 1378964542,
       "sceneOverrides": {
-        "objectDx": -0.04569,
-        "objectDy": -0.05537,
-        "binDx": -0.0592,
-        "binDy": -0.06116,
-        "objectMass": 0.15587,
-        "binWallHeight": 0.14955,
-        "speedScale": 0.95443
+        "objectDx": 0.03488,
+        "objectDy": -0.00054,
+        "binDx": 0.03439,
+        "binDy": -0.02609,
+        "objectMass": 0.07848,
+        "binWallHeight": 0.04269,
+        "speedScale": 1.44503
       },
       "description": "Toss the object into the open-top bin."
     },
@@ -52,15 +52,15 @@
       "caseId": "withheld-toss-02",
       "suite": "withheld",
       "taskFamily": "toss_into_bin",
-      "seed": 1020088043,
+      "seed": 42919155,
       "sceneOverrides": {
-        "objectDx": -0.05591,
-        "objectDy": -0.03222,
-        "binDx": -0.10059,
-        "binDy": 0.09725,
-        "objectMass": 0.13871,
-        "binWallHeight": 0.11839,
-        "speedScale": 0.64913
+        "objectDx": 0.0161,
+        "objectDy": -0.06291,
+        "binDx": -0.00112,
+        "binDy": 0.1866,
+        "objectMass": 0.49692,
+        "binWallHeight": 0.1459,
+        "speedScale": 1.07079
       },
       "description": "Toss the object into the open-top bin."
     },
@@ -68,15 +68,15 @@
       "caseId": "withheld-toss-03",
       "suite": "withheld",
       "taskFamily": "toss_into_bin",
-      "seed": 1289063791,
+      "seed": 1498372573,
       "sceneOverrides": {
-        "objectDx": 0.06574,
-        "objectDy": 0.03757,
-        "binDx": 0.00482,
-        "binDy": 0.08566,
-        "objectMass": 0.23352,
-        "binWallHeight": 0.03889,
-        "speedScale": 1.43881
+        "objectDx": -0.073,
+        "objectDy": 0.06976,
+        "binDx": -0.09512,
+        "binDy": 0.1095,
+        "objectMass": 0.01457,
+        "binWallHeight": 0.10513,
+        "speedScale": 0.86864
       },
       "description": "Toss the object into the open-top bin."
     },
@@ -84,15 +84,15 @@
       "caseId": "withheld-toss-04",
       "suite": "withheld",
       "taskFamily": "toss_into_bin",
-      "seed": 459358917,
+      "seed": 974630709,
       "sceneOverrides": {
-        "objectDx": 0.01531,
-        "objectDy": 0.03566,
-        "binDx": -0.10717,
-        "binDy": -0.15808,
-        "objectMass": 0.0605,
-        "binWallHeight": 0.06289,
-        "speedScale": 1.01508
+        "objectDx": 0.05498,
+        "objectDy": -0.06303,
+        "binDx": -0.06897,
+        "binDy": 0.11036,
+        "objectMass": 0.30065,
+        "binWallHeight": 0.12968,
+        "speedScale": 0.92829
       },
       "description": "Toss the object into the open-top bin."
     },
@@ -100,15 +100,15 @@
       "caseId": "withheld-toss-05",
       "suite": "withheld",
       "taskFamily": "toss_into_bin",
-      "seed": 313085489,
+      "seed": 511411324,
       "sceneOverrides": {
-        "objectDx": -0.0495,
-        "objectDy": 0.03169,
-        "binDx": 0.02079,
-        "binDy": -0.17845,
-        "objectMass": 0.1574,
-        "binWallHeight": 0.08499,
-        "speedScale": 1.23214
+        "objectDx": 0.00258,
+        "objectDy": -0.07242,
+        "binDx": -0.01447,
+        "binDy": 0.17567,
+        "objectMass": 0.35841,
+        "binWallHeight": 0.12233,
+        "speedScale": 1.26749
       },
       "description": "Toss the object into the open-top bin."
     },
@@ -116,15 +116,15 @@
       "caseId": "withheld-toss-06",
       "suite": "withheld",
       "taskFamily": "toss_into_bin",
-      "seed": 1403607581,
+      "seed": 1659561258,
       "sceneOverrides": {
-        "objectDx": -0.01006,
-        "objectDy": -0.05884,
-        "binDx": -0.08598,
-        "binDy": 0.16189,
-        "objectMass": 0.22862,
-        "binWallHeight": 0.12428,
-        "speedScale": 1.13659
+        "objectDx": -0.04569,
+        "objectDy": -0.05537,
+        "binDx": -0.08946,
+        "binDy": -0.06116,
+        "objectMass": 0.24778,
+        "binWallHeight": 0.14955,
+        "speedScale": 0.95443
       },
       "description": "Toss the object into the open-top bin."
     }

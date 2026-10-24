@@ -18,8 +18,13 @@ def test_toss_suite_manifests_are_locked_and_family_scoped() -> None:
     }
     public = json.loads(public_path.read_text())
     withheld = json.loads(withheld_path.read_text())
+    config = json.loads(
+        (ROOT / "services/simulator/scene_configs/toss_bin.json").read_text()
+    )
     assert len(public["cases"]) == 8
     assert len(withheld["cases"]) == 6
+    assert public["domain"] == config["overrideRanges"]
+    assert withheld["domain"] == config["overrideRanges"]
     assert public["cases"][0]["caseId"] == "toss-bin-default"
     assert public["cases"][1]["caseId"] == "toss-bin-nominal"
     assert all(case["taskFamily"] == "toss_into_bin" for case in public["cases"])
