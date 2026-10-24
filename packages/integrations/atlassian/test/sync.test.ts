@@ -8,6 +8,7 @@ import {
   remoteLinkGlobalId,
   syncFromOutbox,
   syncInvestigationToJira,
+  issueBodyLines,
   type JiraSyncInput,
 } from "../src/sync.js";
 import type { AtlassianTransport } from "../src/http.js";
@@ -198,3 +199,31 @@ describe("Jira investigation sync", () => {
     ).rejects.toThrow("operationId does not match");
   });
 });
+
+describe("Jira issue body", () => {
+  it("lists every candidate verdict and the review decision without withheld case detail", () => {
+    const lines = issueBodyLines(input({
+      candidateVerdicts: [{
+        candidateId, controllerSha256: sha, publicVerdict: "passed", publicPassed: 4, publicTotal: 4, withheldVerdict: "failed",
+      }],
+      review: { reviewId: operationId, candidateId, decision: "accepted" },
+    }));
+    const text = lines.join("\n");
+    expect(text).toContain(`Candidate ${candidateId}`);
+    expect(text).toContain("public passed 4/4; withheld failed");
+    expect(text).toContain(`Review decision: accepted for candidate ${candidateId}`);
+    expect(text).not.toMatch(/withheld-\d|withheld \d+\/\d+|sceneOverrides|seed/i);
+  });
+
+  it("says pending when there is no review or evaluated candidate yet", () => {
+    const text = issueBodyLines(input()).join("\n");
+    expect(text).toContain("Candidates: none evaluated yet");
+    expect(text).toContain("Review decision: pending");
+  });
+
+  it("rejects malformed labels and review decisions at the boundary", async () => {
+    await expect(syncInvestigationToJira({} as JiraClient, input({ extraLabels: ["bad label"] }))).rejects.toThrow();
+    await expect(syncInvestigationToJira({} as JiraClient, input({ review: { reviewId: operationId, candidateId, decision: "<script>" } }))).rejects.toThrow();
+  });
+});
+

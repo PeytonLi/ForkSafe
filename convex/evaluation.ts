@@ -4,9 +4,11 @@ import { internalAction, internalMutation, internalQuery } from "./_generated/se
 import publicManifest from "../evaluation/public/manifest.json";
 import withheldManifest from "../evaluation/withheld/manifest.json";
 import { MAX_FINALISTS } from "./lib/constants.js";
-import { caseStatus, median, rankCandidates } from "./lib/experimentStatus.js";
+import { caseStatus, classifyExperiment, median, rankCandidates } from "./lib/experimentStatus.js";
+import { loadTrustedKeys, verifySignedEvaluation } from "./lib/signedEvaluation.js";
 import { byAppId, claimJob, completeJob, heartbeatAttempt, recordStageRow } from "./lib/jobOps.js";
 import { appId } from "./lib/validators.js";
+import { evaluatorBackend } from "./lib/evaluatorBackend.js";
 
 /** Protected evaluator. Each candidate is evaluated in a FRESH execution
  *  sandbox that never held agent session state; the evaluator attempt is a
@@ -170,6 +172,7 @@ export const advance = internalMutation({
       }
       if (!finalists.length) {
         await ctx.db.patch(investigation._id, { state: "awaiting_review", version: investigation.version + 1, updatedAtMs: now });
+        await scheduleReviewIssue(ctx, args.investigationId);
         return { action: "awaiting_review_no_finalists" };
       }
       for (const finalist of finalists) {
@@ -189,6 +192,7 @@ export const advance = internalMutation({
       if (candidate.status === "evaluating") await ctx.db.patch(candidate._id, { status: "evaluated", updatedAtMs: now });
     }
     await ctx.db.patch(investigation._id, { state: "awaiting_review", version: investigation.version + 1, updatedAtMs: now });
+    await scheduleReviewIssue(ctx, args.investigationId);
     return { action: "awaiting_review" };
   },
 });
@@ -214,6 +218,7 @@ async function freshEvaluatorSandbox(ctx: any, investigationId: string, jobId: s
 export const evaluateNext = internalAction({
   args: { investigationId: v.string() },
   handler: async (ctx, args): Promise<{ action: string; jobId?: string }> => {
+    const backend = evaluatorBackend(process.env.DAYTONA_EXECUTION_SNAPSHOT);
     const state = await ctx.runQuery(internal.evaluation.nextJob, { investigationId: args.investigationId });
     if (state.active) return { action: "busy" };
     if (!state.next) {
@@ -237,6 +242,11 @@ export const evaluateNext = internalAction({
       await ctx.runMutation(internal.evaluation.completeEvaluation, { jobId, attemptId: claimed.attemptId, epoch: claimed.epoch, outcome, error });
       await ctx.scheduler.runAfter(1_000, internal.evaluation.evaluateNext, { investigationId: args.investigationId });
     };
+    if (backend === "v2") {
+      // TODO(PR #13): python -m evaluator.run_candidate
+      await fail("infra_failed", "evaluator_v2_not_merged");
+      return { action: "evaluator_v2_not_merged", jobId };
+    }
     if (!candidate || !source) {
       await fail("failed", "candidate_source_missing");
       return { action: "failed", jobId };
@@ -263,10 +273,58 @@ export const evaluateNext = internalAction({
     const grantRef = { grantId: grant.grantId, attemptId: claimed.attemptId, epoch: claimed.epoch };
     const cases: { caseId: string; status: "passed" | "failed" | "invalid"; experimentId?: string; completionTimeSec?: number; failureKinds: string[] }[] = [];
     let fenced = false;
+    let manifestRejected: string | undefined;
+    const signingKeys = new Set<string>();
+    const trustedKeys = backend === "v3" ? loadTrustedKeys(process.env) : null;
     try {
       for (const manifestCase of suites[suite]) {
         const beat = await ctx.runMutation(internal.evaluation.heartbeatEvaluation, { jobId, attemptId: claimed.attemptId, epoch: claimed.epoch });
         if (!beat.ok) { fenced = true; break; }
+        if (backend === "v3") {
+          const signedRun = await ctx.runAction(internal.execution.runSignedCase, {
+            sandboxOpId: sandbox.appId, investigationId: args.investigationId, candidateId: candidate.appId, attemptId: claimed.attemptId,
+            caseId: manifestCase.caseId, suite, controllerSource: source, controllerSha256: candidate.controllerSha256,
+          });
+          const verified = await verifySignedEvaluation(signedRun.document, {
+            candidateId: candidate.appId, investigationId: args.investigationId, evaluatorAttemptId: claimed.attemptId,
+            controllerSha256: candidate.controllerSha256, suite,
+          }, trustedKeys);
+          if (!verified.ok) {
+            manifestRejected = verified.code;
+            console.log("evaluation:manifest_rejected", jobId, manifestCase.caseId, verified.code, signedRun.exitCode);
+            break;
+          }
+          signingKeys.add(verified.keyId);
+          for (const signed of verified.cases) {
+            const simCase = { caseId: manifestCase.caseId, suite, seed: manifestCase.seed, sceneOverrides: manifestCase.sceneOverrides ?? {}, ...(manifestCase.description ? { description: manifestCase.description } : {}) };
+            const completed = signed.status === "passed" || signed.completionTimeSec !== undefined;
+            const experimentStatus = signed.status === "passed" ? "succeeded" : signed.status === "invalid" ? "invalid" : classifyExperiment({ completed: false, failureKinds: signed.failureKinds });
+            await ctx.runMutation(internal.evidence.reserveExperiment, {
+              experimentId: signed.experimentId, investigationId: args.investigationId, candidateId: candidate.appId, attemptId: claimed.attemptId, epoch: claimed.epoch,
+              grantId: grant.grantId, purpose: "evaluation", simCase, controllerSha256: candidate.controllerSha256, sandboxOpId: sandbox.appId, changedFunctions: candidate.changedFunctions,
+            });
+            let committed = false;
+            try {
+              const result = await ctx.runAction(internal.bridge.recordExperiment, {
+                grant: grantRef, id: signed.experimentId, investigationId: args.investigationId, candidateId: candidate.appId, simCase, status: experimentStatus,
+                failureKinds: signed.failureKinds, completed, ...(signed.completionTimeSec !== undefined ? { completionTimeSec: signed.completionTimeSec } : {}),
+                changedFunctions: candidate.changedFunctions, engineVersion: verified.engineVersion, assetsSha256: verified.assetsSha256, controllerSha256: verified.controllerSha256,
+                startedAtMs: Date.now() - signedRun.wallMs, finishedAtMs: Date.now(),
+              });
+              committed = result.committed;
+            } catch {
+              committed = false;
+            }
+            await ctx.runMutation(internal.evidence.finishExperiment, {
+              experimentId: signed.experimentId, status: experimentStatus, failureKinds: signed.failureKinds, completed,
+              ...(signed.completionTimeSec !== undefined ? { completionTimeSec: signed.completionTimeSec } : {}),
+              ...(signed.firstFailure ? { firstFailure: signed.firstFailure } : {}),
+              engineVersion: verified.engineVersion, assetsSha256: verified.assetsSha256, controllerSha256: verified.controllerSha256, spacetimeCommitted: committed,
+            });
+            cases.push({ caseId: signed.caseId, status: signed.status, experimentId: signed.experimentId, ...(signed.completionTimeSec !== undefined ? { completionTimeSec: signed.completionTimeSec } : {}), failureKinds: signed.failureKinds });
+          }
+          continue;
+        }
         const experimentId = appId();
         const simCase = { caseId: manifestCase.caseId, suite, seed: manifestCase.seed, sceneOverrides: manifestCase.sceneOverrides ?? {}, ...(manifestCase.description ? { description: manifestCase.description } : {}) };
         await ctx.runMutation(internal.evidence.reserveExperiment, {
@@ -301,6 +359,11 @@ export const evaluateNext = internalAction({
       await ctx.scheduler.runAfter(0, internal.sandboxActions.terminate, { sandboxOpId: sandbox.appId });
     }
     if (fenced) return { action: "fenced", jobId };
+    if (manifestRejected) {
+      await fail("infra_failed", `signed_manifest_${manifestRejected}`);
+      return { action: "manifest_rejected", jobId };
+    }
+
     const allPassed = cases.length > 0 && cases.every((item) => item.status === "passed");
     const status = allPassed ? "passed" : cases.some((item) => item.status === "invalid") ? "invalid" : "failed";
     const medianTime = median(cases.filter((item) => item.status === "passed" && item.completionTimeSec !== undefined).map((item) => item.completionTimeSec!));
@@ -309,7 +372,7 @@ export const evaluateNext = internalAction({
       evaluationId, candidateId: candidate.appId, investigationId: args.investigationId, evaluatorAttemptId: claimed.attemptId, jobId, epoch: claimed.epoch,
       grantId: grant.grantId, suite, cases, allRequiredPassed: allPassed, ...(medianTime !== undefined ? { medianCompletionTimeSec: medianTime } : {}), status, sandboxOpId: sandbox.appId,
     });
-    await ctx.runMutation(internal.evaluation.stageEvaluation, { jobId, attemptId: claimed.attemptId, epoch: claimed.epoch, stage: "artifacts_persisted", detail: { evaluationId } });
+    await ctx.runMutation(internal.evaluation.stageEvaluation, { jobId, attemptId: claimed.attemptId, epoch: claimed.epoch, stage: "artifacts_persisted", detail: { evaluationId, ...(signingKeys.size ? { manifestVerified: true, signedManifestKeyIds: [...signingKeys] } : {}) } });
     let committed = false;
     try {
       const result = await ctx.runAction(internal.bridge.recordEvaluation, {
@@ -327,3 +390,11 @@ export const evaluateNext = internalAction({
     return { action: "evaluated", jobId };
   },
 });
+
+// Opens the FS review issue as soon as review is needed; the review reducer's own jira_sync row later updates it.
+async function scheduleReviewIssue(ctx: any, investigationId: string): Promise<void> {
+  await ctx.scheduler.runAfter(0, internal.outbox.insert, {
+    destination: "jira_sync", idempotencyKey: `awaiting_review:${investigationId}:jira_sync`, operationId: appId(),
+    payload: { kind: "awaiting_review", investigationId }, source: "convex",
+  });
+}

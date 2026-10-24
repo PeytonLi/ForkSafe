@@ -24,13 +24,18 @@ export class RunnerExecutor {
     const clock = this.options.clock ?? Date.now;
     const operationId = randomUUID();
     this.options.beforeJob?.(lease);
+    const checkpoint = lease.job.payload.resume as {
+      sessionId?: string; vendorSessionId?: string; turnIndex?: number; revisionHeadId?: string;
+    } | undefined;
     let sessionId = this.options.sessions.idleSessionFor(lease.job.investigationId, lease.job.environmentId);
     if (!sessionId) {
       try {
-        const created = await this.options.sessions.createSession({
-          investigationId: lease.job.investigationId,
-          environmentId: lease.job.environmentId,
-        });
+        const created = checkpoint?.vendorSessionId && checkpoint.sessionId
+          ? await this.options.sessions.resumeFromCheckpoint({
+            investigationId: lease.job.investigationId, environmentId: lease.job.environmentId,
+            sessionId: checkpoint.sessionId, vendorSessionId: checkpoint.vendorSessionId,
+          })
+          : await this.options.sessions.createSession({ investigationId: lease.job.investigationId, environmentId: lease.job.environmentId });
         sessionId = created.sessionId;
       } catch (error) {
         // Any session-open failure is reported on the lease instead of being left to expire:
@@ -54,8 +59,15 @@ export class RunnerExecutor {
     keeper.start();
     let turn: TurnOutcome | undefined;
     let failure: string | undefined;
+    let infrastructureFailure = false;
     const turns: TurnOutcome[] = [];
     try {
+      await this.options.sessions.registerSession(sessionId, {
+        attemptId: lease.attempt.id,
+        grantId: lease.grant.id,
+        epoch: lease.attempt.epoch,
+        jobId: lease.job.id,
+      });
       await this.options.source.start?.({ attemptId: lease.attempt.id, epoch: lease.attempt.epoch }).catch(() => undefined);
       const payload = lease.job.payload;
       const prompt = typeof payload.prompt === "string"
@@ -63,19 +75,35 @@ export class RunnerExecutor {
         : payload.repair
           ? buildRepairPrompt(payload.repair as RepairPromptParams)
           : "Review the investigation and use the ForkSafe tools to report evidence-backed findings.";
-      const maxTurns = this.options.maxTurns ?? 3;
-      for (let index = 0; index < maxTurns; index += 1) {
-        turn = await this.options.sessions.runTurn(sessionId, index === 0 ? prompt : CONTINUE_PROMPT, {
+      const maxTurns = this.options.maxTurns ?? 4;
+      const startTurn = checkpoint?.turnIndex !== undefined ? checkpoint.turnIndex + 1 : 0;
+      const turnBudget = { used: startTurn, max: maxTurns };
+      const revisionState = { headRevisionId: checkpoint?.revisionHeadId };
+      for (let index = startTurn; index < maxTurns; index += 1) {
+        if (turnBudget.used >= turnBudget.max) break;
+        turnBudget.used += 1;
+        const turnPrompt = index === startTurn && checkpoint
+          ? `Continue from checkpoint at revision head ${checkpoint.revisionHeadId ?? "baseline"}. ${CONTINUE_PROMPT}`
+          : index === 0 ? prompt : CONTINUE_PROMPT;
+        turn = await this.options.sessions.runTurn(sessionId, turnPrompt, {
           abortSignal: keeper.signal,
           toolContext: {
             attemptId: lease.attempt.id,
             grantId: lease.grant.id,
             epoch: lease.attempt.epoch,
+            turnBudget,
+            revisionState,
+            jobId: lease.job.id,
+            turnIndex: turnBudget.used - 1,
           },
         });
         turns.push(turn);
+        const registrationError = this.options.sessions.takeSessionRegistrationError(sessionId);
+        if (registrationError) throw registrationError;
         if (keeper.signal.aborted) return null;
-        await this.options.source.session?.({ attemptId: lease.attempt.id, epoch: lease.attempt.epoch, session: this.options.sessions.toAgentSession(sessionId) }).catch(() => undefined);
+        const sessionProjection = this.options.sessions.toAgentSession(sessionId);
+        await this.options.source.session?.({ attemptId: lease.attempt.id, epoch: lease.attempt.epoch, session: sessionProjection }).catch(() => undefined);
+        if (!this.options.sessions.revisionHeadId(sessionId)) revisionState.headRevisionId = checkpoint?.revisionHeadId;
         // A failed live turn (e.g. a denied built-in tool cancelling the turn) is not fatal:
         // the next turn re-anchors the agent on the ForkSafe tools. Fixture/local turns run once.
         if (turn.mode !== "live" || submittedCandidate(turn)) break;
@@ -87,6 +115,7 @@ export class RunnerExecutor {
         return null;
       }
       failure = error instanceof Error ? error.message : String(error);
+      infrastructureFailure = !(error instanceof Error && error.name === "BudgetExceededError");
     } finally {
       keeper.stop();
     }
@@ -106,7 +135,8 @@ export class RunnerExecutor {
       attemptId: lease.attempt.id,
       grantId: lease.grant.id,
       epoch: lease.attempt.epoch,
-      outcome: turn?.success && !failure ? "succeeded" as const : "failed" as const,
+      outcome: failure && infrastructureFailure ? "infra_failed" as const
+        : turn?.success && !failure ? "succeeded" as const : "failed" as const,
       result: turn ? { ...summarize(turn), turns: turns.length, candidateSubmitted: turns.some(submittedCandidate) } : { error: failure ?? "turn did not produce a result" },
       usage: session.tokenUsage,
       sessions: [{ ...session, turns: turns.length }],
@@ -158,7 +188,7 @@ export class RunnerExecutor {
   }
 }
 
-const CONTINUE_PROMPT = "Continue the repair. You have no shell, script or file tools here (they are denied); use only the forksafe tools. If a revision already passes the baseline case, submit_candidate with its revisionId now; otherwise fix the controller with propose_controller_revision and measure it with run_experiment. Report only measured results.";
+const CONTINUE_PROMPT = "You have about two turns total. If you have not submitted yet, promptly complete the remaining sequence in one Script: inspect_failure → read_source(task_controller.py) → apply_patch using the returned expected head → run_experiment on a public case → submit_candidate with your best measured revision, even if it does not pass. There is no shell or direct filesystem access. Load deferred schemas with ToolSearch `select:forksafe___<name>`, then call them from Script via `tools.forksafe___<name>(...)`. Report only measured results.";
 
 function submittedCandidate(turn: TurnOutcome): boolean {
   return (turn.toolCalls ?? []).some((call: unknown) => {

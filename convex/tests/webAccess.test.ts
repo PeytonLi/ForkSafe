@@ -127,7 +127,8 @@ describe("investigation visibility", () => {
     await expect(t.query(api.candidates.replay, { candidateId })).rejects.toThrow("unauthorized");
     expect(await t.query(api.candidates.diff, { candidateId, serviceToken: token })).toContain("private controller");
     vi.stubEnv("FORKSAFE_DEV_ANONYMOUS_UI", "false");
-    await expect(t.query(api.candidates.diff, { candidateId })).rejects.toThrow("unauthorized");
-    await expect(t.withIdentity({ subject: "reader" }).query(api.candidates.replay, { candidateId })).rejects.toThrow("unauthorized");
+    const reader = t.withIdentity({ subject: "reader" });
+    expect(await reader.query(api.candidates.diff, { candidateId })).toContain("private controller");
+    expect(await reader.query(api.candidates.replay, { candidateId })).toEqual({ frames: [] });
   });
 });

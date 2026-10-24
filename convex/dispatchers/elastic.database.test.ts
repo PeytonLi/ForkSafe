@@ -8,6 +8,7 @@ const modules = Object.fromEntries(
     .glob("../**/*.ts"))
     .map(([path, load]) => [path.replace(/^\.\.\//, ""), load]),
 );
+modules["dispatchers/elastic.ts"] = () => import("./elastic.js");
 modules["dispatchers/elasticData.ts"] = () => import("./elasticData.js");
 
 describe("Elastic outbox dead-letter mutation", () => {

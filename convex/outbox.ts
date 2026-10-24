@@ -43,6 +43,40 @@ export const insert = internalMutation({
   },
 });
 
+export const requeue = internalMutation({
+  args: { receiptIds: v.array(v.string()) },
+  handler: async (ctx, args): Promise<{ requeued: number; skipped: number }> => {
+    if (args.receiptIds.length > 100) throw new ConvexError("too_many_receipt_ids");
+    const dispatch: any = internal.outbox.dispatchOne;
+    let requeued = 0;
+    let skipped = 0;
+    for (const receiptId of args.receiptIds) {
+      const entry = await ctx.db.query("outbox")
+        .withIndex("by_appId", (q) => q.eq("appId", receiptId))
+        .unique();
+      if (!entry || entry.status === "delivered" || entry.lastError === "not_implemented") {
+        skipped += 1;
+        continue;
+      }
+      if (entry.status !== "dead" && entry.status !== "pending") {
+        skipped += 1;
+        continue;
+      }
+      const now = Date.now();
+      await ctx.db.patch(entry._id, {
+        status: "pending",
+        attempts: 0,
+        lastError: undefined,
+        deliveredAtMs: undefined,
+        nextAttemptAtMs: now,
+      });
+      await outboxPool.enqueueAction(ctx, dispatch, { receiptId: entry.appId });
+      requeued += 1;
+    }
+    return { requeued, skipped };
+  },
+});
+
 export const ingestFromSpacetime = action({
   args: {
     operationId: v.string(),

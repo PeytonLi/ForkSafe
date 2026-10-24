@@ -21,6 +21,8 @@ export type PermissionParams = {
 };
 
 const SAFE_COMMANDS = new Set(["ls", "cat", "head", "tail", "wc", "grep", "rg", "find", "pwd", "stat", "file", "diff", "git"]);
+const TOOL_SEARCH_NAME = "toolsearch";
+const MCP_TOOL_SEPARATORS = ["___", "__", "_", ".", ":", "/"] as const;
 const META = /[;&|><`\n\r$~()]/;
 
 function withinWorkspace(root: string, filePath: string): boolean {
@@ -56,9 +58,36 @@ function safeCommand(command: string, workspaceRoot: string): boolean {
   return true;
 }
 
-function allowedUse(use: PermissionToolUse, policy: PermissionPolicy): boolean {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function resolveMcpTool(name: string, policy: PermissionPolicy): { toolName: string; namespaced: boolean } | undefined {
+  for (const toolName of policy.allowedMcpTools) {
+    if (name === toolName) return { toolName, namespaced: false };
+    if (MCP_TOOL_SEPARATORS.some((separator) => name === `${policy.mcpServerName}${separator}${toolName}`)) {
+      return { toolName, namespaced: true };
+    }
+  }
+  return undefined;
+}
+
+function allowedUse(use: PermissionToolUse, policy: PermissionPolicy, scriptDepth = 0): boolean {
   const type = use.confirmationType;
   const details = use.details;
+  if (type === ToolConfirmationType.Script || details.type === ToolConfirmationType.Script) {
+    if (scriptDepth >= 1 || !Array.isArray(details.calls)) return false;
+    return details.calls.every((call) => {
+      if (!isRecord(call) || !isRecord(call.confirmation) || typeof call.confirmation.type !== "string") return false;
+      return allowedUse({
+        confirmationType: call.confirmation.type,
+        details: call.confirmation,
+        ...(typeof call.toolName === "string" ? { name: call.toolName } : {}),
+      }, policy, scriptDepth + 1);
+    });
+  }
+  if ((use.name ?? "").toLowerCase() === TOOL_SEARCH_NAME
+    || String(details.toolName ?? "").toLowerCase() === TOOL_SEARCH_NAME) return true;
   if (type === ToolConfirmationType.Create || details.type === ToolConfirmationType.Create) {
     return typeof details.filePath === "string" && insideWorkspace(policy.workspaceRoot, details.filePath);
   }
@@ -69,9 +98,13 @@ function allowedUse(use: PermissionToolUse, policy: PermissionPolicy): boolean {
     return !Array.isArray(extracted) || extracted.every((item) => typeof item === "string" && safeCommand(item, policy.workspaceRoot));
   }
   if (type === ToolConfirmationType.McpTool || details.type === ToolConfirmationType.McpTool) {
-    const server = details.serverName ?? details.server;
-    const toolName = details.toolName ?? use.name;
-    return server === policy.mcpServerName && typeof toolName === "string" && policy.allowedMcpTools.includes(toolName);
+    const server = details.serverName === undefined ? details.server : details.serverName;
+    if (server !== undefined && server !== policy.mcpServerName) return false;
+    const names = [details.actualToolName, details.toolName, use.name].filter((name): name is string => typeof name === "string");
+    return names.some((name) => {
+      const resolved = resolveMcpTool(name, policy);
+      return !!resolved && (server === policy.mcpServerName || (server === undefined && resolved.namespaced));
+    });
   }
   return false;
 }

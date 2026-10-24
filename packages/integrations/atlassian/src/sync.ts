@@ -28,6 +28,27 @@ export const JiraSyncInput = z.object({
       })
       .optional(),
   }),
+  candidateVerdicts: z
+    .array(
+      z.object({
+        candidateId: CandidateId,
+        controllerSha256: z.string().regex(/^[0-9a-f]{64}$/),
+        publicVerdict: EvaluationStatus.optional(),
+        publicPassed: z.number().int().nonnegative(),
+        publicTotal: z.number().int().nonnegative(),
+        withheldVerdict: EvaluationStatus.optional(),
+      }),
+    )
+    .max(20)
+    .optional(),
+  review: z
+    .object({
+      reviewId: z.string().uuid(),
+      candidateId: CandidateId,
+      decision: z.string().regex(/^[a-z_]{1,40}$/),
+    })
+    .optional(),
+  extraLabels: z.array(z.string().regex(/^[a-z0-9-]{1,60}$/)).max(5).optional(),
   investigationUrl: z.string().url().optional(),
   workflow: z
     .object({
@@ -40,6 +61,28 @@ export type JiraSyncInput = z.infer<typeof JiraSyncInput>;
 
 export function investigationLabel(id: string): string {
   return `forksafe-inv-${id}`;
+}
+
+/** Issue description: candidate verdicts and the review decision. Withheld
+ *  suites contribute only their overall verdict, never per-case detail. */
+export function issueBodyLines(input: JiraSyncInput): string[] {
+  const lines = [
+    `ForkSafe investigation ${input.investigation.id}`,
+    `State: ${input.investigation.state}`,
+  ];
+  const verdicts = input.candidateVerdicts ?? [];
+  if (verdicts.length === 0) lines.push("Candidates: none evaluated yet");
+  for (const verdict of verdicts) {
+    lines.push(
+      `Candidate ${verdict.candidateId} (controller SHA-256 ${verdict.controllerSha256}): public ${verdict.publicVerdict ?? "not_run"} ${verdict.publicPassed}/${verdict.publicTotal}; withheld ${verdict.withheldVerdict ?? "not_run"}`,
+    );
+  }
+  lines.push(
+    input.review
+      ? `Review decision: ${input.review.decision} for candidate ${input.review.candidateId} (review ${input.review.reviewId})`
+      : "Review decision: pending",
+  );
+  return lines;
 }
 
 export function remoteLinkGlobalId(id: string): string {
@@ -86,6 +129,8 @@ export async function syncInvestigationToJira(
 ): Promise<JiraSyncResult> {
   const input = JiraSyncInput.parse(unparsed);
   const label = investigationLabel(input.investigation.id);
+  const labels = [label, ...(input.extraLabels ?? [])];
+  const description = adfDoc(...issueBodyLines(input).map((text) => adfParagraph(text)));
   const duplicates: string[] = [];
   let issue: { id: string; key: string };
   let created = false;
@@ -112,18 +157,20 @@ export async function syncInvestigationToJira(
       issue = await client.createIssue({
         projectKey: input.projectKey,
         summary: input.investigation.title,
-        description: adfDoc(
-          adfParagraph(`ForkSafe investigation ${input.investigation.id}`),
-        ),
-        labels: [label],
+        description,
+        labels,
       });
       created = true;
     }
   }
 
   const issueState = await client.getIssue(issue.key, ["status", "labels"]);
-  if (!issueState.fields?.labels?.includes(label)) {
-    await client.updateIssue(issue.key, { addLabels: [label] });
+  const missingLabels = labels.filter((item) => !issueState.fields?.labels?.includes(item));
+  if (!created) {
+    await client.updateIssue(issue.key, {
+      description,
+      ...(missingLabels.length ? { addLabels: missingLabels } : {}),
+    });
   }
 
   let remoteLinkUpserted = false;
