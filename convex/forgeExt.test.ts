@@ -33,10 +33,10 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllEnvs());
 
-function handlers() {
+function handlers(spacetimeClient: SpacetimeClient = spacetime) {
   const routes = new Map<string, (ctx: never, req: Request) => Promise<Response>>();
   registerForgeRoutes({ route: (route: { path: string; handler: (ctx: never, req: Request) => Promise<Response> }) => routes.set(route.path, route.handler) } as unknown as HttpRouter, {
-    spacetime: () => spacetime,
+    spacetime: () => spacetimeClient,
     verifyToken: async (token) => {
       if (!["valid", "unknown", "no-principal"].includes(token)) throw new Error("bad token");
       return { appId: "app", installationId: token === "unknown" ? "install-unknown" : "install-good", environmentType: "DEVELOPMENT", projectKey: "FS", issueKey: "FS-42", ...(token === "no-principal" ? {} : { principal: "reviewer-1" }) };
@@ -106,6 +106,115 @@ describe("Forge #18 protocol extensions", () => {
     expect(JSON.stringify(body)).not.toContain("private-secret-case");
     expect(body.links.webAppUrl).toBe(`https://giant-jellyfish-684.convex.site/#/investigations/${id}/capture`);
     expect(body.links).not.toHaveProperty("evidencePackUrl");
+  });
+
+  it("surfaces a withheld evaluation whose Convex commit failed without presenting it as passed", async () => {
+    const { t, ctx } = await seeded();
+    await t.run((ctx) => ctx.db.insert("evaluations", {
+      appId: crypto.randomUUID(),
+      candidateId,
+      investigationId: id,
+      evaluatorAttemptId: crypto.randomUUID(),
+      epoch: 1,
+      suite: "withheld",
+      cases: [{ caseId: "private-withheld-case", status: "passed", failureKinds: [] }],
+      allRequiredPassed: true,
+      status: "passed",
+      spacetimeCommitted: false,
+      createdAtMs: 2,
+      commitStatus: "commit_failed",
+      commitError: "grant_revoked",
+      updatedAtMs: 2,
+    }));
+
+    const forgeData = await t.query(internal.forgeData.evidence, { investigationId: id });
+    expect(forgeData).toMatchObject({
+      uncommittedEvaluations: [{ candidateId, suite: "withheld" }],
+    });
+    expect(JSON.stringify(forgeData)).not.toContain("grant_revoked");
+    expect(JSON.stringify(forgeData)).not.toContain("private-withheld-case");
+
+    const publicOnlySpacetime = {
+      ...spacetime,
+      listEvaluations: async () => [evaluation],
+    } as unknown as SpacetimeClient;
+    const response = await handlers(publicOnlySpacetime)(
+      FORGE_BACKEND_PATHS.panel,
+      { issueKey: "FS-42", issueId: "42", projectKey: "FS" },
+      ctx,
+    );
+    expect(response.status).toBe(200);
+    const body = PanelData.parse(await response.json());
+    expect(body.candidates[0]!.uncommittedSuites).toEqual(["withheld"]);
+    expect(body.candidates[0]!.suites?.map((suite) => suite.suite)).toEqual(["public"]);
+    expect(JSON.stringify(body)).not.toContain("private-withheld-case");
+    expect(JSON.stringify(body)).not.toContain("grant_revoked");
+  });
+
+  it("clears the uncommitted warning when a later evaluation for the suite is committed", async () => {
+    const { t, ctx } = await seeded();
+    const committedEvaluationId = crypto.randomUUID();
+    await t.run(async (ctx) => {
+      await ctx.db.insert("evaluations", {
+        appId: crypto.randomUUID(),
+        candidateId,
+        investigationId: id,
+        evaluatorAttemptId: crypto.randomUUID(),
+        epoch: 1,
+        suite: "withheld",
+        cases: [{ caseId: "private-withheld-case", status: "passed", failureKinds: [] }],
+        allRequiredPassed: true,
+        status: "passed",
+        spacetimeCommitted: false,
+        createdAtMs: 2,
+        commitStatus: "commit_failed",
+        commitError: "grant_revoked",
+        updatedAtMs: 2,
+      });
+      await ctx.db.insert("evaluations", {
+        appId: committedEvaluationId,
+        candidateId,
+        investigationId: id,
+        evaluatorAttemptId: crypto.randomUUID(),
+        epoch: 1,
+        suite: "withheld",
+        cases: [{ caseId: "private-withheld-case", status: "passed", failureKinds: [] }],
+        allRequiredPassed: true,
+        status: "passed",
+        spacetimeCommitted: true,
+        createdAtMs: 3,
+        commitStatus: "committed",
+        updatedAtMs: 3,
+      });
+    });
+
+    const forgeData = await t.query(internal.forgeData.evidence, { investigationId: id });
+    expect(forgeData).not.toHaveProperty("uncommittedEvaluations");
+
+    const committedWithheld = CandidateEvaluation.parse({
+      ...withheld,
+      id: committedEvaluationId,
+      cases: [{ caseId: "withheld-passed", status: "passed" }],
+      status: "passed",
+      allRequiredPassed: true,
+      createdAtMs: 3,
+    });
+    const spacetimeWithCommittedWithheld = {
+      ...spacetime,
+      listEvaluations: async () => [evaluation, committedWithheld],
+    } as unknown as SpacetimeClient;
+    const response = await handlers(spacetimeWithCommittedWithheld)(
+      FORGE_BACKEND_PATHS.panel,
+      { issueKey: "FS-42", issueId: "42", projectKey: "FS" },
+      ctx,
+    );
+    expect(response.status).toBe(200);
+    const body = PanelData.parse(await response.json());
+    expect(body.candidates[0]!.uncommittedSuites).toBeUndefined();
+    expect(body.candidates[0]!.suites).toEqual([
+      expect.objectContaining({ suite: "public" }),
+      expect.objectContaining({ suite: "withheld", status: "passed" }),
+    ]);
   });
 
   it("selects latest suite results, counts cases and never exposes withheld failed IDs", () => {

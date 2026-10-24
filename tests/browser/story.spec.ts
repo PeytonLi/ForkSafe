@@ -309,6 +309,7 @@ test("learning loop: approved lineage and fixture retry at desktop and mobile si
   const learning = page.getByTestId("learning-panel");
   await expect(learning.getByTestId("controller-lineage")).toContainText("Baseline v1");
   await expect(learning.getByTestId("retry-unavailable")).toContainText("No fix has been approved");
+  await expect(learning.getByTestId("no-hints")).toHaveText("No hints yet. Hints appear after a fix is approved.");
   await expectNoHorizontalOverflow(page);
   await page.screenshot({ path: learningScreenshotPath(info, `learning-before-approval-${info.project.name}.png`) });
 
