@@ -10,7 +10,13 @@ PYTHONPATH=services .venv/bin/python -m evaluator.run_candidate \
   --expected-sha256 "$CONTROLLER_SHA256" --suite public --out result.json
 ```
 
-`--expected-sha256` must be the controller file's lowercase SHA-256. A
+`--controller` accepts a single controller file. `--bundle PATH` instead
+accepts a directory or tar archive containing `task_controller.py`; optional
+`forksafe-bundle.json` manifests declare JSON, TXT, or CSV files under
+`assets/`. Bundle admission rejects links, special files, undeclared files,
+and paths outside the bundle's permitted shape. `--expected-sha256` remains
+the lowercase SHA-256 of `task_controller.py`; `--expected-bundle-sha256`
+optionally pins the canonical bundle hash. A
 withheld run also requires `--withheld-manifest PATH` (or
 `FORKSAFE_WITHHELD_MANIFEST`). `--consume-withheld-manifest` removes that file
 after reading and verifying it, before candidate code runs; it is intended for
@@ -29,14 +35,50 @@ Exit codes:
 | 1 | Evaluation completed with failed or invalid candidate cases |
 | 2 | CLI usage or argument error |
 | 3 | Integrity error (controller, assets, manifests, or evaluator code) |
-| 4 | Infrastructure error (worker, artifacts, isolation requirement, or output) |
+| 4 | Infrastructure or signing error (worker, artifacts, isolation requirement, output, or required signing key) |
 
 When `--out` is writable, completed evaluations and integrity/infrastructure
 errors are written atomically as `forksafe.run_candidate.v1`. The document
 contains suite-level `CandidateEvaluation` contracts, per-case status and
 failure information, deterministic trace/replay artifact paths and hashes,
-isolation metadata, and aggregate timings. Withheld failure details are
-redacted in the document; full details remain in the protected trace artifact.
+isolation metadata, aggregate timings, `simulatorSha256`, and `bundleSha256`.
+Withheld failure details are redacted in the document; full details remain in
+the protected trace artifact.
+
+Set `FORKSAFE_EVAL_SIGNING_KEY` to standard base64 for a 32-byte Ed25519 seed,
+or set `FORKSAFE_EVAL_SIGNING_KEY_FILE` to a regular file containing that text.
+The file is opened without following symlinks and consumed after reading. The
+two settings are mutually exclusive and are removed from the evaluator
+environment before case workers start. `FORKSAFE_REQUIRE_SIGNING=1` fails
+closed with exit 4 if no key is available. Successfully completed runs are
+signed with the `forksafe.evaluation_manifest.v1` domain and embed the
+envelope in `signedManifest`; by default it is also written atomically to
+`<out stem>.manifest.json` (override with `--manifest-out`). Integrity and
+infrastructure failures are never signed.
+
+Verify a detached envelope or a run document with:
+
+```sh
+PYTHONPATH=services .venv/bin/python -m evaluator.verify_manifest \
+  --manifest result.manifest.json --trusted-keys trusted-keys.json \
+  --document result.json --expect-controller-sha256 "$CONTROLLER_SHA256"
+```
+
+`node services/evaluator/ts/cli.ts` provides the equivalent WebCrypto verifier.
+Trusted key records may be active, retired (accepted only for manifests created
+at or before `retiredAtMs`), or revoked. `python -m evaluator.keygen` creates a
+consumable private key file and can add/rotate public trusted-key records.
+
+### Where Convex calls the verifier
+
+The Convex action that downloads a `run_candidate` result from the execution
+sandbox must call `verifySignedManifest` with the trusted key set loaded from
+the `FORKSAFE_EVAL_TRUSTED_KEYS` Convex environment variable. It must provide
+expectations for the frozen candidate's controller and bundle hashes and the
+public/withheld suite hashes from `manifests.lock`, and pass the downloaded
+result as `document`. Verification must happen before persisting any
+`CandidateEvaluation` or score. An unsigned result or any verification failure
+must mark the evaluation invalid and must never be scored.
 
 Each case has a trusted worker and a separate plan process. The worker computes
 the scene input, validates the returned plan, and runs physics only after the
