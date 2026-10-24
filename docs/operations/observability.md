@@ -29,11 +29,14 @@ reader. Shutdown flushes are capped at five seconds.
 For a claimed runner job, the trace tree is `runner.job` with `runner.claim`,
 `runner.grant`, one or more `runner.turn` spans (with `runner.tool` children),
 `runner.artifacts`, and `runner.complete`. Claim polls that return no lease are
-left unended, so idle polls are not exported. Tool spans contain only tool
-name and status; they do not contain tool input or output. The artifacts count
-is the number of successful `run_experiment` and `submit_candidate` tool calls.
-The runner reports session projections but does not upload artifacts itself;
-the Convex control plane and execution sandbox handle artifact storage.
+left unended, so idle polls are not exported. Session creation or resume is a
+`runner.session.open` child of `runner.job`; failures expose only the error
+class in `error.type`, with no message or exception event. Tool spans contain
+only tool name and status; they do not contain tool input or output. The
+artifacts count is the number of successful `run_experiment` and
+`submit_candidate` tool calls. The runner reports session projections but does
+not upload artifacts itself; the Convex control plane and execution sandbox
+handle artifact storage.
 
 Evaluator requests may propagate a W3C `traceparent`. Evaluator spans include
 `evaluator.manifest.verify`, `evaluator.admission`, `evaluator.evaluate`, and
@@ -136,10 +139,14 @@ GET traces-generic.otel-default/_search
 
 - Node smoke trace: `2f58b659870f6442fa163ca48979a9e8`
 - Evaluator smoke trace: `67461a0fd0d448368d5717899af78374`
-- Hosted investigation: `70b87e29-5374-4065-9aab-1799365b7d9f`
-- Environment: `84ea5208-b988-411e-af36-dbb83116e27b`
-- Job: `58b23f05-eaf3-4312-be73-4941e8131257`
-- Attempts: `e2e60db4-5d95-4c21-8be8-27ff6e4e725b`, `98d36fe4-3017-4619-bdf9-60a324df3454`
-- Grants: `3f9be091-1d36-4b73-b96d-42b2fdca0bc2`, `13b1605a-5341-4bc0-8421-e78b334df87e`
-- Runner traces: `ae5f095e64e9e69eaec2d6c8945e10bc`, `2c3b27ed38681630fc37f5d08d201a92`
-- Factory session: `none`
+- Factory smoke: `smoke:factory` succeeded with Droid `0.249.0`; session `2ac9dce5-2adf-442d-90a6-41c538683f49`.
+- Run 1 investigation: `70b87e29-5374-4065-9aab-1799365b7d9f` (failed).
+- Run 1 environment: `84ea5208-b988-411e-af36-dbb83116e27b`.
+- Run 1 job: `58b23f05-eaf3-4312-be73-4941e8131257`.
+- Run 1 attempts: `e2e60db4-5d95-4c21-8be8-27ff6e4e725b`, `98d36fe4-3017-4619-bdf9-60a324df3454`.
+- Run 1 grants: `3f9be091-1d36-4b73-b96d-42b2fdca0bc2`, `13b1605a-5341-4bc0-8421-e78b334df87e`.
+- Run 1 runner traces: `ae5f095e64e9e69eaec2d6c8945e10bc`, `2c3b27ed38681630fc37f5d08d201a92`.
+- Run 1 failure cause, from the hosted `jobs` row: `lastErrorCategory=droid_executable_not_found` (`session_open_failed:Failed to start Droid: executable not found (droid)`). The later HTTP 401 cause remains unconfirmed.
+- Run 2 investigation: `f6c5a8ab-07ad-457b-aa96-1aa8c44043bf`; environment: `5d6dcc3e-ff69-4ea8-87f7-bfdbbbb4cb66`; job: `75416157-832d-4a6b-abf1-9617a6105753`.
+- Run 2 stopped before a runner attempt: the runner sandbox operation entered `ambiguous_create` (`sandbox_create_ambiguous`); the job was cancelled with zero attempts. No grant, Factory session, or runner trace was produced. Investigation cancellation was requested.
+- Run 2 was not capacity-blocked: preflight found 2 active sandboxes; the workflow required one shared execution sandbox and one per-environment runner sandbox, for a peak of 4/5. Cancellation left zero Daytona sandboxes labeled with the run 2 investigation ID and zero runner processes.
