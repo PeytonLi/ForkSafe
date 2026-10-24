@@ -6,13 +6,14 @@ import type {
   Finding,
   HumanReview,
   IntegrationMode,
-  IntegrationReadiness,
   Investigation,
   InvestigationEnvironment,
   ReviewDecision,
   SimCase,
   SimRunResult,
 } from "@forksafe/contracts";
+
+export type WebIntegrationReadiness = import("@forksafe/contracts").IntegrationReadiness & { probed: boolean };
 
 /** Where the web app's data is coming from. Shown in the readiness strip. */
 export interface DataSourceInfo {
@@ -82,7 +83,7 @@ export interface ForkSafeClient {
   requestCapture(draft: CaptureDraft): Promise<CaptureOutcome>;
   /** Invalidation stream; listeners re-fetch what they render. */
   subscribe(investigationId: string, onChange: () => void): () => void;
-  getReadiness(): Promise<IntegrationReadiness[]>;
+  getReadiness(): Promise<WebIntegrationReadiness[]>;
 }
 
 export type { SimCase };
