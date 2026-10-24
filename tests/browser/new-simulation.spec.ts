@@ -1,7 +1,8 @@
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { expect, test, type Locator, type Page } from "../../apps/web/e2e/playwright";
 
-const shots = "/home/ubuntu/lane-a/shots";
+const shots = process.env.FORKSAFE_SCREENSHOT_DIR ?? path.resolve(process.cwd(), "test-results", "screenshots");
 const pandaId = "3b7d9303-7082-4b73-a3b6-1391b3e2fc4d";
 
 async function expectNoHorizontalOverflow(page: Page) {
@@ -13,6 +14,7 @@ async function screenshot(page: Page, name: string, viewport: string) {
   await page.evaluate(() => {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
   });
+  await mkdir(shots, { recursive: true });
   await page.screenshot({ path: path.join(shots, `${name}-${viewport}.png`), animations: "disabled" });
 }
 
