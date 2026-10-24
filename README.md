@@ -91,8 +91,9 @@ SpacetimeDB module), `FORKSAFE_EVAL_SIGNING_KEY` and `FORKSAFE_EVAL_TRUSTED_KEYS
 (evaluator signing), `RUNNER_LAUNCH_MODE=external` (see below),
 `FORKSAFE_INVITE_CODE`, `FORKSAFE_PUBLIC_INVESTIGATION_IDS`, `FORKSAFE_WEB_URL`,
 `FORGE_ALLOWED_INSTALLATION_IDS`, the Convex Auth keys `JWT_PRIVATE_KEY`,
-`JWKS`, `SITE_URL`, and the Google client `AUTH_GOOGLE_ID` /
-`AUTH_GOOGLE_SECRET`. See [Convex](docs/integrations/convex.md),
+`JWKS`, `SITE_URL`, and the Auth0 application `AUTH_AUTH0_ISSUER`,
+`AUTH_AUTH0_ID`, `AUTH_AUTH0_SECRET`. Auth0 holds the Google connection.
+See [Convex](docs/integrations/convex.md),
 [web access](docs/web-access-control.md) and the
 [on-call runbook](docs/operations/runbook.md).
 

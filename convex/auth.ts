@@ -1,4 +1,4 @@
-import Google from "@auth/core/providers/google";
+import Auth0 from "@auth/core/providers/auth0";
 import { Password } from "@convex-dev/auth/providers/Password";
 import { convexAuth } from "@convex-dev/auth/server";
 import { v } from "convex/values";
@@ -8,8 +8,10 @@ import { accessGrantedForUser, identityHasAccess, newOAuthAccountNeedsInvite, va
 
 export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
   providers: [
-    Google({
-      authorization: { params: { prompt: "select_account" } },
+    Auth0({
+      // Auth0 owns the Google connection, including its developer keys.
+      // `connection` skips the Auth0 account picker and opens Google directly.
+      authorization: { params: { connection: "google-oauth2", scope: "openid email profile", prompt: "select_account" } },
       profile(profile) {
         if (!profile.email_verified || !profile.email) throw new Error("Google email is not verified");
         return {

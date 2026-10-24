@@ -57,7 +57,7 @@ function Session({ children }: { children: ReactNode }) {
     signIn: async (data) => { await actions.signIn("password", data); setOpen(false); },
     signInWithGoogle: async () => {
       const redirectTo = `${window.location.pathname}${window.location.search}${window.location.hash}` || "/";
-      await actions.signIn("google", { redirectTo });
+      await actions.signIn("auth0", { redirectTo });
     },
     redeemInvite: async (code) => {
       const result = await redeem({ inviteCode: code });
