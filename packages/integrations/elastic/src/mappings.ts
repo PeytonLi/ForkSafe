@@ -1,8 +1,14 @@
 import type { estypes } from "@elastic/elasticsearch";
 
 export const INDEX_PREFIX = "forksafe-";
-export const INDICES = { finding: "forksafe-findings", evidence: "forksafe-evidence", experiment_result: "forksafe-experiments" } as const;
-const keywords = ["id", "docType", "kind", "investigationId", "environmentId", "sessionId", "candidateId", "experimentId", "artifactId", "findingId", "failureKinds", "status", "suite", "caseId", "idempotencyKey", "contentHash", "sourceVersion", "sourceSystem", "sourceEntity", "sourceId"];
+export const INDICES = {
+  finding: "forksafe-findings",
+  evidence: "forksafe-evidence",
+  experiment_result: "forksafe-experiments",
+  candidate: "forksafe-candidates",
+  evaluation: "forksafe-evaluations",
+} as const;
+const keywords = ["id", "docType", "kind", "investigationId", "environmentId", "sessionId", "candidateId", "experimentId", "artifactId", "findingId", "failureKinds", "status", "suite", "caseId", "idempotencyKey", "contentHash", "sourceVersion", "sourceSystem", "sourceEntity", "sourceId", "controllerSha256", "changedFunctions"];
 export const mapping: estypes.MappingTypeMapping = {
   dynamic: "strict",
   properties: {

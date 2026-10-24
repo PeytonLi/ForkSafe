@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { Finding, ExperimentResult, OutboxEntry } from "@forksafe/contracts";
+import { CandidateEvaluation, ControllerCandidate, Finding, ExperimentResult, OutboxEntry } from "@forksafe/contracts";
 import type { estypes } from "@elastic/elasticsearch";
-import { BlockedError } from "./config.ts";
-import { INDICES } from "./mappings.ts";
+import { BlockedError } from "./config.js";
+import { INDICES } from "./mappings.js";
 
 export type DocType = keyof typeof INDICES;
 export interface EvidenceDocument {
@@ -21,11 +21,24 @@ const hash = (value: unknown) => createHash("sha256").update(canonicalJSON(value
 export interface ProjectionOptions { idempotencyKey?: string; now?: number; sourceVersion?: string; sourceSystem?: string }
 export function toDocuments(record: unknown, options: ProjectionOptions = {}): Projection[] {
   const finding = Finding.safeParse(record);
-  const parsed = finding.success ? finding.data : ExperimentResult.parse(record);
+  const experiment = finding.success ? undefined : ExperimentResult.safeParse(record);
+  const candidate = finding.success || experiment?.success ? undefined : ControllerCandidate.safeParse(record);
+  const evaluation = finding.success || experiment?.success || candidate?.success ? undefined : CandidateEvaluation.safeParse(record);
+  let parsed: Finding | ExperimentResult | ControllerCandidate | CandidateEvaluation;
+  if (finding.success) parsed = finding.data;
+  else if (experiment?.success) parsed = experiment.data;
+  else if (candidate?.success) parsed = candidate.data;
+  else if (evaluation?.success) parsed = evaluation.data;
+  else throw new TypeError("Unsupported Elastic source record");
   const sourceVersion = options.sourceVersion ?? hash(parsed);
-  const base = { investigationId: parsed.investigationId, environmentId: parsed.environmentId,
-    sourceVersion, sourceSystem: options.sourceSystem ?? "spacetimedb", sourceEntity: finding.success ? "finding" : "experiment_result",
-    sourceId: parsed.id, createdAt: "createdAtMs" in parsed ? parsed.createdAtMs : parsed.startedAtMs };
+  const base = { investigationId: parsed.investigationId,
+    ...("environmentId" in parsed && parsed.environmentId ? { environmentId: parsed.environmentId } : {}),
+    sourceVersion, sourceSystem: options.sourceSystem ?? "spacetimedb",
+    sourceEntity: finding.success ? "finding" : experiment?.success ? "experiment_result" : candidate?.success ? "candidate" : "evaluation",
+    sourceId: parsed.id,
+    createdAt: "startedAtMs" in parsed ? parsed.startedAtMs
+      : "submittedAtMs" in parsed ? parsed.submittedAtMs
+        : "createdAtMs" in parsed ? parsed.createdAtMs : 0 };
   const make = (docType: DocType, id: string, fields: { text: string } & Record<string, string | string[] | undefined>): Projection => {
     const content = { ...base, docType, id, ...fields };
     const contentHash = hash(content);
@@ -37,13 +50,44 @@ export function toDocuments(record: unknown, options: ProjectionOptions = {}): P
     return [make("finding", f.id, { findingId: f.id, sessionId: f.sessionId, kind: f.kind, text: f.summary }),
       ...f.evidence.map((e, i) => make("evidence", `${f.id}:${i}`, { findingId: f.id, sessionId: f.sessionId, kind: e.kind, artifactId: e.artifactId, experimentId: e.experimentId, text: e.excerpt ?? canonicalJSON(e.locator) }))];
   }
-  const r = ExperimentResult.parse(parsed);
-  return [make("experiment_result", r.id, { experimentId: r.id, candidateId: r.candidateId,
-    status: r.status, failureKinds: r.failureKinds, suite: r.simCase.suite, caseId: r.simCase.caseId,
-    artifactId: r.traceArtifactId ?? r.replayArtifactId, text: `${r.status}: ${r.failureKinds.join(", ")}` })];
+  if (experiment && experiment.success) {
+    const r = experiment.data;
+    return [make("experiment_result", r.id, { experimentId: r.id, candidateId: r.candidateId,
+      status: r.status, failureKinds: r.failureKinds, suite: r.simCase.suite, caseId: r.simCase.caseId,
+      artifactId: r.traceArtifactId ?? r.replayArtifactId, text: `${r.status}: ${r.failureKinds.join(", ")}` })];
+  }
+  if (candidate && candidate.success) {
+    const r = candidate.data;
+    return [make("candidate", r.id, { candidateId: r.id, status: r.status,
+      controllerSha256: r.controllerSha256, changedFunctions: r.changedFunctions,
+      text: `Candidate ${r.status}; controller ${r.controllerSha256}; changed functions: ${r.changedFunctions.join(", ") || "none"}` })];
+  }
+  if (!evaluation?.success) throw new TypeError("Unsupported Elastic source record");
+  const r = evaluation.data;
+  const passedCases = r.cases.filter(item => item.status === "passed").length;
+  return [make("evaluation", r.id, { candidateId: r.candidateId, status: r.status,
+    suite: r.suite, text: `Evaluation ${r.status}; suite ${r.suite}; cases ${passedCases}/${r.cases.length}` })];
 }
-export interface BulkClient { bulk(request: estypes.BulkRequest): Promise<estypes.BulkResponse> }
-export type IndexResult = { index: string; id: string; result: "created" | "updated" | "noop" | "error" };
+export interface BulkClient {
+  bulk(request: estypes.BulkRequest): Promise<estypes.BulkResponse>;
+  deleteByQuery?(request: estypes.DeleteByQueryRequest): Promise<unknown>;
+}
+export type IndexErrorType = "permanent" | "transient" | "auth";
+export type IndexResult = {
+  index: string;
+  id: string;
+  result: "created" | "updated" | "noop" | "error";
+  status?: number;
+  errorType?: IndexErrorType;
+  errorCode?: string;
+};
+
+export function classifyBulkFailure(status: number | undefined, type?: string): IndexErrorType {
+  if (status === 401 || status === 403) return "auth";
+  const normalized = type?.toLowerCase() ?? "";
+  if (["mapper_parsing_exception", "parse_exception", "illegal_argument_exception", "strict_dynamic_mapping_exception"].includes(normalized) || status === 400) return "permanent";
+  return "transient";
+}
 export class ElasticIndexer {
   readonly store = new Map<string, Projection>();
   constructor(readonly mode: "live" | "local" | "fixture" | "blocked" | "not_implemented", private client?: BulkClient) {}
@@ -61,9 +105,36 @@ export class ElasticIndexer {
       const response = await this.client.bulk({ refresh: options.refresh, operations: docs.flatMap(doc => [{ index: { _index: doc.index, _id: doc.id } }, doc.body]) });
       return docs.map((doc, i) => {
         const item = response.items[i]?.index;
-        return { index: doc.index, id: doc.id, result: item && !item.error && item.status < 300 ? item.result === "created" ? "created" : item.result === "noop" ? "noop" : "updated" : "error" };
+        if (item && !item.error && item.status < 300) {
+          return { index: doc.index, id: doc.id, status: item.status, result: item.result === "created" ? "created" : item.result === "noop" ? "noop" : "updated" };
+        }
+        const failure = item?.error as { type?: string } | undefined;
+        return { index: doc.index, id: doc.id, status: item?.status, result: "error", errorType: classifyBulkFailure(item?.status, failure?.type), ...(failure?.type ? { errorCode: failure.type } : {}) };
       });
-    } catch { return docs.map(doc => ({ index: doc.index, id: doc.id, result: "error" })); }
+    } catch { return docs.map(doc => ({ index: doc.index, id: doc.id, result: "error", errorType: "transient" })); }
+  }
+  async deleteBySource({ sourceId, investigationId }: { sourceId: string; investigationId?: string }): Promise<void> {
+    if (this.mode === "blocked" || this.mode === "not_implemented") throw new BlockedError();
+    if (this.mode === "fixture") {
+      for (const [key, projection] of this.store) {
+        if (projection.body.sourceId === sourceId && (!investigationId || projection.body.investigationId === investigationId)) this.store.delete(key);
+      }
+      return;
+    }
+    if (!this.client?.deleteByQuery) throw new BlockedError();
+    try {
+      await this.client.deleteByQuery({
+        index: Object.values(INDICES),
+        query: { bool: { filter: [
+          { term: { sourceId } },
+          ...(investigationId ? [{ term: { investigationId } }] : []),
+        ] } },
+        conflicts: "proceed",
+        refresh: true,
+      });
+    } catch {
+      throw new Error("Elastic projection deletion failed");
+    }
   }
   async indexOutboxEntry(input: OutboxEntry) {
     const entry = OutboxEntry.parse(input);
@@ -71,6 +142,8 @@ export class ElasticIndexer {
     const { kind, record } = entry.payload;
     if (kind === "finding") Finding.parse(record);
     else if (kind === "experiment_result") ExperimentResult.parse(record);
+    else if (kind === "candidate") ControllerCandidate.parse(record);
+    else if (kind === "evaluation") CandidateEvaluation.parse(record);
     else throw new Error("Unsupported elastic payload kind");
     return this.index(record, { idempotencyKey: entry.idempotencyKey, now: entry.createdAtMs });
   }

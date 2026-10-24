@@ -1,4 +1,8 @@
-#!/usr/bin/env node
-// TODO(phase-1): not yet implemented — placeholder so root commands exist.
-console.error("forksafe: scripts/smoke-hosted.mjs is not implemented yet");
-process.exit(2);
+import { env, log, main } from './lib/runtime.mjs';
+import { healthReport } from './lib/probes.mjs';
+main(async () => {
+ const rows = await healthReport(env);
+ log('Service | result | HTTP | action');
+ for (const row of rows) log(row.name + ' | ' + row.result + ' | ' + (row.status ?? '-') + ' | ' + (row.missing.length ? 'blocked: missing ' + row.missing.join(', ') : row.detail ?? row.fix));
+ if (rows.some(row => row.result === 'fail')) process.exitCode = 1;
+});
