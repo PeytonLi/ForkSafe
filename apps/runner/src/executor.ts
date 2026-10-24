@@ -48,35 +48,41 @@ export class RunnerExecutor {
 
   private async executeJob(lease: Lease, traceContext?: Context, jobSpan?: Span): Promise<unknown | null> {
     if (lease.job.kind !== "factory_session") throw new Error(`Unsupported runner job kind: ${lease.job.kind}`);
-    if (!lease.job.environmentId) throw new Error("factory_session jobs require environmentId");
+    const environmentId = lease.job.environmentId;
+    if (!environmentId) throw new Error("factory_session jobs require environmentId");
     const clock = this.options.clock ?? Date.now;
     const operationId = randomUUID();
     this.options.beforeJob?.(lease);
     const checkpoint = lease.job.payload.resume as {
       sessionId?: string; vendorSessionId?: string; turnIndex?: number; revisionHeadId?: string;
     } | undefined;
-    let sessionId = this.options.sessions.idleSessionFor(lease.job.investigationId, lease.job.environmentId);
+    let sessionId = this.options.sessions.idleSessionFor(lease.job.investigationId, environmentId);
     if (!sessionId) {
       try {
-        const created = checkpoint?.vendorSessionId && checkpoint.sessionId
-          ? await this.options.sessions.resumeFromCheckpoint({
-            investigationId: lease.job.investigationId, environmentId: lease.job.environmentId,
+        const openSession = () => checkpoint?.vendorSessionId && checkpoint.sessionId
+          ? this.options.sessions.resumeFromCheckpoint({
+            investigationId: lease.job.investigationId, environmentId,
             sessionId: checkpoint.sessionId, vendorSessionId: checkpoint.vendorSessionId,
           })
-          : await this.options.sessions.createSession({ investigationId: lease.job.investigationId, environmentId: lease.job.environmentId });
+          : this.options.sessions.createSession({ investigationId: lease.job.investigationId, environmentId });
+        const created = this.options.telemetry
+          ? await this.options.telemetry.telemetry.withSpan("runner.session.open", {}, openSession, { parent: traceContext })
+          : await openSession();
         sessionId = created.sessionId;
       } catch (error) {
         // Any session-open failure is reported on the lease instead of being left to expire:
         // the cap is a terminal "failed", everything else (e.g. a missing droid executable) is
         // infrastructure and gets the single infra retry.
         const cap = error instanceof SessionCapError;
+        const outcome = cap ? "failed" : "infra_failed";
+        jobSpan?.setAttribute("forksafe.outcome", outcome);
         return this.completeWithRetry(lease, {
           operationId,
           jobId: lease.job.id,
           attemptId: lease.attempt.id,
           grantId: lease.grant.id,
           epoch: lease.attempt.epoch,
-          outcome: cap ? "failed" : "infra_failed",
+          outcome,
           result: { error: cap ? "environment_session_cap" : `session_open_failed:${error instanceof Error ? error.message.slice(0, 200) : "unknown"}` },
           sessions: [],
           finishedAtMs: clock(),

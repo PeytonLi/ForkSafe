@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { metrics, SpanStatusCode, trace } from "@opentelemetry/api";
 import {
   AggregationTemporality,
   InMemoryMetricExporter,
@@ -414,6 +415,18 @@ describe("RunnerExecutor", () => {
   it("reports a non-cap session-open failure as infra_failed instead of letting the lease expire", async () => {
     const lease = sampleLease();
     const completions: { outcome: string; result: Record<string, unknown> }[] = [];
+    trace.disable();
+    metrics.disable();
+    const exporter = new PreservingSpanExporter();
+    const telemetry = initTelemetry({
+      serviceName: "forksafe-runner-test",
+      env: { OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:4318" },
+      spanExporter: exporter,
+      metricReader: new PeriodicExportingMetricReader({
+        exporter: new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE),
+        exportIntervalMillis: 60_000,
+      }),
+    });
     const source = {
       heartbeat: vi.fn(async () => ({ ok: true as const, leasedUntilMs: Date.now() + 30_000, epoch: 0 })),
       complete: vi.fn(async (completion: { outcome: string; result: Record<string, unknown> }) => {
@@ -423,13 +436,40 @@ describe("RunnerExecutor", () => {
     };
     const sessions = {
       idleSessionFor: () => undefined,
-      createSession: async () => { throw new Error("Failed to start Droid: executable not found (droid)"); },
+      createSession: async () => {
+        const error = new Error("Failed to start Droid: executable not found (droid)");
+        error.name = "DroidExecutableMissingError";
+        throw error;
+      },
     };
-    const executor = new RunnerExecutor({ sessions: sessions as never, source: source as never, log: new ActivityLog() });
-    await expect(executor.execute(lease)).resolves.toMatchObject({ accepted: true });
+    const executor = new RunnerExecutor({
+      sessions: sessions as never,
+      source: source as never,
+      log: new ActivityLog(),
+      telemetry: new RunnerTelemetry(telemetry),
+    });
+    try {
+      await expect(executor.execute(lease)).resolves.toMatchObject({ accepted: true });
+    } finally {
+      await telemetry.shutdown();
+      trace.disable();
+      metrics.disable();
+    }
     expect(completions).toHaveLength(1);
     expect(completions[0]).toMatchObject({ outcome: "infra_failed" });
     expect(String(completions[0]!.result.error)).toMatch(/^session_open_failed:Failed to start Droid/);
     expect(source.heartbeat).not.toHaveBeenCalled();
+    const spans = exporter.getFinishedSpans();
+    const jobSpan = spans.find((span) => span.name === "runner.job");
+    const sessionOpenSpan = spans.find((span) => span.name === "runner.session.open");
+    expect(jobSpan).toBeDefined();
+    expect(sessionOpenSpan).toBeDefined();
+    expect(jobSpan?.attributes["forksafe.outcome"]).toBe("infra_failed");
+    expect(sessionOpenSpan?.parentSpanContext?.spanId).toBe(jobSpan?.spanContext().spanId);
+    expect(sessionOpenSpan?.attributes["error.type"]).toBe("DroidExecutableMissingError");
+    expect(sessionOpenSpan?.status.code).toBe(SpanStatusCode.ERROR);
+    expect(sessionOpenSpan?.status.message).toBe("");
+    expect(sessionOpenSpan?.events).toEqual([]);
+    expect(JSON.stringify(sessionOpenSpan?.attributes)).not.toContain("executable not found");
   });
 });
