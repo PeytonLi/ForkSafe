@@ -220,9 +220,6 @@ function Panel() {
       onSubmitReview={() => setConfirmingReview(true)}
       onConfirmReview={() => void confirmReview()}
       onCloseReviewConfirmation={() => setConfirmingReview(false)}
-      onCopySha={(sha) => {
-        void globalThis.navigator?.clipboard?.writeText(sha);
-      }}
       onInvestigationNoteChange={updateInvestigationNote}
       onExtraEnvironmentsChange={updateExtraEnvironments}
       onRequestInvestigation={() => void requestInvestigation()}

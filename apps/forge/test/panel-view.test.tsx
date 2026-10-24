@@ -80,7 +80,6 @@ function props(overrides: Partial<PanelViewProps> = {}): PanelViewProps {
     onSubmitReview: () => {},
     onConfirmReview: () => {},
     onCloseReviewConfirmation: () => {},
-    onCopySha: () => {},
     onInvestigationNoteChange: () => {},
     onExtraEnvironmentsChange: () => {},
     onRequestInvestigation: () => {},
@@ -133,6 +132,63 @@ describe("review panel view", () => {
     expect(
       markup({ result: { ok: true, mode: "fixture", data: withoutEvidence } }),
     ).not.toContain("Download evidence pack");
+  });
+
+  it("shows the selectable full hash and omits insecure ForkSafe links", () => {
+    const html = markup();
+    expect(html).toContain("Select the full SHA-256 below to copy it.");
+    expect(html).toContain(panel.candidates[0]!.candidate.controllerSha256);
+    expect(html).not.toContain("Copy full SHA-256");
+
+    const panelWithHttpInvestigationUrl = {
+      ...panel,
+      links: {
+        ...panel.links,
+        investigationUrl: "http://example.invalid/investigation",
+        webAppUrl: undefined,
+      },
+    };
+    expect(
+      markup({
+        result: {
+          ok: true,
+          mode: "fixture",
+          data: panelWithHttpInvestigationUrl,
+        },
+      }),
+    ).not.toContain("Open in ForkSafe");
+  });
+
+  it("shows a warning for a non-passing evaluation with no failed checks", () => {
+    const queuedPanel = {
+      ...panel,
+      candidates: panel.candidates.map((item, index) =>
+        index !== 0
+          ? item
+          : {
+              ...item,
+              evaluation: {
+                ...item.evaluation!,
+                status: "queued" as const,
+                allRequiredPassed: false,
+              },
+              suites: item.suites?.map((suite) => ({
+                ...suite,
+                status: "queued" as const,
+                allRequiredPassed: false,
+                passedCases: 0,
+                failedCases: 0,
+              })),
+            },
+      ),
+    };
+    const html = markup({
+      result: { ok: true, mode: "fixture", data: queuedPanel },
+      selectedCandidateId: queuedPanel.candidates[0]!.candidate.id,
+    });
+    expect(html).toContain("Evaluation did not pass");
+    expect(html).toContain("&quot;appearance&quot;:&quot;warning&quot;");
+    expect(html).not.toContain("&quot;appearance&quot;:&quot;success&quot;");
   });
 
   it("uses friendly unauthorized, empty, and unavailable-request copy", () => {

@@ -72,7 +72,6 @@ export type PanelViewProps = {
   onSubmitReview(): void;
   onConfirmReview(): void;
   onCloseReviewConfirmation(): void;
-  onCopySha(sha: string): void;
   onInvestigationNoteChange(note: string): void;
   onExtraEnvironmentsChange(value?: number): void;
   onRequestInvestigation(): void;
@@ -118,7 +117,11 @@ export function PanelView(props: PanelViewProps) {
   const evidencePackUrl =
     (props.reviewDetails?.ok && props.reviewDetails.data.evidencePackUrl) ||
     data.links.evidencePackUrl;
-  const investigationUrl = data.links.investigationUrl ?? data.links.webAppUrl;
+  const candidateInvestigationUrl =
+    data.links.investigationUrl ?? data.links.webAppUrl;
+  const investigationUrl = candidateInvestigationUrl?.startsWith("https://")
+    ? candidateInvestigationUrl
+    : undefined;
   const requestError =
     props.investigationResult && !props.investigationResult.ok
       ? props.investigationResult
@@ -141,7 +144,7 @@ export function PanelView(props: PanelViewProps) {
           <Stack key={item.candidate.id} space="space.100">
             <Heading as="h3">Candidate {shortSha(item.candidate.controllerSha256)}</Heading>
             <SectionMessage
-              appearance={summary.failedChecks === 0 ? "success" : "warning"}
+              appearance={summary.passed ? "success" : "warning"}
               title={summary.label}
             >
               <Stack space="space.100">
@@ -166,13 +169,8 @@ export function PanelView(props: PanelViewProps) {
               </Stack>
             </SectionMessage>
             <Text>Controller SHA-256: {shortSha(item.candidate.controllerSha256)}</Text>
+            <Text>Select the full SHA-256 below to copy it.</Text>
             <CodeBlock text={item.candidate.controllerSha256} language="text" />
-            <Button
-              appearance="subtle"
-              onClick={() => props.onCopySha(item.candidate.controllerSha256)}
-            >
-              Copy full SHA-256
-            </Button>
           </Stack>
         );
       })}

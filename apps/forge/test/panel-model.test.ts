@@ -54,6 +54,7 @@ describe("review panel model", () => {
   it("derives a suite verdict and approval block from evaluation data", () => {
     expect(verdict(candidate)).toMatchObject({
       label: "2 checks failed",
+      passed: false,
       suites: [
         {
           suite: "public",
@@ -74,6 +75,31 @@ describe("review panel model", () => {
         allRequiredPassed: true,
       }),
     ).toBeUndefined();
+  });
+
+  it("does not call a non-passing evaluation with no failures a pass", () => {
+    const queuedCandidate: CandidateItem = {
+      ...candidate,
+      evaluation: {
+        ...candidate.evaluation!,
+        status: "queued",
+        allRequiredPassed: false,
+      },
+      suites: [
+        {
+          ...candidate.suites![0]!,
+          status: "queued",
+          allRequiredPassed: false,
+          passedCases: 0,
+          failedCases: 0,
+        },
+      ],
+    };
+    expect(verdict(queuedCandidate)).toMatchObject({
+      label: "Evaluation did not pass",
+      passed: false,
+      failedChecks: 0,
+    });
   });
 
   it("shortens hashes and keeps error copy friendly", () => {

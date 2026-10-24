@@ -2,9 +2,9 @@ import ResolverModule from "@forge/resolver";
 import { backendFromEnv } from "./backend.js";
 import { createHandlers, type ForgeContext } from "./handlers.js";
 
-const ResolverClass = (
-  ResolverModule as unknown as { default: typeof ResolverModule }
-).default;
+const ResolverClass =
+  (ResolverModule as unknown as { default?: typeof ResolverModule }).default ??
+  ResolverModule;
 const resolver = new ResolverClass();
 const backend = backendFromEnv();
 const handlers = createHandlers(backend);

@@ -61,7 +61,10 @@ export function verdict(candidate: CandidatePanelItem) {
   return {
     label: passed
       ? "All required checks passed"
-      : `${failedChecks} ${failedChecks === 1 ? "check" : "checks"} failed`,
+      : failedChecks > 0
+        ? `${failedChecks} ${failedChecks === 1 ? "check" : "checks"} failed`
+        : "Evaluation did not pass",
+    passed,
     failedChecks,
     suites,
   };
