@@ -2,10 +2,11 @@ import { IntegrationReadiness } from "@forksafe/contracts";
 import { z } from "zod";
 import { ServiceError } from "./errors";
 
-const ReadinessResponse = z.object({ integrations: z.array(IntegrationReadiness) });
+const WebIntegrationReadiness = IntegrationReadiness.extend({ probed: z.boolean().default(false) });
+const ReadinessResponse = z.object({ integrations: z.array(WebIntegrationReadiness) });
 
 /** Reads the server-side readiness report served at /api/readiness. */
-export async function fetchReadiness(signal?: AbortSignal): Promise<IntegrationReadiness[]> {
+export async function fetchReadiness(signal?: AbortSignal): Promise<z.infer<typeof WebIntegrationReadiness>[]> {
   let res: Response;
   try {
     res = await fetch("/api/readiness", { signal, headers: { accept: "application/json" } });

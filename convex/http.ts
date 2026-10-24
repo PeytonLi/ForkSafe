@@ -1,8 +1,11 @@
 import { httpRouter } from "convex/server";
+import { registerStaticRoutes } from "@convex-dev/static-hosting";
 import { httpAction, internalMutation } from "./_generated/server.js";
-import { api, internal } from "./_generated/api.js";
+import { api, components, internal } from "./_generated/api.js";
 import { requireServiceToken } from "./lib/auth.js";
 import { registerRunnerRoutes } from "./runnerHttp.js";
+import { registerForgeRoutes } from "./forge.js";
+import { auth } from "./auth.js";
 
 const router = httpRouter();
 const MAX_ARTIFACT_BYTES = 8 * 1024 * 1024;
@@ -133,6 +136,22 @@ export const scheduleDaytonaReconcile = internalMutation({
 
 registerRunnerRoutes(router);
 
-// forge routes: the outbox lane registers its Forge/Jira routes here.
+registerForgeRoutes(router);
+
+router.route({
+  path: "/api/readiness",
+  method: "GET",
+  handler: httpAction(async (ctx) => json(await ctx.runAction(internal.readiness.get, {}))),
+});
+
+router.route({
+  pathPrefix: "/api/",
+  method: "GET",
+  handler: httpAction(async () => json({ error: "not_found" }, 404)),
+});
+
+auth.addHttpRoutes(router);
+
+registerStaticRoutes(router, components.staticHosting);
 
 export default router;

@@ -2,11 +2,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { FORGE_BACKEND_PATHS } from "../packages/integrations/atlassian/src/index.js";
 import type { HttpRouter } from "convex/server";
 import { registerForgeRoutes } from "./forge.js";
+import { FORGE_FEATURE_PATHS } from "./forgeProtocolExt.js";
+
+const paths = [...Object.values(FORGE_BACKEND_PATHS), ...Object.values(FORGE_FEATURE_PATHS)];
 
 describe("Forge HTTP routes", () => {
   afterEach(() => vi.unstubAllEnvs());
 
-  it("registers the four backend paths as POST routes", () => {
+  it("registers the five backend paths as POST routes", () => {
     const routes: Array<{ path: string; method: string }> = [];
     const router = {
       route: (route: { path: string; method: string }) => routes.push(route),
@@ -19,6 +22,7 @@ describe("Forge HTTP routes", () => {
       { path: FORGE_BACKEND_PATHS.start, method: "POST" },
       { path: FORGE_BACKEND_PATHS.reviewContext, method: "POST" },
       { path: FORGE_BACKEND_PATHS.review, method: "POST" },
+      { path: FORGE_FEATURE_PATHS.requests, method: "POST" },
     ]);
   });
 
@@ -27,7 +31,7 @@ describe("Forge HTTP routes", () => {
     vi.stubEnv("ATLASSIAN_PROJECT_KEY", "FS");
     const handlers = createHandlers();
 
-    for (const path of Object.values(FORGE_BACKEND_PATHS)) {
+    for (const path of paths) {
       for (const authorization of [undefined, "Bearer garbage", "Bearer wrong-app"]) {
         const response = await handlers.get(path)!({} as never, request(path, authorization));
         expect(response.status).toBe(401);
@@ -41,7 +45,7 @@ describe("Forge HTTP routes", () => {
     vi.stubEnv("ATLASSIAN_PROJECT_KEY", "FS");
     const handlers = createHandlers();
 
-    for (const path of Object.values(FORGE_BACKEND_PATHS)) {
+    for (const path of paths) {
       const unknown = await handlers.get(path)!({} as never, request(path, "Bearer unknown-install"));
       expect(unknown.status).toBe(403);
 
@@ -108,6 +112,10 @@ function request(path: string, authorization?: string, body = bodyFor(path, "FS"
 }
 
 function bodyFor(path: string, projectKey: string) {
+  if (path === FORGE_FEATURE_PATHS.requests) {
+    return { investigationId: "11111111-1111-4111-8111-111111111111", issueKey: "FS-42", projectKey,
+      requestedBy: "atlassian:reviewer-1", note: "Try another approach", extraEnvironments: 1, idempotencyKey: "55555555-5555-4555-8555-555555555555" };
+  }
   if (path === FORGE_BACKEND_PATHS.panel) {
     return { issueKey: "FS-42", issueId: "100", projectKey };
   }

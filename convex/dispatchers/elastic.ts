@@ -206,7 +206,7 @@ export const dispatch = internalAction({
         indexer,
         spacetime,
         deadLetter: async (key, errorCode) => {
-          const result = await ctx.runMutation(internal.dispatchers.outbox.deadLetter, { idempotencyKey: key, errorCode });
+          const result = await ctx.runMutation(internal.dispatchers.elasticData.deadLetter, { idempotencyKey: key, errorCode });
           return result.updated;
         },
       });

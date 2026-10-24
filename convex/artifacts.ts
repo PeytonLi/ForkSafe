@@ -1,6 +1,6 @@
 import { ConvexError, v } from "convex/values";
 import { internalMutation, internalQuery, query } from "./_generated/server.js";
-import { requireUiAccess } from "./lib/auth.js";
+import { requireInvestigationRead } from "./lib/webAccess.js";
 import { compactReplay } from "./lib/experimentStatus.js";
 import { appId, assertUUID } from "./lib/validators.js";
 
@@ -18,9 +18,11 @@ export const insertCloudArtifact = internalMutation({
     attemptId: v.optional(v.string()),
     visibility: v.union(v.literal("internal"), v.literal("withheld")),
     storageId: v.id("_storage"),
+    evidencePack: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     assertUUID(args.investigationId, "investigationId");
+    if (args.evidencePack && args.kind !== "report") throw new ConvexError("evidence_pack_must_be_report");
     if (args.attemptId) assertUUID(args.attemptId, "attemptId");
     if (!/^[0-9a-f]{64}$/i.test(args.sha256)) throw new ConvexError("sha256_invalid");
     if (args.bytes < 0 || args.bytes > 8 * 1024 * 1024) throw new ConvexError("artifact_size_invalid");
@@ -42,6 +44,7 @@ export const insertCloudArtifact = internalMutation({
       investigationId: args.investigationId,
       visibility: args.visibility,
       storageId: args.storageId,
+      ...(args.evidencePack === undefined ? {} : { evidencePack: args.evidencePack }),
     });
     return { artifactId: appArtifactId, duplicate: false };
   },
@@ -87,10 +90,10 @@ export const saveReplay = internalMutation({
 export const replay = query({
   args: { artifactId: v.string(), serviceToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    requireUiAccess(args.serviceToken);
     assertUUID(args.artifactId, "artifactId");
     const row = await ctx.db.query("replays").withIndex("by_artifact", (q) => q.eq("artifactId", args.artifactId)).unique();
     if (!row) throw new ConvexError("replay not found");
+    await requireInvestigationRead(ctx, row.investigationId, args.serviceToken);
     if (row.visibility === "withheld") throw new ConvexError("forbidden: withheld replay");
     return row.result;
   },
