@@ -113,6 +113,94 @@ describe("review panel view", () => {
     expect(html).not.toContain("private-withheld-id");
   });
 
+  it("maps finding and citation kinds to plain labels and warns about unsaved checks", () => {
+    const findingKinds = [
+      ["collision_frame", "Collision"],
+      ["limit_violation", "Limit violation"],
+      ["behavioral_note", "Observation"],
+      ["candidate_hypothesis", "Candidate hypothesis"],
+      ["cross_environment_pattern", "Cross-environment pattern"],
+    ] as const;
+    const citationKinds = [
+      ["trace_frame", "trace frame"],
+      ["contact_event", "contact event"],
+      ["metric", "measured result"],
+      ["log_excerpt", "log excerpt"],
+      ["code_diff", "code change"],
+      ["replay_segment", "replay segment"],
+    ] as const;
+    const baseFinding = panel.findings![0]!;
+    const experimentId = "be1b8a02-015b-4152-8155-123456789abc";
+    const candidateWithUncommittedChecks = panel.candidates[1]!;
+    const mappedPanel: PanelData = {
+      ...panel,
+      findings: findingKinds.map(([kind]) => ({
+        ...baseFinding,
+        id: crypto.randomUUID(),
+        kind,
+        summary: "Plain label test",
+        citations: citationKinds.map(([kind]) => ({ kind, experimentId })),
+      })),
+      candidates: [{
+        ...candidateWithUncommittedChecks,
+        evaluation: {
+          ...candidateWithUncommittedChecks.evaluation!,
+          status: "passed",
+          allRequiredPassed: true,
+        },
+        passedCases: 10,
+        totalCases: 10,
+        suites: [{
+          evaluationId: candidateWithUncommittedChecks.evaluation!.id,
+          suite: "public",
+          status: "passed",
+          allRequiredPassed: true,
+          passedCases: 10,
+          failedCases: 0,
+          totalCases: 10,
+        }],
+        uncommittedSuites: ["withheld"],
+      }],
+    };
+    const html = markup({
+      result: { ok: true, mode: "fixture", data: mappedPanel },
+      selectedCandidateId: candidateWithUncommittedChecks.candidate.id,
+    });
+
+    for (const [kind, label] of findingKinds) {
+      expect(html).toContain(label);
+      expect(html).not.toContain(kind);
+    }
+    for (const [kind, label] of citationKinds) {
+      expect(html).toContain(label);
+      expect(html).not.toContain(kind);
+    }
+    expect(html).toContain("measured result from experiment be1b8a02");
+    expect(html).toContain(
+      "Withheld checks: result not saved to the shared record, so this candidate can&#x27;t be approved yet.",
+    );
+
+    const unknownFinding = {
+      ...baseFinding,
+      kind: "future_finding" as unknown as (typeof baseFinding)["kind"],
+      citations: [
+        {
+          kind: "future_evidence" as unknown as (typeof baseFinding.citations)[number]["kind"],
+        },
+      ],
+    };
+    const fallbackHtml = markup({
+      result: {
+        ok: true,
+        mode: "fixture",
+        data: { ...panel, findings: [unknownFinding] },
+      },
+    });
+    expect(fallbackHtml).toContain("Other");
+    expect(fallbackHtml).not.toContain("future_finding");
+    expect(fallbackHtml).not.toContain("future_evidence");
+  });
+
   it("disables approval and explains a failed evaluation", () => {
     const failed = panel.candidates.find(
       ({ evaluation }) => evaluation?.status === "failed",

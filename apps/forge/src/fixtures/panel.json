@@ -80,7 +80,8 @@
           "failedCases": 1,
           "totalCases": 8
         }
-      ]
+      ],
+      "uncommittedSuites": []
     },
     {
       "candidate": {
@@ -111,7 +112,8 @@
           "totalCases": 8,
           "failedCaseIds": ["divider-approach-b", "grasp-contact"]
         }
-      ]
+      ],
+      "uncommittedSuites": []
     }
   ],
   "underReview": {
