@@ -1,13 +1,13 @@
 {
   "runner": {
-    "name": "forksafe-runner-v2",
+    "name": "forksafe-runner-v3",
     "dockerfile": "infra/daytona/runner/Dockerfile",
     "resources": {
       "cpu": 1,
       "memory": 2,
       "disk": 5
     },
-    "id": "43b502ed-5a92-4e1d-946f-9ab52acf622e",
+    "id": "364859f0-6937-4f26-b662-ec49b0d83b16",
     "state": "active",
     "previous": {
       "name": "forksafe-runner-v1",
@@ -18,7 +18,7 @@
         "disk": 10
       }
     },
-    "note": "Daytona org total-memory cap is 10 GiB; 4 GiB runners could not coexist with the 4 GiB execution sandbox for a 2-environment run."
+    "note": "Daytona org total-memory cap is 10 GiB, so the runner is 1 CPU / 2 GiB; v3 installs the Factory droid CLI as the forksafe user (v1 left it under /root, unreadable at runtime)."
   },
   "execution": {
     "name": "forksafe-exec-v1",

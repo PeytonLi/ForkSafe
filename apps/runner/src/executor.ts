@@ -33,15 +33,18 @@ export class RunnerExecutor {
         });
         sessionId = created.sessionId;
       } catch (error) {
-        if (!(error instanceof SessionCapError)) throw error;
+        // Any session-open failure is reported on the lease instead of being left to expire:
+        // the cap is a terminal "failed", everything else (e.g. a missing droid executable) is
+        // infrastructure and gets the single infra retry.
+        const cap = error instanceof SessionCapError;
         return this.completeWithRetry(lease, {
           operationId,
           jobId: lease.job.id,
           attemptId: lease.attempt.id,
           grantId: lease.grant.id,
           epoch: lease.attempt.epoch,
-          outcome: "failed",
-          result: { error: "environment_session_cap" },
+          outcome: cap ? "failed" : "infra_failed",
+          result: { error: cap ? "environment_session_cap" : `session_open_failed:${error instanceof Error ? error.message.slice(0, 200) : "unknown"}` },
           sessions: [],
           finishedAtMs: clock(),
         }, clock);

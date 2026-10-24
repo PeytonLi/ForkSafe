@@ -317,6 +317,7 @@ export const launchRunner = internalAction({
         RUNNER_WORKER_ID: `runner-${args.environmentId.slice(0, 8)}`,
         RUNNER_WORKSPACE_ROOT: "/workspace/agent",
         RUNNER_JOBS_DIR: "/workspace/runner/var",
+        HOME: "/home/forksafe",
         FACTORY_MODE: factoryKey ? "cloud" : "fixture",
         ...(factoryKey ? { FACTORY_API_KEY: factoryKey } : {}),
         ...(process.env.FACTORY_MODEL ? { FACTORY_MODEL: process.env.FACTORY_MODEL } : {}),
