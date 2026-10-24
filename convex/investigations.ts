@@ -105,6 +105,30 @@ export const create = mutation({
   },
 });
 
+export const linkJiraIssue = internalMutation({
+  args: { investigationId: v.string(), jiraIssueKey: v.string() },
+  handler: async (ctx, args) => {
+    if (!/^[A-Z][A-Z0-9_]+-\d+$/.test(args.jiraIssueKey)) {
+      throw new ConvexError("jira_issue_key_invalid");
+    }
+    const investigation = await ctx.db.query("investigations")
+      .withIndex("by_appId", (q) => q.eq("appId", args.investigationId))
+      .unique();
+    if (!investigation) return { linked: false as const, reason: "missing" as const };
+    if (investigation.jiraIssueKey === args.jiraIssueKey) {
+      return { linked: false as const, reason: "already_linked" as const };
+    }
+    if (investigation.jiraIssueKey !== undefined) {
+      return { linked: false as const, reason: "conflict" as const };
+    }
+    await ctx.db.patch(investigation._id, {
+      jiraIssueKey: args.jiraIssueKey,
+      updatedAtMs: Math.max(Date.now(), investigation.updatedAtMs + 1),
+    });
+    return { linked: true as const };
+  },
+});
+
 async function startHandler(ctx: MutationCtx, args: { investigationId: string; expectedVersion: number }) {
     assertUUID(args.investigationId, "investigationId");
     const investigation = await ctx.db.query("investigations")
