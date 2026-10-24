@@ -1,0 +1,27 @@
+{
+  "name": "@forksafe/convex",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p .",
+    "test": "vitest run",
+    "codegen": "convex codegen",
+    "deploy": "convex deploy",
+    "dev:once": "convex dev --once"
+  },
+  "dependencies": {
+    "@convex-dev/workflow": "^0.4.10",
+    "@convex-dev/workpool": "^0.4.14",
+    "@daytonaio/sdk": "^0.226.1",
+    "@forksafe/contracts": "workspace:*",
+    "@forksafe/integrations": "workspace:*",
+    "convex": "^1.48.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@edge-runtime/vm": "^5.0.0",
+    "convex-test": "^0.0.65",
+    "typescript": "~5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
