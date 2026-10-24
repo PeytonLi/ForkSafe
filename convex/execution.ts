@@ -7,6 +7,7 @@ import { CloudDaytonaProvider, loadDaytonaConfig } from "@forksafe/daytona";
 import { internal } from "./_generated/api.js";
 import { internalAction } from "./_generated/server.js";
 import { classifyExperiment } from "./lib/experimentStatus.js";
+import { signedCaseCommand } from "./lib/evaluatorBackend.js";
 import withheldManifest from "../evaluation/withheld/manifest.json";
 import manifestsLock from "../evaluation/manifests.lock.json";
 
@@ -376,26 +377,14 @@ export const runSignedCase = internalAction({
     const runDir = `${RUN_ROOT}/eval-${args.attemptId}/${args.caseId}`;
     await putSmallFile(daytona, ref, `${runDir}/controller/task_controller.py`, new TextEncoder().encode(args.controllerSource));
     if (args.suite === "withheld") await putSmallFile(daytona, ref, `${runDir}/withheld-manifest.json`, await withheldManifestBytes());
-    const command = [
-      "python3 -m evaluator.run_candidate",
-      `--controller ${runDir}/controller/task_controller.py`,
-      `--expected-sha256 ${args.controllerSha256}`,
-      `--suite ${args.suite}`,
-      `--case-ids ${args.caseId}`,
-      `--candidate-id ${args.candidateId}`,
-      `--investigation-id ${args.investigationId}`,
-      `--evaluator-attempt-id ${args.attemptId}`,
-      `--artifacts-dir ${runDir}/artifacts`,
-      `--work-dir ${runDir}/work`,
-      `--out ${runDir}/result.json`,
-      ...(args.suite === "withheld" ? [`--withheld-manifest ${runDir}/withheld-manifest.json`, "--consume-withheld-manifest"] : []),
-      `--case-wall-sec 120`,
-    ].join(" ");
+    await putSmallFile(daytona, ref, `${runDir}/work/.keep`, new Uint8Array());
+    const command = signedCaseCommand({ ...args, runDir });
     let run: { exitCode: number; output: string };
     try {
-      run = await daytona.exec(ref, { command: `mkdir -p ${runDir}/work && ${command}`, cwd: "/workspace", timeoutSec: 300 });
+      run = await daytona.exec(ref, { command, cwd: "/workspace", timeoutSec: 300 });
     } catch (error) {
-      run = { exitCode: -1, output: `exec_failed:${error instanceof Error ? error.name : "unknown"}` };
+      run = { exitCode: -1, output: `exec_failed:${error instanceof Error ? `${error.name}:${error.message.slice(0, 120)}` : "unknown"}` };
+      console.log("runSignedCase:exec_failed", args.caseId, run.output);
     }
     let document: unknown = null;
     try {
