@@ -49,9 +49,11 @@ describe("FileJobSource", () => {
   it("renews and accepts a matching completion once per operation ID", async () => {
     const { source } = await setup();
     const lease = (await source.claim({ workerId: "worker", kinds: ["factory_session"], capacity: 1 }))!;
-    expect((await source.heartbeat({
+    const heartbeat = await source.heartbeat({
       attemptId: lease.attempt.id, grantId: lease.grant.id, epoch: lease.attempt.epoch, atMs: 10_001,
-    })).ok).toBe(true);
+    });
+    expect(heartbeat.ok).toBe(true);
+    if (heartbeat.ok) expect(heartbeat.grantExpiresAtMs).toBe(heartbeat.leasedUntilMs);
     const completion = {
       operationId: crypto.randomUUID(), jobId: lease.job.id, attemptId: lease.attempt.id,
       grantId: lease.grant.id, epoch: lease.attempt.epoch, outcome: "succeeded" as const,

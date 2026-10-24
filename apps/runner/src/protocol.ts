@@ -24,7 +24,12 @@ export const ClaimResponse = z.object({ lease: Lease.nullable() });
 export type ClaimResponse = z.infer<typeof ClaimResponse>;
 
 export const HeartbeatResponse = z.discriminatedUnion("ok", [
-  z.object({ ok: z.literal(true), leasedUntilMs: z.number().int(), epoch: z.number().int().nonnegative() }),
+  z.object({
+    ok: z.literal(true),
+    leasedUntilMs: z.number().int(),
+    grantExpiresAtMs: z.number().int().optional(),
+    epoch: z.number().int().nonnegative(),
+  }),
   z.object({ ok: z.literal(false), reason: z.enum(["fenced", "expired", "revoked", "unknown_attempt"]) }),
 ]);
 export type HeartbeatResponse = z.infer<typeof HeartbeatResponse>;

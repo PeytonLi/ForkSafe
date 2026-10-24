@@ -27,6 +27,7 @@ class ActiveToolBackend implements ForkSafeToolBackend {
 
 export async function main(): Promise<void> {
   const env = EnvConfig.parse(process.env);
+  const maxActiveModelCalls = env.MAX_ACTIVE_MODEL_CALLS;
   const jobSourceUrl = process.env.RUNNER_JOB_SOURCE_URL;
   const controlUrl = process.env.RUNNER_CONTROL_URL;
   const callbackSecret = env.RUNNER_CALLBACK_SECRET;
@@ -46,6 +47,7 @@ export async function main(): Promise<void> {
     adapter: selectFactoryAdapter(env),
     ledger: new UsageLedger(),
     workspaceRoot,
+    maxActiveTurns: maxActiveModelCalls,
     toolBackend: activeBackend,
     log,
   });
@@ -73,7 +75,7 @@ export async function main(): Promise<void> {
   process.once("SIGTERM", stop);
   try {
     while (!stopping) {
-      const capacity = Math.max(0, 4 - active.size);
+      const capacity = Math.max(0, maxActiveModelCalls - active.size);
       if (!capacity) {
         await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
         continue;

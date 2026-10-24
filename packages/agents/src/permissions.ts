@@ -21,22 +21,38 @@ export type PermissionParams = {
 };
 
 const SAFE_COMMANDS = new Set(["ls", "cat", "head", "tail", "wc", "grep", "rg", "find", "pwd", "stat", "file", "diff", "git"]);
-const META = /[;&|><`\n\r]|\$\(|\)/;
+const META = /[;&|><`\n\r$~()]/;
 
-function insideWorkspace(root: string, filePath: string): boolean {
+function withinWorkspace(root: string, filePath: string): boolean {
   const absoluteRoot = resolve(root);
   const target = resolve(absoluteRoot, filePath);
   const rel = relative(absoluteRoot, target);
-  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
 
-function safeCommand(command: string): boolean {
+function insideWorkspace(root: string, filePath: string): boolean {
+  return resolve(root) !== resolve(root, filePath) && withinWorkspace(root, filePath);
+}
+
+function safeCommand(command: string, workspaceRoot: string): boolean {
   if (!command || META.test(command)) return false;
   const tokens = command.trim().split(/\s+/);
   const first = tokens[0];
   if (!first || !SAFE_COMMANDS.has(first)) return false;
   if (first === "git" && !["status", "diff", "log", "show"].includes(tokens[1] ?? "")) return false;
   if (first === "find" && tokens.some((token) => ["-exec", "-execdir", "-delete", "-ok"].includes(token))) return false;
+  if ((first === "grep" || first === "rg") && tokens.some((token) => token === "-f" || token === "--file" || token.startsWith("--file="))) return false;
+  let patternSkipped = false;
+  for (const argument of tokens.slice(1)) {
+    if (argument.startsWith("-")) continue;
+    if ((first === "grep" || first === "rg") && !patternSkipped) {
+      patternSkipped = true;
+      continue;
+    }
+    if ((argument.includes("/") || argument === ".." || argument.startsWith(".")) && !withinWorkspace(workspaceRoot, argument)) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -48,9 +64,9 @@ function allowedUse(use: PermissionToolUse, policy: PermissionPolicy): boolean {
   }
   if (type === ToolConfirmationType.Execute || details.type === ToolConfirmationType.Execute) {
     const command = typeof details.command === "string" ? details.command : "";
-    if (!safeCommand(command)) return false;
+    if (!safeCommand(command, policy.workspaceRoot)) return false;
     const extracted = details.extractedCommands;
-    return !Array.isArray(extracted) || extracted.every((item) => typeof item === "string" && safeCommand(item));
+    return !Array.isArray(extracted) || extracted.every((item) => typeof item === "string" && safeCommand(item, policy.workspaceRoot));
   }
   if (type === ToolConfirmationType.McpTool || details.type === ToolConfirmationType.McpTool) {
     const server = details.serverName ?? details.server;

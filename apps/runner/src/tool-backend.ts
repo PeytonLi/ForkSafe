@@ -32,7 +32,7 @@ export class HttpToolBackend implements ForkSafeToolBackend {
     if (!input || typeof input !== "object" || Array.isArray(input)) throw new TypeError("ForkSafe tool input must be an object");
     const rawBody = JSON.stringify({ ...ctx, ...(input as Record<string, unknown>) });
     const timestamp = String(this.clock());
-    const signature = createHmac("sha256", this.secret).update(rawBody).digest("hex");
+    const signature = createHmac("sha256", this.secret).update(`${timestamp}.${rawBody}`).digest("hex");
     const response = await this.fetcher(`${this.baseUrl.replace(/\/$/, "")}/runner/tools/${name}`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-forksafe-signature": signature, "x-forksafe-timestamp": timestamp },

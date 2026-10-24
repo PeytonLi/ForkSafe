@@ -39,9 +39,23 @@ describe("permission policy", () => {
       toolUses: [use(ToolConfirmationType.Execute, { command })], options: opts,
     }, p).allowed;
     for (const command of ["ls -la", "git diff", "grep -n foo src"]) expect(decide(command)).toBe(true);
-    for (const command of ["rm -rf x", "cat a > b", "ls | sh", "echo $(id)", "find . -delete", "git push"]) {
+    for (const command of [
+      "rm -rf x",
+      "cat a > b",
+      "ls | sh",
+      "echo $(id)",
+      "find . -delete",
+      "git push",
+      "cat /proc/self/environ",
+      "cat ../other/x",
+      "ls ~",
+      "grep -r token /etc",
+      "cat $HOME/x",
+    ]) {
       expect(decide(command)).toBe(false);
     }
+    expect(decide("cat src/controller.py")).toBe(true);
+    expect(decide("grep -n foo ./src")).toBe(true);
   });
 
   it("denies mixed batches and only permits allowlisted forksafe MCP calls", async () => {

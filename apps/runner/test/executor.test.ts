@@ -75,4 +75,106 @@ describe("RunnerExecutor", () => {
     expect(source.heartbeat).toHaveBeenCalledOnce();
     expect(source.complete).not.toHaveBeenCalled();
   });
+
+  it("uses two sessions for concurrent jobs and fails a third at the environment cap", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let enteredCount = 0;
+    let markBothEntered!: () => void;
+    const bothEntered = new Promise<void>((resolve) => { markBothEntered = resolve; });
+    const adapter = new FixtureFactoryAdapter({
+      gate: () => {
+        enteredCount += 1;
+        if (enteredCount === 2) markBothEntered();
+        return gate;
+      },
+    });
+    const { manager } = await setup(adapter);
+    const baseLease = sampleLease();
+    const siblingLease = (): typeof baseLease => {
+      const lease = structuredClone(baseLease);
+      lease.job.id = crypto.randomUUID();
+      lease.job.idempotencyKey = crypto.randomUUID();
+      lease.attempt.id = crypto.randomUUID();
+      lease.attempt.jobId = lease.job.id;
+      lease.grant.id = crypto.randomUUID();
+      lease.grant.jobId = lease.job.id;
+      lease.grant.attemptId = lease.attempt.id;
+      return lease;
+    };
+    const secondLease = siblingLease();
+    const thirdLease = siblingLease();
+    const completions: {
+      jobId: string;
+      outcome: string;
+      result: Record<string, unknown>;
+      sessions: { provider: string; id: string }[];
+    }[] = [];
+    const source = {
+      heartbeat: vi.fn(async () => ({ ok: true as const, leasedUntilMs: Date.now() + 30_000, epoch: 0 })),
+      complete: vi.fn(async (completion: {
+        jobId: string;
+        outcome: string;
+        result: Record<string, unknown>;
+        sessions: { provider: string; id: string }[];
+      }) => {
+        completions.push(completion);
+        return { accepted: true };
+      }),
+    };
+    const executor = new RunnerExecutor({ sessions: manager, source: source as never, log: new ActivityLog() });
+    const firstTask = executor.execute(baseLease);
+    const secondTask = executor.execute(secondLease);
+    await bothEntered;
+
+    expect(manager.idleSessionFor(baseLease.job.investigationId, baseLease.job.environmentId!)).toBeUndefined();
+    await expect(executor.execute(thirdLease)).resolves.toMatchObject({ accepted: true });
+    const capCompletion = completions.find((completion) => completion.jobId === thirdLease.job.id);
+    expect(capCompletion).toMatchObject({
+      outcome: "failed",
+      result: { error: "environment_session_cap" },
+      sessions: [],
+    });
+
+    release();
+    await expect(Promise.all([firstTask, secondTask])).resolves.toEqual([
+      { accepted: true },
+      { accepted: true },
+    ]);
+    const usedSessions = completions
+      .filter((completion) => completion.jobId !== thirdLease.job.id)
+      .flatMap((completion) => completion.sessions.map((session) => session.id));
+    expect(new Set(usedSessions).size).toBe(2);
+    expect(enteredCount).toBe(2);
+  });
+
+  it("retries a thrown completion with the same operation ID", async () => {
+    const { manager } = await setup();
+    const lease = sampleLease();
+    const operationIds: string[] = [];
+    const delays: number[] = [];
+    let attempts = 0;
+    const source = {
+      heartbeat: vi.fn(async () => ({ ok: true as const, leasedUntilMs: Date.now() + 30_000, epoch: 0 })),
+      complete: vi.fn(async (completion: { operationId: string }) => {
+        operationIds.push(completion.operationId);
+        attempts += 1;
+        if (attempts === 1) throw new Error("network unavailable");
+        return { accepted: true };
+      }),
+    };
+    const executor = new RunnerExecutor({
+      sessions: manager,
+      source: source as never,
+      log: new ActivityLog(),
+      sleep: async (ms) => { delays.push(ms); },
+    });
+
+    await expect(executor.execute(lease)).resolves.toEqual({ accepted: true });
+    expect(source.complete).toHaveBeenCalledTimes(2);
+    expect(operationIds).toHaveLength(2);
+    expect(operationIds[0]).toMatch(/^[\da-f-]{36}$/);
+    expect(operationIds[1]).toBe(operationIds[0]);
+    expect(delays).toEqual([250]);
+  });
 });

@@ -28,12 +28,43 @@ export type StreamMsg =
       fixture?: true;
     };
 
+export const DISABLED_BUILTIN_TOOL_IDS = [
+  "ApplyPatch",
+  "AskUser",
+  "ConnectApp",
+  "CreateAutomation",
+  "DeleteAutomation",
+  "DismissHandoffItems",
+  "EditAutomation",
+  "EndFeatureRun",
+  "ExitSpecMode",
+  "FetchUrl",
+  "GenerateDroid",
+  "GenerateImage",
+  "ListAutomations",
+  "ListAutomationTemplates",
+  "Loop",
+  "ProposeMission",
+  "ReadAutomation",
+  "RunAutomation",
+  "Skill",
+  "StageSettingsChanges",
+  "StartMissionRun",
+  "Task",
+  "TaskOutput",
+  "TaskStop",
+  "TodoWrite",
+  "WaitForScript",
+  "WebSearch",
+] as const;
+
 export type AdapterSessionOptions = {
   cwd: string;
   modelId?: string;
+  autonomyLevel?: AutonomyLevel;
   apiKey?: string;
   mcpServers?: SdkMcpServer[];
-  permissionHandler?: (params: unknown) => ToolConfirmationOutcome;
+  permissionHandler?: (params: unknown) => ToolConfirmationOutcome | Promise<ToolConfirmationOutcome>;
   systemPrompt?: string;
 };
 
@@ -100,13 +131,14 @@ function liveSession(session: DroidSession): AdapterSession {
 
 export class LiveFactoryAdapter implements FactoryAdapter {
   readonly mode = "live" as const;
-  constructor(private readonly options: { apiKey?: string; modelId?: string; execPath?: string } = {}) {}
+  constructor(private readonly options: { apiKey?: string; modelId?: string; execPath?: string; autonomyLevel?: AutonomyLevel } = {}) {}
 
   async createSession(opts: AdapterSessionOptions): Promise<AdapterSession> {
     const session = await createSession({
       cwd: opts.cwd,
       modelId: opts.modelId ?? this.options.modelId ?? process.env.FACTORY_MODEL,
-      autonomyLevel: AutonomyLevel.Low,
+      autonomyLevel: opts.autonomyLevel ?? this.options.autonomyLevel ?? AutonomyLevel.Low,
+      disabledToolIds: [...DISABLED_BUILTIN_TOOL_IDS],
       mcpServers: opts.mcpServers,
       permissionHandler: opts.permissionHandler as never,
       systemPrompt: opts.systemPrompt,
@@ -121,6 +153,7 @@ export class LiveFactoryAdapter implements FactoryAdapter {
       const session = await resumeSession(vendorId, {
         mcpServers: opts.mcpServers,
         permissionHandler: opts.permissionHandler as never,
+        disabledToolIds: [...DISABLED_BUILTIN_TOOL_IDS],
         apiKey: opts.apiKey ?? this.options.apiKey,
         execPath: this.options.execPath,
       });
@@ -172,7 +205,7 @@ export class FixtureFactoryAdapter implements FactoryAdapter {
           text: "[FIXTURE AGENT] No findings are recorded. DONE",
           turnCount: 1,
           success: true,
-          subtype: "completed",
+          subtype: "success",
           fixture: true,
         };
       },

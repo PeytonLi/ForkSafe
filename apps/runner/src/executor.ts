@@ -1,21 +1,19 @@
 import { randomUUID } from "node:crypto";
-import type { SessionManager, TurnOutcome } from "@forksafe/agents";
-import { buildRepairPrompt, type RepairPromptParams } from "@forksafe/agents";
+import { ActivityLog, buildRepairPrompt, SessionCapError, type RepairPromptParams, type SessionManager, type TurnOutcome } from "@forksafe/agents";
 import type { VendorRef } from "@forksafe/contracts";
-import { ActivityLog } from "@forksafe/agents";
 import { assertFence, StaleLeaseError } from "./fencing.js";
 import { LeaseKeeper } from "./heartbeat.js";
 import type { JobSource } from "./job-source.js";
-import type { Lease } from "./protocol.js";
+import type { CompletionRequest, CompletionResponse, Lease } from "./protocol.js";
 
 export class RunnerExecutor {
-  private readonly sessionsByEnvironment = new Map<string, string>();
   constructor(
     private readonly options: {
       sessions: SessionManager;
       source: JobSource;
       log: ActivityLog;
       clock?: () => number;
+      sleep?: (ms: number) => Promise<void>;
       beforeJob?: (lease: Lease) => void;
     },
   ) {}
@@ -24,16 +22,30 @@ export class RunnerExecutor {
     if (lease.job.kind !== "factory_session") throw new Error(`Unsupported runner job kind: ${lease.job.kind}`);
     if (!lease.job.environmentId) throw new Error("factory_session jobs require environmentId");
     const clock = this.options.clock ?? Date.now;
+    const operationId = randomUUID();
     this.options.beforeJob?.(lease);
-    const key = `${lease.job.investigationId}:${lease.job.environmentId}`;
-    let sessionId = this.sessionsByEnvironment.get(key);
+    let sessionId = this.options.sessions.idleSessionFor(lease.job.investigationId, lease.job.environmentId);
     if (!sessionId) {
-      const created = await this.options.sessions.createSession({
-        investigationId: lease.job.investigationId,
-        environmentId: lease.job.environmentId,
-      });
-      sessionId = created.sessionId;
-      this.sessionsByEnvironment.set(key, sessionId);
+      try {
+        const created = await this.options.sessions.createSession({
+          investigationId: lease.job.investigationId,
+          environmentId: lease.job.environmentId,
+        });
+        sessionId = created.sessionId;
+      } catch (error) {
+        if (!(error instanceof SessionCapError)) throw error;
+        return this.completeWithRetry(lease, {
+          operationId,
+          jobId: lease.job.id,
+          attemptId: lease.attempt.id,
+          grantId: lease.grant.id,
+          epoch: lease.attempt.epoch,
+          outcome: "failed",
+          result: { error: "environment_session_cap" },
+          sessions: [],
+          finishedAtMs: clock(),
+        }, clock);
+      }
     }
     const keeper = new LeaseKeeper(lease, this.options.source, clock);
     keeper.start();
@@ -58,7 +70,7 @@ export class RunnerExecutor {
     } catch (error) {
       if (keeper.signal.aborted) {
         await this.options.sessions.interrupt(sessionId).catch(() => undefined);
-        await this.log(lease, "lease abandoned", { reason: String(keeper.signal.reason ?? "aborted") });
+        await this.log(lease, "lease abandoned", { reason: String(keeper.signal.reason ?? "aborted") }, sessionId);
         return null;
       }
       failure = error instanceof Error ? error.message : String(error);
@@ -69,7 +81,7 @@ export class RunnerExecutor {
       assertFence(lease, clock());
     } catch (error) {
       if (error instanceof StaleLeaseError) {
-        await this.log(lease, "stale result dropped", { reason: error.message });
+        await this.log(lease, "stale result dropped", { reason: error.message }, sessionId);
         return null;
       }
       throw error;
@@ -77,7 +89,7 @@ export class RunnerExecutor {
     const session = this.options.sessions.toAgentSession(sessionId);
     const sessions: VendorRef[] = session.factorySession ? [session.factorySession] : [];
     const payload = {
-      operationId: randomUUID(),
+      operationId,
       jobId: lease.job.id,
       attemptId: lease.attempt.id,
       grantId: lease.grant.id,
@@ -88,17 +100,45 @@ export class RunnerExecutor {
       sessions,
       finishedAtMs: clock(),
     };
-    const response = await this.options.source.complete(payload);
-    if (!response.accepted) await this.log(lease, "completion rejected", { reason: response.reason ?? "unknown" });
-    return response;
+    return this.completeWithRetry(lease, payload, clock, sessionId);
   }
 
-  private async log(lease: Lease, summary: string, data: Record<string, unknown>): Promise<void> {
+  private async completeWithRetry(
+    lease: Lease,
+    payload: CompletionRequest,
+    clock: () => number,
+    sessionId = "unknown",
+  ): Promise<CompletionResponse | null> {
+    const backoffs = [250, 500, 1_000];
+    const sleep = this.options.sleep ?? ((ms: number) => new Promise<void>((resolveDelay) => setTimeout(resolveDelay, ms)));
+    for (let attempt = 0; attempt <= backoffs.length; attempt += 1) {
+      try {
+        assertFence(lease, clock());
+      } catch (error) {
+        if (error instanceof StaleLeaseError) {
+          await this.log(lease, "stale result dropped", { reason: error.message }, sessionId);
+          return null;
+        }
+        throw error;
+      }
+      try {
+        const response = await this.options.source.complete(payload);
+        if (!response.accepted) await this.log(lease, "completion rejected", { reason: response.reason ?? "unknown" }, sessionId);
+        return response;
+      } catch (error) {
+        if (attempt === backoffs.length) throw error;
+        await sleep(backoffs[attempt]!);
+      }
+    }
+    throw new Error("Completion retry loop exited unexpectedly");
+  }
+
+  private async log(lease: Lease, summary: string, data: Record<string, unknown>, sessionId = "unknown"): Promise<void> {
     await this.options.log.record({
       atMs: (this.options.clock ?? Date.now)(),
       investigationId: lease.job.investigationId,
       environmentId: lease.job.environmentId ?? "unknown",
-      sessionId: this.sessionsByEnvironment.get(`${lease.job.investigationId}:${lease.job.environmentId}`) ?? "unknown",
+      sessionId,
       kind: "lifecycle",
       summary,
       data,

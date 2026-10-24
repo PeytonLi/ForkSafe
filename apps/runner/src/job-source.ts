@@ -42,7 +42,7 @@ export class HttpJobSource implements JobSource {
   private async post<S extends z.ZodTypeAny>(endpoint: string, body: unknown, schema: S): Promise<z.output<S>> {
     const rawBody = JSON.stringify(body);
     const timestamp = String(Date.now());
-    const signature = createHmac("sha256", this.secret).update(rawBody).digest("hex");
+    const signature = createHmac("sha256", this.secret).update(`${timestamp}.${rawBody}`).digest("hex");
     const response = await this.fetcher(`${this.baseUrl.replace(/\/$/, "")}/runner/${endpoint}`, {
       method: "POST",
       headers: {
@@ -132,7 +132,7 @@ export class FileJobSource implements JobSource {
     record.attempt.state = "heartbeating";
     record.grant.expiresAtMs = leasedUntilMs;
     await this.save();
-    return { ok: true, leasedUntilMs, epoch: record.attempt.epoch };
+    return { ok: true, leasedUntilMs, grantExpiresAtMs: record.grant.expiresAtMs, epoch: record.attempt.epoch };
   }
 
   async complete(input: z.infer<typeof CompletionRequest>): Promise<z.infer<typeof CompletionResponse>> {

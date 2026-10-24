@@ -8,7 +8,7 @@ Without `RUNNER_JOB_SOURCE_URL`, jobs are read from `RUNNER_JOBS_DIR/jobs/<jobId
 
 ## HTTP protocol
 
-When configured, the runner POSTs JSON to `/runner/claim`, `/runner/heartbeat`, `/runner/complete`, and `/runner/tools/<toolName>`. Requests include `x-forksafe-timestamp` and `x-forksafe-signature`, the hex HMAC-SHA256 of the exact raw JSON body using `RUNNER_CALLBACK_SECRET`. Responses are schema-validated. Tool requests include investigation, environment, session, attempt, grant, and epoch context; the trusted runner checks the fence before each operation and before posting a result.
+When configured, the runner POSTs JSON to `/runner/claim`, `/runner/heartbeat`, `/runner/complete`, and `/runner/tools/<toolName>`. Requests include `x-forksafe-timestamp` and `x-forksafe-signature`; the signature is `hex(HMAC-SHA256(RUNNER_CALLBACK_SECRET, timestamp + "." + rawBody))`, where `rawBody` is the exact JSON request body. Receivers should reject timestamps older than 60 seconds. Responses are schema-validated. Tool requests include investigation, environment, session, attempt, grant, and epoch context; the trusted runner checks the fence before each operation and before posting a result.
 
 `RUNNER_CONTROL_URL` routes tools to the control service. When it is unset, local findings are written to `./var/runner/local/findings.jsonl`; experiment execution and candidate submission return an explicitly blocked result because no simulator adapter is configured. Workspaces are UUID-scoped below `RUNNER_WORKSPACE_ROOT` (default `./var/workspaces`).
 

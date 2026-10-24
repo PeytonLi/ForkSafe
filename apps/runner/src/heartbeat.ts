@@ -87,7 +87,7 @@ export class LeaseKeeper {
         return;
       }
       this.lease.attempt.leasedUntilMs = response.leasedUntilMs;
-      this.lease.grant.expiresAtMs = response.leasedUntilMs;
+      if (response.grantExpiresAtMs !== undefined) this.lease.grant.expiresAtMs = response.grantExpiresAtMs;
       this.lastAckMs = this.clock();
       this.checkDeadline();
     } catch {

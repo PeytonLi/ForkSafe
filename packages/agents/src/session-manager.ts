@@ -6,7 +6,8 @@ import {
   type VendorRef,
 } from "@forksafe/contracts";
 import {
-  createPermissionHandler,
+  decidePermission,
+  type PermissionParams,
   type PermissionPolicy,
 } from "./permissions.js";
 import {
@@ -95,7 +96,23 @@ export class SessionManager {
     const adapterSession = await this.options.adapter.createSession({
       cwd,
       mcpServers: [mcpServer],
-      permissionHandler: createPermissionHandler(policy) as (params: unknown) => never,
+      permissionHandler: async (params: unknown) => {
+        const decision = decidePermission(params as PermissionParams, policy);
+        await this.options.log.record({
+          atMs: Date.now(),
+          investigationId,
+          environmentId,
+          sessionId: id,
+          kind: "permission",
+          summary: decision.allowed ? "permission allowed" : "permission denied",
+          data: {
+            toolNames: (params as PermissionParams).toolUses.map((use) => use.name ?? use.confirmationType),
+            allowed: decision.allowed,
+            reasons: decision.reasons,
+          },
+        });
+        return decision.outcome;
+      },
     });
     this.sessions.set(id, {
       id, investigationId, environmentId, cwd, adapterSession,
@@ -230,6 +247,15 @@ export class SessionManager {
 
   replacesSessionId(sessionId: string): string | undefined {
     return this.requireSession(sessionId).replacesSessionId;
+  }
+
+  idleSessionFor(investigationId: string, environmentId: string): string | undefined {
+    return [...this.sessions.values()].find((session) =>
+      session.investigationId === investigationId
+      && session.environmentId === environmentId
+      && !session.active
+      && (session.state === "created" || session.state === "idle"),
+    )?.id;
   }
 
   private requireSession(id: string): ManagedSession {

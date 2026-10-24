@@ -24,7 +24,7 @@ describe("lease heartbeat", () => {
     expect(shouldAbandon(lease, 2_000)).toBe(true);
   });
 
-  it("beats every five seconds, extends deadlines, and aborts on fencing", async () => {
+  it("extends only the attempt lease when a heartbeat omits grant expiry and aborts on fencing", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(10_000);
     const lease = sampleLease(10_000);
@@ -33,7 +33,8 @@ describe("lease heartbeat", () => {
     keeper.start();
     await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS);
     expect(source.heartbeat).toHaveBeenCalledTimes(1);
-    expect(lease.grant.expiresAtMs).toBe(50_000);
+    expect(lease.attempt.leasedUntilMs).toBe(50_000);
+    expect(lease.grant.expiresAtMs).toBe(40_000);
     keeper.stop();
 
     const fenced = new LeaseKeeper(sampleLease(10_000), {
@@ -43,6 +44,21 @@ describe("lease heartbeat", () => {
     await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS);
     expect(fenced.signal.aborted).toBe(true);
     expect(fenced.signal.reason).toBe("fenced");
+  });
+
+  it("abandons as the unchanged grant expiry approaches", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    const lease = sampleLease(10_000);
+    const keeper = new LeaseKeeper(lease, {
+      heartbeat: async () => ({ ok: true as const, leasedUntilMs: 50_000, epoch: 0 }),
+    });
+    keeper.start();
+    await vi.advanceTimersByTimeAsync(26_000);
+    expect(lease.attempt.leasedUntilMs).toBe(50_000);
+    expect(lease.grant.expiresAtMs).toBe(40_000);
+    expect(keeper.signal.aborted).toBe(true);
+    expect(keeper.signal.reason).toBe("expired");
   });
 
   it("aborts as repeated network failures approach the lease deadline", async () => {
