@@ -1,4 +1,3 @@
-#!/usr/bin/env node
-// TODO(phase-1): not yet implemented — placeholder so root commands exist.
-console.error("forksafe: scripts/pytest.mjs is not implemented yet");
-process.exit(2);
+import { resolve } from 'node:path';
+import { requirePythonAssets, root, run, main } from './lib/runtime.mjs';
+main(async () => { requirePythonAssets(); await run(resolve(root,'.venv/bin/pytest'),['-q',...process.argv.slice(2)]); });
