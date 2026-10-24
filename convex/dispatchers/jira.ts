@@ -48,7 +48,7 @@ export async function deliverJiraPayload(
   payload: unknown,
   deps: {
     client: JiraClient;
-    spacetime: Pick<SpacetimeClient, "getReview" | "listCandidates" | "listEvaluations" | "findingsCount">;
+    spacetime: Pick<SpacetimeClient, "getReview" | "listCandidates" | "listEvaluations" | "findingsCount"> & Partial<Pick<SpacetimeClient, "listReviews">>;
     snapshot: (args: { id?: string; jiraIssueKey?: string }) => Promise<Snapshot>;
     projectKey: string;
     siteUrl: string;
@@ -114,6 +114,8 @@ export async function deliverJiraPayload(
     deps.spacetime.findingsCount(investigationId),
   ]);
   const bestEvaluation = selectBestEvaluation(candidates, evaluations);
+  const reviews = deps.spacetime.listReviews ? await deps.spacetime.listReviews(investigationId) : [];
+  const latestReview = [...reviews].sort((left, right) => right.createdAtMs - left.createdAtMs)[0];
     const statuses = deps.readyStatuses?.filter(Boolean);
   const input = JiraSyncInput.parse({
     operationId: OperationId.parse(await operationIdForIdempotencyKey(idempotencyKey!)),
@@ -125,10 +127,38 @@ export async function deliverJiraPayload(
       candidatesCount: candidates.length,
       ...(bestEvaluation ? { bestEvaluation } : {}),
     },
+    candidateVerdicts: candidateVerdicts(candidates, evaluations),
+    ...(latestReview ? { review: { reviewId: latestReview.id, candidateId: latestReview.candidateId, decision: latestReview.decision } } : {}),
+    extraLabels: [JIRA_RUN_LABEL],
     ...(deps.webUrl ? { investigationUrl: new URL(`/investigations/${investigationId}`, deps.webUrl).toString() } : {}),
     ...(statuses?.length ? { workflow: { readyForReview: { statusNames: statuses } } } : {}),
   });
   return { input, result: await syncInvestigationToJira(deps.client, input) };
+}
+
+export const JIRA_RUN_LABEL = "forksafe-run";
+
+/** Per-candidate verdicts for the issue body. Withheld suites contribute only
+ *  their overall status: no case ids, counts, or failure detail. */
+export function candidateVerdicts(
+  candidates: Array<{ id: string; controllerSha256: string; createdAtMs?: number }>,
+  evaluations: CandidateEvaluation[],
+) {
+  const latest = (candidateId: string, suite: "public" | "withheld") => evaluations
+    .filter((evaluation) => evaluation.candidateId === candidateId && evaluation.suite === suite)
+    .sort((left, right) => right.createdAtMs - left.createdAtMs)[0];
+  return candidates.slice(0, 20).map((candidate) => {
+    const publicEvaluation = latest(candidate.id, "public");
+    const withheldEvaluation = latest(candidate.id, "withheld");
+    return {
+      candidateId: candidate.id,
+      controllerSha256: candidate.controllerSha256,
+      ...(publicEvaluation ? { publicVerdict: publicEvaluation.status } : {}),
+      publicPassed: publicEvaluation ? publicEvaluation.cases.filter((item) => item.status === "passed").length : 0,
+      publicTotal: publicEvaluation ? publicEvaluation.cases.length : 0,
+      ...(withheldEvaluation ? { withheldVerdict: withheldEvaluation.status } : {}),
+    };
+  });
 }
 
 function selectBestEvaluation(

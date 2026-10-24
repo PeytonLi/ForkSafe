@@ -159,6 +159,15 @@ describe("agent tool persistence", () => {
       ...targetContext!, revisionId, rationale: "evidence-backed",
       basedOnFindings: [findingId],
     };
+    await expect(t.action(internal.agentTools.submitCandidate, args)).resolves.toMatchObject({
+      status: "rejected", reason: "finding_required",
+    });
+    await t.mutation(internal.evidence.insertFinding, {
+      findingId: crypto.randomUUID(), investigationId: targetContext!.investigationId, environmentId: targetContext!.environmentId,
+      attemptId: targetContext!.attemptId, epoch: targetContext!.epoch, grantId: targetContext!.grantId,
+      kind: "limit_violation", claim: "observation", summary: "Own measurement",
+      evidence: [{ kind: "metric", locator: { metric: "joint_limit" } }],
+    });
     await expect(t.action(internal.agentTools.submitCandidate, args)).resolves.toEqual({
       status: "rejected", reason: "finding_not_read",
     });

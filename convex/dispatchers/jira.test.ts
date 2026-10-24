@@ -206,3 +206,20 @@ describe("Jira outbox dispatcher", () => {
     expect([...jira.remoteLinks.keys()]).toEqual([`forksafe:confluence:${investigationId}:12345`]);
   });
 });
+
+describe("Jira candidate verdicts", () => {
+  it("uses each candidate's latest public and withheld evaluation and exposes no withheld case detail", async () => {
+    const { candidateVerdicts } = await import("./jira.js");
+    const candidate = { id: "11111111-1111-4111-8111-111111111111", controllerSha256: "a".repeat(64) };
+    const evaluation = (suite: "public" | "withheld", status: "passed" | "failed", createdAtMs: number, passed: number) => ({
+      id: crypto.randomUUID(), candidateId: candidate.id, investigationId: "22222222-2222-4222-8222-222222222222",
+      evaluatorAttemptId: crypto.randomUUID(), suite, allRequiredPassed: status === "passed", status, createdAtMs,
+      cases: Array.from({ length: 3 }, (_, index) => ({ caseId: `${suite}-0${index}`, status: index < passed ? "passed" as const : "failed" as const, failureKinds: [] })),
+    });
+    const verdicts = candidateVerdicts([candidate], [
+      evaluation("public", "failed", 1, 1), evaluation("public", "passed", 2, 3), evaluation("withheld", "failed", 3, 2),
+    ] as never);
+    expect(verdicts).toEqual([{ candidateId: candidate.id, controllerSha256: "a".repeat(64), publicVerdict: "passed", publicPassed: 3, publicTotal: 3, withheldVerdict: "failed" }]);
+    expect(JSON.stringify(verdicts)).not.toContain("withheld-0");
+  });
+});

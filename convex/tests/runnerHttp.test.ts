@@ -134,7 +134,7 @@ describe("signed runner HTTP routes", () => {
       { name: "request_subtask", args: {}, expected: { status: "reserved" }, callId: crypto.randomUUID() },
       { name: "run_experiment", args: { caseId: "withheld-case", seed: 0, hypothesis: "", basedOnFindings: [] }, expected: { status: "rejected", reason: "case_not_public" } },
       { name: "propose_controller_revision", args: { source: "", rationale: "" }, expected: { status: "rejected", reason: "source_size_invalid" } },
-      { name: "submit_candidate", args: { revisionId: crypto.randomUUID(), rationale: "", basedOnFindings: [] }, expected: { status: "rejected", reason: "revision_mismatch" } },
+      { name: "submit_candidate", args: { revisionId: crypto.randomUUID(), rationale: "", basedOnFindings: [] }, expected: { status: "rejected", reason: "finding_required" } },
       { name: "read_findings", args: { scope: "investigation", limit: 20 }, expected: { mode: "live", findings: [] } },
       { name: "write_finding", args: { kind: "behavioral_note", summary: "No evidence", evidence: [] }, expected: { status: "rejected", reason: "evidence_required" } },
       { name: "request_evidence", args: { query: "no experiments yet" }, expected: { mode: "live", experiments: [] } },
