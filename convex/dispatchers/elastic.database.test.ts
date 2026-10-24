@@ -9,6 +9,7 @@ const modules = Object.fromEntries(
     .map(([path, load]) => [path.replace(/^\.\.\//, ""), load]),
 );
 modules["dispatchers/elastic.ts"] = () => import("./elastic.js");
+modules["dispatchers/outbox.ts"] = () => import("./outbox.js");
 
 describe("Elastic outbox dead-letter mutation", () => {
   it("marks only pending matching receipts dead and records a safe error code", async () => {
@@ -40,15 +41,15 @@ describe("Elastic outbox dead-letter mutation", () => {
       nextAttemptAtMs: 1,
     }));
 
-    expect(await t.mutation(internal.dispatchers.elastic.deadLetter, {
+    expect(await t.mutation(internal.dispatchers.outbox.deadLetter, {
       idempotencyKey: key,
       errorCode: "mapper_parsing_exception",
     })).toEqual({ updated: true });
-    expect(await t.mutation(internal.dispatchers.elastic.deadLetter, {
+    expect(await t.mutation(internal.dispatchers.outbox.deadLetter, {
       idempotencyKey: "already-delivered",
       errorCode: "must_not_replace",
     })).toEqual({ updated: false });
-    expect(await t.mutation(internal.dispatchers.elastic.deadLetter, {
+    expect(await t.mutation(internal.dispatchers.outbox.deadLetter, {
       idempotencyKey: "missing",
       errorCode: "not_found",
     })).toEqual({ updated: false });

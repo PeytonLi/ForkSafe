@@ -19,6 +19,7 @@ import type * as daytonaPool from "../daytonaPool.js";
 import type * as demo from "../demo.js";
 import type * as dispatchers_elastic from "../dispatchers/elastic.js";
 import type * as dispatchers_jira from "../dispatchers/jira.js";
+import type * as dispatchers_outbox from "../dispatchers/outbox.js";
 import type * as evaluation from "../evaluation.js";
 import type * as evidence from "../evidence.js";
 import type * as execution from "../execution.js";
@@ -67,6 +68,7 @@ declare const fullApi: ApiFromModules<{
   demo: typeof demo;
   "dispatchers/elastic": typeof dispatchers_elastic;
   "dispatchers/jira": typeof dispatchers_jira;
+  "dispatchers/outbox": typeof dispatchers_outbox;
   evaluation: typeof evaluation;
   evidence: typeof evidence;
   execution: typeof execution;
