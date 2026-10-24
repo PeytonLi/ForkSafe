@@ -1,0 +1,19 @@
+.wrap { display: grid; min-width: 0; gap: 0.75rem; }
+.card { min-width: 0; padding: 0.9rem; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--panel); box-shadow: var(--shadow-card); }
+.card h3 { margin: 0 0 0.55rem; font-size: var(--text-md); }
+.lineage { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.6rem; min-width: 0; overflow-wrap: anywhere; }
+.lineageItem { min-width: 0; overflow-wrap: anywhere; }
+.current { padding: 0.2rem 0.45rem; border-radius: 8px; color: var(--ink); background: var(--accent-soft); font-weight: 650; }
+.arrow { margin-right: 0.5rem; color: var(--muted); }
+.thisRun { margin: 0.65rem 0 0; color: var(--muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.thisRun code { word-break: break-all; }
+.muted { color: var(--muted); font-size: var(--text-xs); }
+.error { color: var(--red); }
+.outcome { margin: 0.55rem 0; font-weight: 650; }
+.hints { display: grid; gap: 0.5rem; padding-left: 1.2rem; }
+.hints li { overflow-wrap: anywhere; }
+.hints :global(.badge) { margin-left: 0.4rem; }
+.card button { min-height: 38px; }
+@media (prefers-reduced-motion: reduce) {
+  .wrap * { scroll-behavior: auto !important; }
+}

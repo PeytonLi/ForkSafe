@@ -103,6 +103,19 @@ export const CaseEvaluationInput = __t.object("CaseEvaluationInput", {
 });
 export type CaseEvaluationInput = __Infer<typeof CaseEvaluationInput>;
 
+export const ControllerPromotion = __t.object("ControllerPromotion", {
+  id: __t.string(),
+  taskFamily: __t.string(),
+  version: __t.u32(),
+  controllerSha256: __t.string(),
+  parentControllerSha256: __t.string(),
+  investigationId: __t.string(),
+  candidateId: __t.string(),
+  reviewId: __t.string(),
+  createdAtMs: __t.i64(),
+});
+export type ControllerPromotion = __Infer<typeof ControllerPromotion>;
+
 export const ControllerRevision = __t.object("ControllerRevision", {
   id: __t.string(),
   environmentId: __t.string(),

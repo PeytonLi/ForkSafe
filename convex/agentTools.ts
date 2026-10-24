@@ -85,13 +85,18 @@ export const recordFindingReads = internalMutation({
 export const mirrorFindingUse = internalMutation({
   args: {
     appId: v.string(), findingId: v.string(), findingEnvironmentId: v.string(), usedByEnvironmentId: v.string(),
-    experimentId: v.optional(v.string()), candidateId: v.optional(v.string()), spacetimeCommitted: v.boolean(),
+    experimentId: v.optional(v.string()), candidateId: v.optional(v.string()), crossRun: v.optional(v.boolean()), spacetimeCommitted: v.boolean(),
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db.query("findingUses").withIndex("by_target", (q) =>
       q.eq("findingId", args.findingId).eq("experimentId", args.experimentId).eq("candidateId", args.candidateId)).unique();
     if (existing) {
-      if (args.spacetimeCommitted && !existing.spacetimeCommitted) await ctx.db.patch(existing._id, { spacetimeCommitted: true });
+      if ((args.spacetimeCommitted && !existing.spacetimeCommitted) || (args.crossRun && !existing.crossRun)) {
+        await ctx.db.patch(existing._id, {
+          ...(args.spacetimeCommitted ? { spacetimeCommitted: true } : {}),
+          ...(args.crossRun ? { crossRun: true } : {}),
+        });
+      }
       return { duplicate: true };
     }
     await ctx.db.insert("findingUses", {
@@ -117,8 +122,16 @@ export const checkCitedFindings = internalQuery({
     const findings = [];
     for (const findingId of [...new Set(args.findingIds)]) {
       const finding = await ctx.db.query("findings").withIndex("by_appId", (q: any) => q.eq("appId", findingId)).unique();
-      if (!finding || finding.investigationId !== args.investigationId) {
+      if (!finding) {
         return { status: "rejected", reason: "finding_not_in_investigation" };
+      }
+      const crossRun = finding.investigationId !== args.investigationId;
+      if (crossRun) {
+        const offer = await ctx.db.query("priorHintOffers").withIndex("by_environment_finding", (q: any) =>
+          q.eq("environmentId", args.environmentId).eq("findingId", findingId)).unique();
+        if (!offer) return { status: "rejected", reason: "finding_not_in_investigation" };
+        findings.push({ ...finding, crossRun: true });
+        continue;
       }
       if (finding.environmentId !== args.environmentId) {
         const read = await ctx.db.query("findingReads").withIndex("by_environment_finding", (q: any) =>
@@ -142,6 +155,13 @@ async function commitFindingUses(ctx: any, args: ToolCtx, findings: any[], targe
     const targetId = target.experimentId ?? target.candidateId!;
     const digest = await sha256Hex(new TextEncoder().encode(`${finding.appId}:${targetId}`));
     const uuid = `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-8${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+    if (finding.crossRun) {
+      await ctx.runMutation(internal.agentTools.mirrorFindingUse, {
+        appId: uuid, findingId: finding.appId, findingEnvironmentId: finding.environmentId,
+        usedByEnvironmentId: args.environmentId, ...target, crossRun: true, spacetimeCommitted: false,
+      });
+      continue;
+    }
     let committed = false;
     try {
       const result = await ctx.runAction(internal.bridge.recordFindingUse, {
@@ -164,7 +184,13 @@ function grantRef(args: ToolCtx) {
   return { grantId: args.grantId, attemptId: args.attemptId, epoch: args.epoch };
 }
 
-async function baselineSource(ctx: any): Promise<{ source: string; sha256: string }> {
+async function baselineSource(ctx: any, investigationId: string): Promise<{ source: string; sha256: string }> {
+  const investigation = await ctx.runQuery(internal.investigations.getByAppId, { investigationId });
+  if (investigation?.controllerSha256) {
+    const selected = await ctx.runQuery(internal.evidence.getSourceBySha, { controllerSha256: investigation.controllerSha256 });
+    if (!selected) throw new ConvexError("controller_source_missing");
+    return { source: selected.source, sha256: selected.controllerSha256 };
+  }
   const bundle = await ctx.runQuery(internal.bundles.get, { key: "baseline_controller" });
   if (!bundle) throw new ConvexError("baseline_controller_missing");
   const row = await ctx.runQuery(internal.evidence.getSourceBySha, { controllerSha256: bundle.sha256 });
@@ -183,7 +209,7 @@ async function resolveController(ctx: any, args: ToolCtx, revisionId?: string): 
     const found = await ctx.runQuery(internal.evidence.getRevision, { revisionId: head.appId });
     if (found?.source) return { source: found.source as string, sha256: head.controllerSha256 as string, revisionId: head.appId as string, changedFunctions: head.changedFunctions as string[] };
   }
-  const baseline = await baselineSource(ctx);
+  const baseline = await baselineSource(ctx, args.investigationId);
   return { ...baseline, revisionId: undefined, changedFunctions: [] as string[] };
 }
 
@@ -410,7 +436,7 @@ export const proposeRevision = internalAction({
       return { status: "rejected", reason: "disallowed_import", detail: "controllers may not touch the filesystem, processes or network" };
     }
     const sha = await sha256Hex(bytes);
-    const baseline = await baselineSource(ctx);
+    const baseline = await baselineSource(ctx, args.investigationId);
     const changed = changedFunctions(baseline.source, args.source);
     const head = await ctx.runQuery(internal.evidence.environmentHead, { environmentId: args.environmentId });
     if (args.expectedHeadRevisionId !== undefined && args.expectedHeadRevisionId !== (head?.appId ?? null)) {

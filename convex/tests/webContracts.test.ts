@@ -2,7 +2,7 @@ import { convexTest } from "convex-test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FunctionReference } from "convex/server";
 import { getFunctionName } from "convex/server";
-import { CONVEX_FUNCTIONS, CONVEX_RESPONSE_SCHEMAS as schemas } from "../../apps/web/src/services/convexClient.js";
+import { CONVEX_FUNCTIONS, CONVEX_LEARNING_FUNCTIONS, CONVEX_RESPONSE_SCHEMAS as schemas } from "../../apps/web/src/services/convexClient.js";
 import { api } from "../_generated/api.js";
 import schema from "../schema.js";
 import * as investigations from "../investigations.js";
@@ -10,6 +10,7 @@ import * as evidence from "../evidence.js";
 import * as artifacts from "../artifacts.js";
 import * as candidates from "../candidates.js";
 import * as reviews from "../reviews.js";
+import * as learning from "../learning.js";
 
 const modules = import.meta.glob("../**/*.ts");
 const id = "11111111-1111-4111-8111-111111111111";
@@ -44,6 +45,22 @@ describe("web Convex contracts", () => {
       expect(fn.isPublic).toBe(true);
       const kind = key === "recordReview" ? "isAction" : key === "capture" || key === "cancel" ? "isMutation" : "isQuery";
       expect(fn[kind], CONVEX_FUNCTIONS[key]).toBe(true);
+    }
+  });
+
+  it("exposes the learning view, retry, and current-controller functions", () => {
+    const expected = {
+      learning: api.learning.view,
+      retry: api.learning.retry,
+      currentController: api.learning.currentController,
+    } satisfies Record<keyof typeof CONVEX_LEARNING_FUNCTIONS, FunctionReference<"query" | "mutation", "public">>;
+    const kinds = { learning: "isQuery", retry: "isMutation", currentController: "isQuery" } as const;
+    const functions = { learning: learning.view, retry: learning.retry, currentController: learning.currentController };
+    for (const key of Object.keys(expected) as (keyof typeof expected)[]) {
+      expect(getFunctionName(expected[key])).toBe(CONVEX_LEARNING_FUNCTIONS[key]);
+      const fn = functions[key] as { isPublic?: boolean; isQuery?: boolean; isMutation?: boolean };
+      expect(fn.isPublic).toBe(true);
+      expect(fn[kinds[key]]).toBe(true);
     }
   });
 
