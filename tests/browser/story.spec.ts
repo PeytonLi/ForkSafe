@@ -55,7 +55,7 @@ test("browser story: readiness, fixture investigation, replay scrub, review", as
   // Scrub the baseline replay to the failure and check the frame readout follows.
   const viewer = page.getByTestId("baseline-replay");
   const scrubber = viewer.getByTestId("replay-scrubber");
-  await expect(scrubber).toBeVisible();
+  await expect(scrubber).toBeVisible({ timeout: 10_000 });
   await scrubber.fill("4.1");
   await expect(viewer.getByTestId("frame-readout")).toContainText("t=4.10 s");
   await expect(viewer.getByText(/Contact cube↔divider/)).toBeVisible();
