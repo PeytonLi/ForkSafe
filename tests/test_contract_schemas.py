@@ -17,7 +17,6 @@ ROOT = Path(__file__).resolve().parents[1]
 BASELINE = ROOT / "controllers/baseline"
 REFERENCE = ROOT / "evaluation/reference_controller"
 PUSH_REFERENCE = ROOT / "evaluation/push_gap/reference_controller"
-TSX = ROOT / "node_modules/.pnpm/tsx@4.23.15/node_modules/tsx/dist/cli.mjs"
 VALIDATOR = ROOT / "tests/contracts/validate_sim.mts"
 CASE_ID = "original-divider-collision"
 
@@ -40,8 +39,18 @@ def _simulator_cli(*args: str) -> subprocess.CompletedProcess[str]:
 
 
 def _tsx(schema: str, path: Path) -> dict[str, object]:
+    tsx = ROOT / "node_modules/.bin/tsx"
+    if not tsx.exists():
+        matches = sorted(
+            ROOT.glob("node_modules/.pnpm/tsx@*/node_modules/tsx/dist/cli.mjs")
+        )
+        if not matches:
+            pytest.fail(
+                "tsx was not found; run pnpm install before the contract schema tests."
+            )
+        tsx = matches[0]
     completed = subprocess.run(
-        ["node", str(TSX), str(VALIDATOR), schema, str(path)],
+        ["node", str(tsx), str(VALIDATOR), schema, str(path)],
         cwd=ROOT,
         env=_environment(),
         capture_output=True,

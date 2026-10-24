@@ -83,8 +83,6 @@ def make_snapshot(session: RunSession) -> dict[str, Any]:
     if session.finished:
         raise SnapshotStepUnreachable(session.step_count, session.failure[0] if session.failure else None)
     state_size = int(mujoco.mj_stateSize(session.scene.model, STATE_SPEC))
-    if state_size != 150:
-        raise SnapshotError(f"unexpected integration state size: {state_size}")
     integration = np.zeros(state_size, dtype=np.float64)
     mujoco.mj_getState(
         session.scene.model,
@@ -296,7 +294,8 @@ def _validate_snapshot(snapshot_doc: Any) -> tuple[dict[str, Any], dict[str, Any
     _checked_int(manifest["stepIndex"], "manifest stepIndex")
     _checked_int(manifest["seed"], "manifest seed")
     _checked_int(manifest["integrator"], "manifest integrator")
-    if _checked_int(manifest["stateSize"], "manifest stateSize") != 150:
+    state_size = _checked_int(manifest["stateSize"], "manifest stateSize")
+    if state_size == 0:
         raise SnapshotIntegrityError("malformed snapshot manifest values")
     _checked_float(manifest["simTimeSec"], "manifest simTimeSec")
     _checked_float(manifest["timestepSec"], "manifest timestepSec")
@@ -370,7 +369,7 @@ def restore_session(
     snapshot_doc: dict[str, Any], controller_dir: Path, experiment_id: UUID
 ) -> RunSession:
     manifest, state = _validate_snapshot(snapshot_doc)
-    state_size = 150
+    state_size = _checked_int(manifest["stateSize"], "manifest stateSize")
     integration = _float_array(state["integration"], state_size, "integration")
     if integration[0] != manifest["simTimeSec"]:
         raise SnapshotIntegrityError("snapshot time does not match integration state")
@@ -436,7 +435,7 @@ def restore_session(
     if int(scene.model.opt.integrator) != manifest["integrator"]:
         raise SnapshotMismatchError("snapshot integrator does not match")
     actual_state_size = int(mujoco.mj_stateSize(scene.model, STATE_SPEC))
-    if actual_state_size != manifest["stateSize"] or actual_state_size != state_size:
+    if actual_state_size != state_size:
         raise SnapshotIntegrityError("snapshot integration state size does not match")
 
     session = RunSession.__new__(RunSession)

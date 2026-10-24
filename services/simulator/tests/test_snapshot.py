@@ -132,8 +132,14 @@ def test_snapshot_integrity_and_environment_mismatches() -> None:
 
     wrong_size = copy.deepcopy(snapshot)
     wrong_size["manifest"]["stateSize"] = 149
+    wrong_size["state"]["integration"] = wrong_size["state"]["integration"][:-1]
+    wrong_size["state"]["preStepIntegration"] = wrong_size["state"][
+        "preStepIntegration"
+    ][:-1]
     _rehash(wrong_size)
-    with pytest.raises(SnapshotIntegrityError, match="manifest values"):
+    with pytest.raises(
+        SnapshotIntegrityError, match="snapshot integration state size does not match"
+    ):
         restore_session(wrong_size, BASELINE, UUID(int=2))
 
     wrong_schema = copy.deepcopy(snapshot)
