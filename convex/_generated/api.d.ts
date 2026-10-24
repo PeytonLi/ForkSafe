@@ -44,6 +44,7 @@ import type * as lib_jobOps from "../lib/jobOps.js";
 import type * as lib_leasing from "../lib/leasing.js";
 import type * as lib_reservations from "../lib/reservations.js";
 import type * as lib_runnerAuth from "../lib/runnerAuth.js";
+import type * as lib_signedEvaluation from "../lib/signedEvaluation.js";
 import type * as lib_spacetime from "../lib/spacetime.js";
 import type * as lib_unifiedDiff from "../lib/unifiedDiff.js";
 import type * as lib_validators from "../lib/validators.js";
@@ -104,6 +105,7 @@ declare const fullApi: ApiFromModules<{
   "lib/leasing": typeof lib_leasing;
   "lib/reservations": typeof lib_reservations;
   "lib/runnerAuth": typeof lib_runnerAuth;
+  "lib/signedEvaluation": typeof lib_signedEvaluation;
   "lib/spacetime": typeof lib_spacetime;
   "lib/unifiedDiff": typeof lib_unifiedDiff;
   "lib/validators": typeof lib_validators;
