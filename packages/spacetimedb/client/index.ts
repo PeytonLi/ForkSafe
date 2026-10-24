@@ -64,7 +64,7 @@ export function configFromEnv(
     modeValue === "cloud" || modeValue === "local" || modeValue === "fixture"
       ? modeValue
       : modeValue === undefined
-        ? "local"
+        ? "cloud"
         : "not_implemented";
   return {
     uri:
