@@ -2,14 +2,16 @@ modules:
   jira:issuePanel:
     - key: forksafe-issue-panel
       resource: panel
-      resolver: { function: resolver }
+      resolver:
+        function: resolver
       render: native
       title: ForkSafe investigation
       icon: resource:static;forksafe.svg
   jira:issueAction:
     - key: forksafe-start-investigation
       resource: start
-      resolver: { function: resolver }
+      resolver:
+        function: resolver
       render: native
       title: Start ForkSafe investigation
   function:
@@ -24,9 +26,12 @@ resources:
     path: static
 remotes:
   - key: forksafe-backend
-    baseUrl: https://forksafe-backend.example.invalid
-    operations: [ compute, storage ]
-    storage: { inScopeEUD: false }
+    baseUrl: https://giant-jellyfish-684.convex.site
+    operations:
+      - compute
+      - storage
+    storage:
+      inScopeEUD: false
 permissions:
   scopes:
     - read:jira-work

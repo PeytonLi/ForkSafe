@@ -43,29 +43,28 @@ export async function verifyForgeInvocationToken(
     );
   }
   const verifier = keySet ?? createRemoteJWKSet(new URL(jwksUrl));
+  const bareAppId = appId.replace(/^ari:cloud:ecosystem::app\//, "");
+  const ariAppId = `ari:cloud:ecosystem::app/${bareAppId}`;
   const { payload } = await jwtVerify(token, verifier, {
-    audience: appId,
+    audience: [bareAppId, ariAppId],
     issuer: "forge/invocation-token",
   });
   const claims = payload as JWTPayload & Record<string, unknown>;
   const app = record(claims.app);
-  if (app.id !== appId) {
+  if (app.id !== bareAppId && app.id !== ariAppId) {
     throw new Error("Forge invocation token app.id does not match the configured app.");
   }
-  const installation = record(claims.installation);
-  const environment = record(claims.environment);
+  const appInstallation = record(app.installation);
+  const environment = record(app.environment);
   const context = record(claims.context);
   const extension = record(context.extension);
   const issue = record(extension.issue);
   const project = record(extension.project);
-  const installationId =
-    stringValue(claims.installationId) ??
-    stringValue(installation.id) ??
-    stringValue(context.installationId);
-  const environmentType =
-    stringValue(claims.environmentType) ??
-    stringValue(environment.type) ??
-    stringValue(context.environmentType);
+  const installationClaim = stringValue(app.installationId) ?? stringValue(appInstallation.id);
+  const installationId = installationClaim
+    ? normalizeForgeInstallationId(installationClaim)
+    : undefined;
+  const environmentType = stringValue(record(environment.type).name) ?? stringValue(environment.type);
   if (!installationId || !environmentType) {
     throw new Error("Forge invocation token is missing installation or environment claims.");
   }
@@ -73,12 +72,16 @@ export async function verifyForgeInvocationToken(
     appId,
     installationId,
     environmentType,
-    ...(stringValue(claims.sub) ? { principal: stringValue(claims.sub) } : {}),
+    ...(stringValue(claims.principal) ? { principal: stringValue(claims.principal) } : {}),
     ...(stringValue(context.cloudId) ? { cloudId: stringValue(context.cloudId) } : {}),
     ...(stringValue(context.siteUrl) ? { siteUrl: stringValue(context.siteUrl) } : {}),
     ...(stringValue(issue.key) ? { issueKey: stringValue(issue.key) } : {}),
     ...(stringValue(project.key) ? { projectKey: stringValue(project.key) } : {}),
   };
+}
+
+export function normalizeForgeInstallationId(value: string): string {
+  return value.replace(/^ari:cloud:ecosystem::installation\//, "");
 }
 
 export function fitFromAuthorizationHeader(

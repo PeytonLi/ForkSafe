@@ -1,4 +1,2 @@
-#!/usr/bin/env node
-// TODO(phase-1): not yet implemented — placeholder so root commands exist.
-console.error("forksafe: scripts/test-integration.mjs is not implemented yet");
-process.exit(2);
+import { run, main } from './lib/runtime.mjs';
+main(() => run('pnpm',['exec','vitest','run','--config','tests/integration/vitest.config.mjs',...process.argv.slice(2)]));
