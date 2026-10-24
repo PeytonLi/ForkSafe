@@ -50,6 +50,22 @@ export const saveBridgeState = internalMutation({
   },
 });
 
+export const resetBridgeState = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<{ reset: boolean }> => {
+    const flag = await ctx.db.query("systemFlags").withIndex("by_key", (q) => q.eq("key", "global")).unique();
+    if (!flag) return { reset: false };
+    await ctx.db.patch(flag._id, {
+      bridgeToken: undefined,
+      bridgeIdentity: undefined,
+      bridgeRegisteredAtMs: undefined,
+      bridgeLastHealthyAtMs: undefined,
+      bridgeLastError: "bridge_state_reset",
+    });
+    return { reset: true };
+  },
+});
+
 type ActionCtx = { runQuery: any; runMutation: any };
 
 async function fetchJson(url: string, init: RequestInit): Promise<{ status: number; text: string }> {
