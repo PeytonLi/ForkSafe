@@ -10,13 +10,17 @@ from evaluator.app import (
     IDENTITY,
     CandidateRecord,
     EvaluatorState,
+    _evaluate_with_telemetry,
     _run_case,
     _verify_manifests,
     app,
     changed_functions,
 )
 from evaluator.grader import rank
+from evaluator.telemetry import init_telemetry, safe_attributes
 from fastapi.testclient import TestClient
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 
 def _configure_store(monkeypatch, tmp_path):
@@ -99,6 +103,8 @@ def test_changed_stored_bytes_return_conflict(monkeypatch, tmp_path):
 def test_candidate_subprocess_does_not_inherit_service_secrets(monkeypatch, tmp_path):
     _configure_store(monkeypatch, tmp_path)
     monkeypatch.setenv("UNRELATED_SECRET", "do-not-forward")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4318")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "Authorization=not-forwarded")
     source_path = tmp_path / "source" / "task_controller.py"
     source_path.parent.mkdir()
     source_path.write_text("def plan(scene):\n    return []\n")
@@ -139,6 +145,82 @@ def test_candidate_subprocess_does_not_inherit_service_secrets(monkeypatch, tmp_
     assert captured["cwd"].is_relative_to(state.work_root)
     assert "EVALUATOR_SERVICE_TOKEN" not in captured["env"]
     assert "UNRELATED_SECRET" not in captured["env"]
+    assert not any(key.startswith("OTEL_") for key in captured["env"])
+
+
+def test_evaluator_telemetry_is_disabled_without_an_endpoint():
+    exporter = InMemorySpanExporter()
+    telemetry = init_telemetry(
+        env={},
+        span_exporter=exporter,
+        metric_reader=InMemoryMetricReader(),
+    )
+    assert telemetry.enabled is False
+    assert telemetry.extract_traceparent(
+        "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"
+    ) is None
+    with telemetry.span("evaluator.evaluate", {"forksafe.eval.suite": "public"}):
+        pass
+    telemetry.shutdown()
+    assert exporter.get_finished_spans() == ()
+
+
+def test_query_strings_are_removed_from_url_path_attributes():
+    assert safe_attributes({
+        "url.path": "/evaluations?private=query",
+        "prompt": "not-allowed",
+    }) == {"url.path": "/evaluations"}
+
+
+def test_withheld_case_spans_use_indexes_and_traceparent(monkeypatch, tmp_path):
+    exporter = InMemorySpanExporter()
+    telemetry = init_telemetry(
+        env={"OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4318"},
+        span_exporter=exporter,
+        metric_reader=InMemoryMetricReader(),
+    )
+    state = EvaluatorState()
+    state.telemetry = telemetry
+    source_path = tmp_path / "task_controller.py"
+    source_path.write_text("def plan(scene):\n    return []\n")
+    candidate = CandidateRecord(
+        candidate_id=uuid4(),
+        investigation_id=uuid4(),
+        environment_id=uuid4(),
+        controller_sha256=evaluator_module.hashlib.sha256(source_path.read_bytes()).hexdigest(),
+        changed_functions=[],
+        source_path=source_path,
+    )
+
+    def fake_run_case(_state, _candidate, payload):
+        return {
+            "caseId": payload["caseId"],
+            "status": "passed",
+            "experimentId": str(uuid4()),
+            "failureKinds": [],
+        }
+
+    monkeypatch.setattr(evaluator_module, "_run_case", fake_run_case)
+    parent = telemetry.extract_traceparent(
+        "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"
+    )
+    with telemetry.span("evaluator.admission", {
+        "forksafe.eval.candidate_id": str(candidate.candidate_id),
+        "forksafe.eval.suite": "withheld",
+    }, parent):
+        _evaluate_with_telemetry(state, candidate, "withheld")
+    telemetry.shutdown()
+
+    spans = exporter.get_finished_spans()
+    admission = next(span for span in spans if span.name == "evaluator.admission")
+    evaluation = next(span for span in spans if span.name == "evaluator.evaluate")
+    case_spans = [span for span in spans if span.name == "evaluator.case"]
+    assert admission.parent.span_id == int("0123456789abcdef", 16)
+    assert evaluation.parent.span_id == admission.context.span_id
+    assert case_spans
+    assert all("forksafe.eval.case_id" not in span.attributes for span in case_spans)
+    assert sorted(span.attributes["forksafe.eval.case_index"] for span in case_spans) == list(range(len(case_spans)))
+    assert all(span.attributes["forksafe.eval.suite"] == "withheld" for span in case_spans)
 
 
 def test_finalize_freezes_ranked_finalists_and_runs_withheld_once(monkeypatch, tmp_path):

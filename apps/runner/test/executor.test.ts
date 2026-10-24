@@ -2,24 +2,41 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  AggregationTemporality,
+  InMemoryMetricExporter,
+  PeriodicExportingMetricReader,
+} from "@opentelemetry/sdk-metrics";
+import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
 import { ActivityLog, FixtureFactoryAdapter, SessionManager, UsageLedger } from "@forksafe/agents";
 import { Job } from "@forksafe/contracts";
+import { initTelemetry } from "@forksafe/telemetry";
+import { RunnerTelemetry } from "../src/telemetry.js";
+import { ActiveToolBackend } from "../src/main.js";
 import { FileJobSource } from "../src/job-source.js";
 import { LocalToolBackend } from "../src/tool-backend.js";
 import { RunnerExecutor } from "../src/executor.js";
 import { sampleLease } from "./helpers.js";
+
+class PreservingSpanExporter extends InMemorySpanExporter {
+  override async shutdown(): Promise<void> {
+    await this.forceFlush();
+  }
+}
 
 const dirs: string[] = [];
 async function setup(
   adapter = new FixtureFactoryAdapter(),
   onTurnComplete?: ConstructorParameters<typeof SessionManager>[0]["onTurnComplete"],
   onSessionReady?: ConstructorParameters<typeof SessionManager>[0]["onSessionReady"],
+  toolBackendFactory?: (dir: string) => ConstructorParameters<typeof SessionManager>[0]["toolBackend"],
 ) {
   const dir = await mkdtemp(join(tmpdir(), "forksafe-executor-"));
   dirs.push(dir);
   const manager = new SessionManager({
     adapter, ledger: new UsageLedger(), workspaceRoot: join(dir, "workspaces"),
-    toolBackend: new LocalToolBackend(join(dir, "local")), log: new ActivityLog(), onTurnComplete, onSessionReady,
+    toolBackend: toolBackendFactory?.(dir) ?? new LocalToolBackend(join(dir, "local")),
+    log: new ActivityLog(), onTurnComplete, onSessionReady,
   });
   return { dir, manager };
 }
@@ -29,6 +46,119 @@ afterEach(async () => {
 });
 
 describe("RunnerExecutor", () => {
+  it("keeps runner telemetry disabled when no endpoint is configured", async () => {
+    const exporter = new InMemorySpanExporter();
+    const telemetry = initTelemetry({
+      serviceName: "forksafe-runner-test",
+      env: {},
+      spanExporter: exporter,
+    });
+    const runnerTelemetry = new RunnerTelemetry(telemetry);
+    runnerTelemetry.beginAttempt("attempt");
+    await runnerTelemetry.withToolSpan("read_findings", "attempt", async () => ({ status: "ok" }));
+    await telemetry.shutdown();
+
+    expect(telemetry.enabled).toBe(false);
+    expect(exporter.getFinishedSpans()).toEqual([]);
+  });
+
+  it("exports a privacy-filtered job trace with child tool spans and unknown usage", async () => {
+    const exporter = new PreservingSpanExporter();
+    const telemetry = initTelemetry({
+      serviceName: "forksafe-runner-test",
+      env: { OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:4318" },
+      spanExporter: exporter,
+      metricReader: new PeriodicExportingMetricReader({
+        exporter: new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE),
+        exportIntervalMillis: 60_000,
+      }),
+    });
+    const runnerTelemetry = new RunnerTelemetry(telemetry);
+    const lease = sampleLease();
+    const privatePrompt = ["private", "prompt"].join("-");
+    lease.job.payload.prompt = privatePrompt;
+    let activeBackend: ActiveToolBackend | undefined;
+    const adapter = new FixtureFactoryAdapter({
+      usage: "unknown",
+      gate: async () => {
+        const toolContext = {
+          investigationId: lease.job.investigationId,
+          environmentId: lease.job.environmentId!,
+          sessionId: "fixture-session",
+          attemptId: lease.attempt.id,
+          grantId: lease.grant.id,
+          epoch: lease.attempt.epoch,
+        };
+        await activeBackend!.read_findings({ scope: "environment", limit: 1 }, toolContext);
+        await activeBackend!.run_experiment({
+          caseId: crypto.randomUUID(),
+          seed: 1,
+          hypothesis: "only used to exercise the tool wrapper",
+        }, toolContext);
+      },
+    });
+    const { manager } = await setup(adapter, undefined, undefined, (dir) => {
+      const local = new LocalToolBackend(join(dir, "local"));
+      local.run_experiment = async () => ({ status: "ok", reason: "ok" });
+      activeBackend = new ActiveToolBackend(local, runnerTelemetry);
+      return activeBackend;
+    });
+    const source = {
+      session: vi.fn(async () => ({ ok: true })),
+      heartbeat: vi.fn(async () => ({ ok: true as const, leasedUntilMs: Date.now() + 30_000, epoch: 0 })),
+      complete: vi.fn(async () => ({ accepted: true })),
+    };
+    const job = telemetry.startSpan("runner.job", { "forksafe.job_id": lease.job.id });
+    await telemetry.withSpan("runner.claim", {}, async () => undefined, { parent: job.context });
+    const executor = new RunnerExecutor({
+      sessions: manager,
+      source: source as never,
+      log: new ActivityLog(),
+      maxTurns: 1,
+      telemetry: runnerTelemetry,
+    });
+
+    await expect(executor.execute(lease, job.context)).resolves.toMatchObject({ accepted: true });
+    await telemetry.shutdown();
+
+    const spans = exporter.getFinishedSpans();
+    const byName = (name: string) => spans.find((span) => span.name === name);
+    const root = byName("runner.job");
+    expect(spans.map((span) => span.name)).toEqual(expect.arrayContaining([
+      "runner.job", "runner.claim", "runner.grant", "runner.turn", "runner.tool",
+      "runner.artifacts", "runner.complete",
+    ]));
+    expect(root?.attributes["forksafe.outcome"]).toBe("succeeded");
+    expect(byName("runner.turn")?.attributes["forksafe.tokens.known"]).toBe(false);
+    expect(byName("runner.turn")?.attributes["gen_ai.usage.input_tokens"]).toBeUndefined();
+    const tool = spans.find((span) => span.name === "runner.tool" && span.attributes["forksafe.tool.name"] === "run_experiment");
+    expect(tool?.attributes["forksafe.tool.status"]).toBe("ok");
+    expect(byName("runner.artifacts")?.attributes["forksafe.artifacts.count"]).toBe(1);
+    for (const span of spans) {
+      expect(span.attributes).not.toHaveProperty("prompt");
+      expect(Object.keys(span.attributes).every((key) => [
+        "forksafe.investigation_id", "forksafe.environment_id", "forksafe.job_id",
+        "forksafe.attempt_id", "forksafe.grant_id", "forksafe.epoch", "forksafe.session_id",
+        "forksafe.vendor_session_id", "forksafe.turn.index", "forksafe.turn.mode",
+        "forksafe.turn.success", "forksafe.turn.tool_calls", "forksafe.tokens.known",
+        "gen_ai.usage.input_tokens", "gen_ai.usage.output_tokens", "forksafe.tokens.cache_read",
+        "forksafe.tokens.cache_creation", "forksafe.tokens.thinking", "forksafe.factory_credits",
+        "forksafe.tool.name", "forksafe.tool.status", "forksafe.tool.is_error", "forksafe.outcome",
+        "forksafe.completion.accepted", "forksafe.completion.attempts", "forksafe.candidate_submitted",
+        "forksafe.artifacts.count", "forksafe.lease.abort_reason", "forksafe.eval.suite",
+        "forksafe.eval.candidate_id", "forksafe.eval.case_id", "forksafe.eval.case_index",
+        "forksafe.eval.case_status", "forksafe.eval.status", "forksafe.eval.cases",
+        "http.request.method", "http.response.status_code", "url.path", "error.type",
+      ].includes(key))).toBe(true);
+    }
+    expect(JSON.stringify(spans)).not.toContain(privatePrompt);
+    for (const name of ["runner.claim", "runner.grant", "runner.turn", "runner.artifacts", "runner.complete"]) {
+      expect(byName(name)?.parentSpanContext?.spanId).toBe(root?.spanContext().spanId);
+    }
+    expect(tool?.parentSpanContext?.spanId).toBe(byName("runner.turn")?.spanContext().spanId);
+    await manager.closeAll();
+  });
+
   it("registers the session with the job source before the first turn", async () => {
     const order: string[] = [];
     const adapter = new FixtureFactoryAdapter({ gate: async () => { order.push("runTurn"); } });

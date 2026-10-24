@@ -8,6 +8,7 @@ import {
   type Heartbeat,
 } from "@forksafe/contracts";
 import { z } from "zod";
+import { injectTraceHeaders } from "@forksafe/telemetry";
 import {
   ClaimRequest,
   ClaimResponse,
@@ -70,6 +71,7 @@ export class HttpJobSource implements JobSource {
         "x-forksafe-signature": signature,
         "x-forksafe-timestamp": timestamp,
         ...(this.credentialId ? { "x-forksafe-runner": this.credentialId } : {}),
+        ...injectTraceHeaders({}),
       },
       body: rawBody,
     });

@@ -22,6 +22,7 @@ from simulator.models import SimCase
 
 from evaluator.grader import rank
 from evaluator.models import CandidateEvaluation
+from evaluator.telemetry import EvaluatorTelemetry, init_telemetry
 
 ROOT = Path(__file__).resolve().parents[2]
 IDENTITY = "forksafe-evaluator"
@@ -84,6 +85,7 @@ class EvaluatorState:
         self.withheld_evaluations: dict[UUID, dict[str, Any]] = {}
         self.frozen_finalists: dict[UUID, set[UUID]] = {}
         self.withheld_completed: set[tuple[UUID, UUID]] = set()
+        self.telemetry = EvaluatorTelemetry()
         self.finalization_path = self.store_root.parent / "finalizations.json"
         self._load_candidates()
         self._load_evaluations()
@@ -332,10 +334,18 @@ def _evaluate(
 ) -> dict[str, Any]:
     manifest_path = ROOT / f"evaluation/{suite}/manifest.json"
     manifest = json.loads(manifest_path.read_text())
-    cases = [
-        _run_case(state, candidate, SimCase.model_validate(case).model_dump(by_alias=True))
-        for case in manifest["cases"]
-    ]
+    cases = []
+    for index, case in enumerate(manifest["cases"]):
+        payload = SimCase.model_validate(case).model_dump(by_alias=True)
+        attributes = {
+            "forksafe.eval.suite": suite,
+            "forksafe.eval.case_index": index if suite == "withheld" else None,
+            "forksafe.eval.case_id": payload["caseId"] if suite == "public" else None,
+        }
+        with state.telemetry.span("evaluator.case", attributes) as span:
+            result = _run_case(state, candidate, payload)
+            span.set_attribute("forksafe.eval.case_status", result["status"])
+        cases.append(result)
     all_passed = bool(cases) and all(case["status"] == "passed" for case in cases)
     if all_passed:
         status = "passed"
@@ -363,6 +373,28 @@ def _evaluate(
     return evaluation.model_dump(mode="json", by_alias=True, exclude_none=True)
 
 
+def _evaluate_with_telemetry(
+    state: EvaluatorState,
+    candidate: CandidateRecord,
+    suite: Literal["public", "withheld"],
+    parent: Any = None,
+) -> dict[str, Any]:
+    attributes = {
+        "forksafe.eval.suite": suite,
+        "forksafe.eval.candidate_id": str(candidate.candidate_id),
+    }
+    started = time.perf_counter()
+    with state.telemetry.span("evaluator.evaluate", attributes, parent) as span:
+        evaluation = _evaluate(state, candidate, suite)
+        span.set_attribute("forksafe.eval.status", evaluation["status"])
+        span.set_attribute("forksafe.eval.cases", len(evaluation["cases"]))
+        state.telemetry.record_duration(time.perf_counter() - started, {
+            "forksafe.eval.suite": suite,
+            "forksafe.eval.status": evaluation["status"],
+        })
+        return evaluation
+
+
 def _public_entry(candidate: CandidateRecord, evaluation: dict[str, Any]) -> dict[str, Any]:
     return {
         "candidateId": str(candidate.candidate_id),
@@ -387,9 +419,16 @@ def _max_per_environment() -> int:
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    _verify_manifests()
-    app.state.evaluator = EvaluatorState()
-    yield
+    telemetry = init_telemetry()
+    try:
+        with telemetry.span("evaluator.manifest.verify", {}):
+            _verify_manifests()
+        evaluator = EvaluatorState()
+        evaluator.telemetry = telemetry
+        app.state.evaluator = evaluator
+        yield
+    finally:
+        telemetry.shutdown()
 
 
 app = FastAPI(title="ForkSafe evaluator", lifespan=_lifespan)
@@ -411,16 +450,26 @@ def register_candidate(
     request: Request,
 ) -> dict[str, object]:
     state: EvaluatorState = request.app.state.evaluator
-    candidate, deduplicated = state.register(request_body)
-    return {
-        "identity": IDENTITY,
-        "candidateId": str(candidate.candidate_id),
-        "investigationId": str(candidate.investigation_id),
-        "environmentId": str(candidate.environment_id),
-        "controllerSha256": candidate.controller_sha256,
-        "changedFunctions": candidate.changed_functions,
-        "deduplicated": deduplicated,
-    }
+    parent = state.telemetry.extract_traceparent(request.headers.get("traceparent"))
+    with state.telemetry.span(
+        "evaluator.admission",
+        {
+            "http.request.method": "POST",
+            "url.path": "/candidates",
+            "forksafe.eval.candidate_id": str(request_body.candidate_id),
+        },
+        parent,
+    ):
+        candidate, deduplicated = state.register(request_body)
+        return {
+            "identity": IDENTITY,
+            "candidateId": str(candidate.candidate_id),
+            "investigationId": str(candidate.investigation_id),
+            "environmentId": str(candidate.environment_id),
+            "controllerSha256": candidate.controller_sha256,
+            "changedFunctions": candidate.changed_functions,
+            "deduplicated": deduplicated,
+        }
 
 
 @app.post("/evaluations", dependencies=[Depends(_authorize)])
@@ -429,6 +478,24 @@ def evaluate_candidate(
     request: Request,
 ) -> dict[str, Any]:
     state: EvaluatorState = request.app.state.evaluator
+    parent = state.telemetry.extract_traceparent(request.headers.get("traceparent"))
+    with state.telemetry.span(
+        "evaluator.admission",
+        {
+            "http.request.method": "POST",
+            "url.path": "/evaluations",
+            "forksafe.eval.candidate_id": str(request_body.candidate_id),
+            "forksafe.eval.suite": request_body.suite,
+        },
+        parent,
+    ):
+        return _evaluate_candidate(state, request_body)
+
+
+def _evaluate_candidate(
+    state: EvaluatorState,
+    request_body: EvaluationRequest,
+) -> dict[str, Any]:
     candidate = state.candidates.get(request_body.candidate_id)
     if (
         candidate is None
@@ -452,13 +519,13 @@ def evaluate_candidate(
             if existing:
                 return existing
             raise HTTPException(status_code=409, detail="withheld result is unavailable and cannot be rerun")
-        evaluation = _evaluate(state, candidate, "withheld")
+        evaluation = _evaluate_with_telemetry(state, candidate, "withheld")
         state.withheld_evaluations[candidate.candidate_id] = evaluation
         state.withheld_completed.add(key)
         state.save_evaluation(candidate, evaluation)
         state._save_finalizations()
     else:
-        evaluation = _evaluate(state, candidate, "public")
+        evaluation = _evaluate_with_telemetry(state, candidate, "public")
         state.public_evaluations[candidate.candidate_id] = evaluation
         state.save_evaluation(candidate, evaluation)
     return evaluation
@@ -494,7 +561,7 @@ def finalize(
     for candidate in candidate_records:
         evaluation = state.public_evaluations.get(candidate.candidate_id)
         if evaluation is None:
-            evaluation = _evaluate(state, candidate, "public")
+            evaluation = _evaluate_with_telemetry(state, candidate, "public")
             state.public_evaluations[candidate.candidate_id] = evaluation
             state.save_evaluation(candidate, evaluation)
         public_results[candidate.candidate_id] = evaluation
@@ -536,7 +603,7 @@ def finalize(
         key = (request_body.investigation_id, candidate_id)
         evaluation = state.withheld_evaluations.get(candidate_id)
         if evaluation is None and key not in state.withheld_completed:
-            evaluation = _evaluate(state, candidate, "withheld")
+            evaluation = _evaluate_with_telemetry(state, candidate, "withheld")
             state.withheld_evaluations[candidate_id] = evaluation
             state.withheld_completed.add(key)
             state.save_evaluation(candidate, evaluation)

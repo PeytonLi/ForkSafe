@@ -7,6 +7,7 @@ import {
   type FindingKind,
 } from "@forksafe/contracts";
 import type { ForkSafeToolBackend, ToolCallContext } from "@forksafe/agents";
+import { injectTraceHeaders } from "@forksafe/telemetry";
 import { assertFence } from "./fencing.js";
 import type { Lease } from "./protocol.js";
 
@@ -49,6 +50,7 @@ export class HttpToolBackend implements ForkSafeToolBackend {
           headers: {
             "content-type": "application/json", "x-forksafe-signature": signature, "x-forksafe-timestamp": timestamp,
             ...(this.credentialId ? { "x-forksafe-runner": this.credentialId } : {}),
+            ...injectTraceHeaders({}),
           },
           body: rawBody,
         });
