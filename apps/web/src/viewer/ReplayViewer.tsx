@@ -32,18 +32,29 @@ export const PATH_COLOR = "#337681";
 
 function ghostArm(s: THREE.Scene): ArmParts & { group: THREE.Group } {
   const group = new THREE.Group();
-  const mat = new THREE.MeshBasicMaterial({ color: GHOST_COLOR, transparent: true, opacity: 0.3, depthWrite: false });
+  const mat = new THREE.MeshBasicMaterial({
+    color: GHOST_COLOR,
+    transparent: true,
+    opacity: 0.3,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: 1,
+    polygonOffsetUnits: 1,
+  });
   const links = CHAIN.slice(1).map(() => {
     const m = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.04, 1, 16), mat);
+    m.renderOrder = 2;
     group.add(m);
     return m;
   });
   const joints = CHAIN.map(() => {
     const m = new THREE.Mesh(new THREE.SphereGeometry(0.045, 16, 10), mat);
+    m.renderOrder = 2;
     group.add(m);
     return m;
   });
   const hand = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.05, 0.16), mat);
+  hand.renderOrder = 2;
   group.add(hand);
   group.renderOrder = 2;
   group.visible = false;
