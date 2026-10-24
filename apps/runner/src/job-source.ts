@@ -8,6 +8,7 @@ import {
   type Heartbeat,
 } from "@forksafe/contracts";
 import { z } from "zod";
+import { injectTraceHeaders } from "@forksafe/telemetry";
 import {
   ClaimRequest,
   ClaimResponse,
@@ -25,6 +26,26 @@ export interface JobSource {
   claim(request: z.infer<typeof ClaimRequest>): Promise<Lease | null>;
   heartbeat(heartbeat: Heartbeat): Promise<z.infer<typeof HeartbeatResponse>>;
   complete(completion: z.infer<typeof CompletionRequest>): Promise<z.infer<typeof CompletionResponse>>;
+}
+
+export class RunnerHttpError extends Error {
+  constructor(
+    readonly endpoint: string,
+    readonly status: number,
+    readonly body: unknown,
+  ) {
+    super(`Runner ${endpoint} failed: HTTP ${status}`);
+    this.name = "RunnerHttpError";
+  }
+}
+
+export function isSearchCompleteRevocation(error: unknown): boolean {
+  if (!(error instanceof RunnerHttpError) || error.status !== 401) return false;
+  if (!error.body || typeof error.body !== "object" || Array.isArray(error.body)) return false;
+  const body = error.body as Record<string, unknown>;
+  return [body.error, body.reason, body.code].some(
+    (value) => typeof value === "string" && /revoked|search[_ -]?complete/i.test(value),
+  );
 }
 
 export class HttpJobSource implements JobSource {
@@ -70,10 +91,19 @@ export class HttpJobSource implements JobSource {
         "x-forksafe-signature": signature,
         "x-forksafe-timestamp": timestamp,
         ...(this.credentialId ? { "x-forksafe-runner": this.credentialId } : {}),
+        ...injectTraceHeaders({}),
       },
       body: rawBody,
     });
-    if (!response.ok) throw new Error(`Runner ${endpoint} failed: HTTP ${response.status}`);
+    if (!response.ok) {
+      let errorBody: unknown;
+      try {
+        errorBody = await response.json();
+      } catch {
+        errorBody = undefined;
+      }
+      throw new RunnerHttpError(endpoint, response.status, errorBody);
+    }
     return schema.parse(await response.json());
   }
 }

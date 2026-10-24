@@ -5,6 +5,7 @@ import { internal } from "./_generated/api.js";
 import { requireServiceToken } from "./lib/auth.js";
 import { GRANT_TTL_MS } from "./lib/constants.js";
 import { verifyRunnerSignature } from "./lib/runnerAuth.js";
+import { traceLog } from "./lib/tracing.js";
 
 /** HTTP surface for trusted runner sandboxes. Requests are signed with the
  *  sandbox's scoped credential; the deploy key, service token and bridge
@@ -73,6 +74,7 @@ export function registerRunnerRoutes(router: HttpRouter): void {
     path: "/runner/claim",
     method: "POST",
     handler: httpAction(async (ctx, request) => {
+      traceLog("/runner/claim", request);
       const auth = await authenticate(ctx, request);
       if (!auth.ok) return auth.response;
       const workerId = typeof auth.body.workerId === "string" && auth.body.workerId.trim() ? auth.body.workerId.slice(0, 120) : "runner";
@@ -132,6 +134,7 @@ export function registerRunnerRoutes(router: HttpRouter): void {
     path: "/runner/heartbeat",
     method: "POST",
     handler: httpAction(async (ctx, request) => {
+      traceLog("/runner/heartbeat", request);
       const auth = await authenticate(ctx, request);
       if (!auth.ok) return auth.response;
       const { attemptId, grantId, epoch } = auth.body;
@@ -150,6 +153,7 @@ export function registerRunnerRoutes(router: HttpRouter): void {
     path: "/runner/start",
     method: "POST",
     handler: httpAction(async (ctx, request) => {
+      traceLog("/runner/start", request);
       const auth = await authenticate(ctx, request);
       if (!auth.ok) return auth.response;
       const { attemptId, epoch } = auth.body;
@@ -166,6 +170,7 @@ export function registerRunnerRoutes(router: HttpRouter): void {
     path: "/runner/session",
     method: "POST",
     handler: httpAction(async (ctx, request) => {
+      traceLog("/runner/session", request);
       const auth = await authenticate(ctx, request);
       if (!auth.ok) return auth.response;
       const { attemptId, epoch, session } = auth.body;
@@ -182,6 +187,7 @@ export function registerRunnerRoutes(router: HttpRouter): void {
     path: "/runner/checkpoint",
     method: "POST",
     handler: httpAction(async (ctx, request) => {
+      traceLog("/runner/checkpoint", request);
       const auth = await authenticate(ctx, request);
       if (!auth.ok) return auth.response;
       const { attemptId, epoch, checkpoint } = auth.body;
@@ -203,6 +209,7 @@ export function registerRunnerRoutes(router: HttpRouter): void {
     path: "/runner/complete",
     method: "POST",
     handler: httpAction(async (ctx, request) => {
+      traceLog("/runner/complete", request);
       const auth = await authenticate(ctx, request);
       if (!auth.ok) return auth.response;
       const body = auth.body;
@@ -229,6 +236,7 @@ export function registerRunnerRoutes(router: HttpRouter): void {
       path: `/runner/tools/${name}`,
       method: "POST",
       handler: httpAction(async (ctx, request) => {
+        traceLog(`/runner/tools/${name}`, request);
         const auth = await authenticate(ctx, request);
         if (!auth.ok) return auth.response;
         const body = auth.body as Record<string, unknown>;
