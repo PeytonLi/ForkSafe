@@ -23,6 +23,12 @@ const attemptState = v.union(
 );
 
 export default defineSchema({
+  readinessSnapshots: defineTable({
+    key: v.string(),
+    checkedAtMs: v.number(),
+    leaseUntilMs: v.number(),
+    integrations: v.any(),
+  }).index("by_key", ["key"]),
   investigations: defineTable({
     appId: uuid,
     title: v.string(),

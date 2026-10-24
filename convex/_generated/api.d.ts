@@ -18,10 +18,14 @@ import type * as crons from "../crons.js";
 import type * as daytonaPool from "../daytonaPool.js";
 import type * as demo from "../demo.js";
 import type * as dispatchers_elastic from "../dispatchers/elastic.js";
+import type * as dispatchers_elasticData from "../dispatchers/elasticData.js";
 import type * as dispatchers_jira from "../dispatchers/jira.js";
+import type * as dispatchers_spacetime from "../dispatchers/spacetime.js";
 import type * as evaluation from "../evaluation.js";
 import type * as evidence from "../evidence.js";
 import type * as execution from "../execution.js";
+import type * as forge from "../forge.js";
+import type * as forgeLogic from "../forgeLogic.js";
 import type * as grants from "../grants.js";
 import type * as health from "../health.js";
 import type * as http from "../http.js";
@@ -39,6 +43,7 @@ import type * as lib_runnerAuth from "../lib/runnerAuth.js";
 import type * as lib_spacetime from "../lib/spacetime.js";
 import type * as lib_validators from "../lib/validators.js";
 import type * as outbox from "../outbox.js";
+import type * as readiness from "../readiness.js";
 import type * as reconcile from "../reconcile.js";
 import type * as reviews from "../reviews.js";
 import type * as runnerControl from "../runnerControl.js";
@@ -66,10 +71,14 @@ declare const fullApi: ApiFromModules<{
   daytonaPool: typeof daytonaPool;
   demo: typeof demo;
   "dispatchers/elastic": typeof dispatchers_elastic;
+  "dispatchers/elasticData": typeof dispatchers_elasticData;
   "dispatchers/jira": typeof dispatchers_jira;
+  "dispatchers/spacetime": typeof dispatchers_spacetime;
   evaluation: typeof evaluation;
   evidence: typeof evidence;
   execution: typeof execution;
+  forge: typeof forge;
+  forgeLogic: typeof forgeLogic;
   grants: typeof grants;
   health: typeof health;
   http: typeof http;
@@ -87,6 +96,7 @@ declare const fullApi: ApiFromModules<{
   "lib/spacetime": typeof lib_spacetime;
   "lib/validators": typeof lib_validators;
   outbox: typeof outbox;
+  readiness: typeof readiness;
   reconcile: typeof reconcile;
   reviews: typeof reviews;
   runnerControl: typeof runnerControl;
@@ -125,6 +135,7 @@ export declare const internal: FilterApi<
 >;
 
 export declare const components: {
+  staticHosting: import("@convex-dev/static-hosting/_generated/component.js").ComponentApi<"staticHosting">;
   workflow: import("@convex-dev/workflow/_generated/component.js").ComponentApi<"workflow">;
   daytonaPool: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"daytonaPool">;
   outboxPool: import("@convex-dev/workpool/_generated/component.js").ComponentApi<"outboxPool">;

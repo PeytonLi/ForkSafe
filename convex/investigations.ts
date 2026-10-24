@@ -4,7 +4,7 @@ import { internal } from "./_generated/api.js";
 import { mutation, query, internalMutation, internalQuery, type MutationCtx } from "./_generated/server.js";
 import { readLimits } from "./lib/constants.js";
 import { countsTowardCapacity } from "./lib/reservations.js";
-import { requireUiAccess } from "./lib/auth.js";
+import { requireServiceToken, requireUiAccess } from "./lib/auth.js";
 import { appId, assertUUID } from "./lib/validators.js";
 
 const simCase = v.object({
@@ -271,7 +271,7 @@ export const attachWorkflowId = internalMutation({
 export const cancel = mutation({
   args: { investigationId: v.string(), expectedVersion: v.optional(v.number()), serviceToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    requireUiAccess(args.serviceToken);
+    requireServiceToken(args.serviceToken);
     assertUUID(args.investigationId, "investigationId");
     const investigation = await ctx.db.query("investigations")
       .withIndex("by_appId", (q) => q.eq("appId", args.investigationId))
@@ -442,7 +442,7 @@ export const capture = mutation({
     autoStart: v.optional(v.boolean()), idempotencyKey: v.optional(v.string()), serviceToken: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<{ accepted: true; investigationId: string } | { accepted: false; mode: string; reason: string }> => {
-    requireUiAccess(args.serviceToken);
+    requireServiceToken(args.serviceToken);
     const limits = readLimits();
     if (!args.title.trim()) return { accepted: false, mode: "live", reason: "title is required" };
     if (!Number.isInteger(args.seed) || args.seed < 0) return { accepted: false, mode: "live", reason: "seed must be a non-negative integer" };

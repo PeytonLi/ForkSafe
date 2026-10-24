@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api.js";
 import { action, internalMutation, internalQuery } from "./_generated/server.js";
-import { requireUiAccess } from "./lib/auth.js";
+import { requireServiceToken } from "./lib/auth.js";
 import { appId, assertUUID } from "./lib/validators.js";
 
 /** Web: `reviews:record` — a human decision bound to the exact controller
@@ -60,7 +60,7 @@ export const record = action({
     decision, notes: v.optional(v.string()), idempotencyKey: v.optional(v.string()), serviceToken: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<Record<string, unknown>> => {
-    requireUiAccess(args.serviceToken);
+    requireServiceToken(args.serviceToken);
     for (const [name, value] of [["investigationId", args.investigationId], ["candidateId", args.candidateId], ["evaluationId", args.evaluationId]] as const) assertUUID(value, name);
     if (!/^[0-9a-f]{64}$/.test(args.controllerSha256)) throw new ConvexError("controllerSha256 must be lowercase sha256");
     if (args.notes && args.notes.length > 4000) throw new ConvexError("notes too long");

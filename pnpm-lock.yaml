@@ -140,6 +140,9 @@ importers:
 
   convex:
     dependencies:
+      '@convex-dev/static-hosting':
+        specifier: 0.2.1
+        version: 0.2.1(convex@1.48.0(react@19.3.1))(react@19.3.1)
       '@convex-dev/workflow':
         specifier: ^0.4.10
         version: 0.4.10(@convex-dev/workpool@0.4.14(convex-helpers@0.1.129(convex@1.48.0(react@19.3.1))(hono@4.13.13)(react@19.3.1)(typescript@5.9.3)(zod@3.25.76))(convex@1.48.0(react@19.3.1))(react@19.3.1))(convex-helpers@0.1.129(convex@1.48.0(react@19.3.1))(hono@4.13.13)(react@19.3.1)(typescript@5.9.3)(zod@3.25.76))(convex@1.48.0(react@19.3.1))
@@ -909,6 +912,13 @@ packages:
     resolution: {integrity: sha512-3knigElzTVhWw1sN28EYkGBTdrJZ03vMj2PJPuFq3V0Tg41i7tcv/EWDBFQWcUaKzBWWVw693hcJtxCF3CRtEw==}
     peerDependencies:
       convex: ^1.36.1
+      react: ^18.3.1 || ^19.0.0
+
+  '@convex-dev/static-hosting@0.2.1':
+    resolution: {integrity: sha512-QMcfKUOB8dHeLa81xzk2GEIn7LzhEvtdgYhfFpIFer6uE/+xMStDxHAZsX5h1qsttYi7wNbEKAMf7MfOQ7ZrMw==}
+    hasBin: true
+    peerDependencies:
+      convex: ^1.37.0
       react: ^18.3.1 || ^19.0.0
 
   '@convex-dev/workflow@0.4.10':
@@ -5227,6 +5237,11 @@ snapshots:
       react: 18.3.1
 
   '@convex-dev/batch-worker@0.2.2(convex@1.48.0(react@19.3.1))(react@19.3.1)':
+    dependencies:
+      convex: 1.48.0(react@19.3.1)
+      react: 19.3.1
+
+  '@convex-dev/static-hosting@0.2.1(convex@1.48.0(react@19.3.1))(react@19.3.1)':
     dependencies:
       convex: 1.48.0(react@19.3.1)
       react: 19.3.1
