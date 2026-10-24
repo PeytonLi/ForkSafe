@@ -11,8 +11,13 @@ import {
   checkArtifactScope,
   checkExpectedHead,
   checkScope,
+  experimentIdentity,
+  findingUseKey,
   isSha256,
   isUuid,
+  planBaselineRegister,
+  planExperimentCommit,
+  planFindingUse,
   planEvaluationWrite,
   planGrantInstall,
   planLeaseAcquire,
@@ -22,6 +27,9 @@ import {
   secretsMatch,
   validateFindingInput,
   validateGrantUse,
+  type BaselineInput,
+  type BaselineExisting,
+  type ExperimentIdentityRow,
   type GrantLike,
   type GrantRef,
   type OutboxInput,
@@ -29,6 +37,8 @@ import {
 import databaseSchema, {
   artifactRef,
   attemptHeartbeat,
+  baseline,
+  baselineRequirement,
   bridgeIdentity,
   candidate,
   controllerRevision,
@@ -36,8 +46,10 @@ import databaseSchema, {
   evidence,
   executionGrant,
   experiment,
+  experimentIdentity as experimentIdentityTable,
   finding,
   findingLink,
+  findingUse,
   humanReview,
   jobFence,
   outboxEntry,
@@ -82,6 +94,14 @@ const caseEvaluationInput = t.object("CaseEvaluationInput", {
   experimentId: t.option(t.string()),
   completionTimeSec: t.option(t.f64()),
   failureKinds: t.array(t.string()),
+});
+const requirementRuleInput = t.object("RequirementRuleInput", {
+  ruleId: t.string(),
+  confluencePageId: t.string(),
+  confluencePageRevision: t.u32(),
+  title: t.string(),
+  enforcement: t.string(),
+  ruleJson: t.string(),
 });
 
 function nowMs(ctx: Ctx): number {
@@ -219,7 +239,11 @@ function parseObjectJson(value: string, code: string): Record<string, unknown> {
 }
 
 function sameJson(left: unknown, right: unknown): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+  const stringify = (value: unknown) =>
+    JSON.stringify(value, (_key, item: unknown) =>
+      typeof item === "bigint" ? `${item.toString()}n` : item,
+    );
+  return stringify(left) === stringify(right);
 }
 
 function sameExperiment(existing: unknown, input: unknown): boolean {
@@ -249,6 +273,299 @@ function sameExperiment(existing: unknown, input: unknown): boolean {
       "finishedAtMs",
     ].every((key) => sameJson(left[key], right[key]))
   );
+}
+
+function resolveExperiment(ctx: Ctx, id: string) {
+  const direct = ctx.db.experiment.id.find(id);
+  if (direct) return direct;
+  const identity = ctx.db.experimentIdentity.experimentId.find(id);
+  return identity
+    ? ctx.db.experiment.id.find(identity.canonicalExperimentId)
+    : undefined;
+}
+
+function experimentRowIsTombstoned(ctx: Ctx, row: { traceArtifactId?: string; replayArtifactId?: string }): boolean {
+  return [row.traceArtifactId, row.replayArtifactId].some(
+    (artifactId) => artifactId !== undefined && ctx.db.tombstone.key.find(`artifact:${artifactId}`) !== null,
+  );
+}
+
+function rejectTombstonedExperimentArtifacts(ctx: Ctx, row: {
+  candidateId?: string;
+  traceArtifactId?: string;
+  replayArtifactId?: string;
+}): void {
+  if (
+    row.traceArtifactId !== undefined && ctx.db.tombstone.key.find(`artifact:${row.traceArtifactId}`) ||
+    row.replayArtifactId !== undefined && ctx.db.tombstone.key.find(`artifact:${row.replayArtifactId}`)
+  ) {
+    reject("artifact_tombstoned", "Experiment references a tombstoned trace or replay artifact");
+  }
+  if (row.candidateId !== undefined && ctx.db.tombstone.key.find(`candidate:${row.candidateId}`)) {
+    reject("candidate_tombstoned", "Experiment candidate is tombstoned");
+  }
+}
+
+interface ExperimentReducerInput {
+  grant: GrantRef;
+  id: string;
+  investigationId: string;
+  environmentId?: string;
+  candidateId?: string;
+  simCase: {
+    caseId: string;
+    suite: string;
+    seed: number;
+    sceneOverridesJson: string;
+    description?: string;
+  };
+  status: string;
+  failureKinds: string[];
+  completed: boolean;
+  completionTimeSec?: number;
+  changedFunctions: string[];
+  traceArtifactId?: string;
+  replayArtifactId?: string;
+  engineVersion: string;
+  assetsSha256: string;
+  controllerSha256: string;
+  startedAtMs: bigint;
+  finishedAtMs?: bigint;
+}
+
+function writeExperiment(
+  ctx: Ctx,
+  input: ExperimentReducerInput,
+  replicationOf?: string,
+  replicationReason?: string,
+): void {
+  const grant = requireGrant(ctx, input.grant, "record_experiment");
+  requireScope(grant, {
+    investigationId: input.investigationId,
+    environmentId: input.environmentId,
+  });
+  validIds(
+    input.id,
+    input.investigationId,
+    input.environmentId,
+    input.candidateId,
+    input.traceArtifactId,
+    input.replayArtifactId,
+    replicationOf,
+  );
+  if (!(EXPERIMENT_STATUSES as readonly string[]).includes(input.status)) {
+    reject("invalid_experiment", "Experiment status is invalid");
+  }
+  if (input.failureKinds.some((kind) => !(FAILURE_KINDS as readonly string[]).includes(kind))) {
+    reject("invalid_experiment", "Experiment failure kind is invalid");
+  }
+  if (!isSha256(input.assetsSha256) || !isSha256(input.controllerSha256)) {
+    reject("invalid_id", "Experiment hashes must be lowercase SHA-256");
+  }
+  parseObjectJson(input.simCase.sceneOverridesJson, "invalid_experiment");
+  if (input.candidateId && !ctx.db.candidate.id.find(input.candidateId)) {
+    reject("candidate_missing", "Experiment candidate does not exist");
+  }
+  for (const artifactId of [input.traceArtifactId, input.replayArtifactId]) {
+    if (artifactId && !ctx.db.artifactRef.id.find(artifactId)) {
+      reject("artifact_missing", "Experiment artifact does not exist");
+    }
+  }
+
+  const existing = ctx.db.experiment.id.find(input.id);
+  const values = {
+    ...input,
+    attemptId: grant.attemptId,
+    epoch: grant.epoch,
+    grantId: grant.id,
+  };
+  if (existing) {
+    if (sameExperiment(existing, values)) return;
+    reject("duplicate_id", "Experiment id already exists with different fields");
+  }
+  const existingIdentity = ctx.db.experimentIdentity.experimentId.find(input.id);
+  const identityHash = experimentIdentity({
+    controllerSha256: input.controllerSha256,
+    suite: input.simCase.suite,
+    caseId: input.simCase.caseId,
+    seed: input.simCase.seed,
+    sceneOverridesJson: input.simCase.sceneOverridesJson,
+    assetsSha256: input.assetsSha256,
+    engineVersion: input.engineVersion,
+  });
+  const authorClass = grant.environmentId === undefined ? "evaluator" : "swarm";
+  const replicationTargetRow = replicationOf === undefined
+    ? undefined
+    : ctx.db.experimentIdentity.experimentId.find(replicationOf);
+  const replicationTarget: ExperimentIdentityRow | undefined = replicationTargetRow
+    ? {
+        experimentId: replicationTargetRow.experimentId,
+        investigationId: replicationTargetRow.investigationId,
+        identityHash: replicationTargetRow.identityHash,
+        authorClass: replicationTargetRow.authorClass as "evaluator" | "swarm",
+        role: replicationTargetRow.role as "canonical" | "duplicate" | "replication",
+        canonicalExperimentId: replicationTargetRow.canonicalExperimentId,
+        replicationOfExperimentId: replicationTargetRow.replicationOfExperimentId,
+      }
+    : undefined;
+  const canonicalForScope = [...ctx.db.experimentIdentity.identityHash.filter(identityHash)]
+    .find((row) =>
+      row.investigationId === input.investigationId &&
+      row.authorClass === authorClass &&
+      row.role === "canonical",
+    );
+  const plan = planExperimentCommit({
+    existingExperimentSameId: existing ? { identical: false } : undefined,
+    existingIdentitySameId: existingIdentity
+      ? { role: existingIdentity.role as "canonical" | "duplicate" | "replication", identityHash: existingIdentity.identityHash }
+      : undefined,
+    canonicalForScope: canonicalForScope
+      ? {
+          experimentId: canonicalForScope.experimentId,
+          investigationId: canonicalForScope.investigationId,
+          identityHash: canonicalForScope.identityHash,
+          authorClass: canonicalForScope.authorClass as "evaluator" | "swarm",
+          role: canonicalForScope.role as "canonical" | "duplicate" | "replication",
+          canonicalExperimentId: canonicalForScope.canonicalExperimentId,
+        }
+      : undefined,
+    replicationTarget,
+    input: {
+      id: input.id,
+      investigationId: input.investigationId,
+      authorClass,
+      identityHash,
+      ...(replicationOf === undefined ? {} : { replicationOf }),
+      ...(replicationReason === undefined ? {} : { replicationReason }),
+    },
+  });
+  enforce(plan);
+  if (plan.action === "noop") return;
+
+  rejectTombstonedExperimentArtifacts(ctx, input);
+  if (plan.action === "alias_duplicate") {
+    ctx.db.experimentIdentity.insert({
+      experimentId: input.id,
+      investigationId: input.investigationId,
+      identityHash,
+      authorClass,
+      role: "duplicate",
+      canonicalExperimentId: plan.canonicalExperimentId as string,
+      replicationOfExperimentId: undefined,
+      replicationReason: undefined,
+      environmentId: input.environmentId,
+      candidateId: input.candidateId,
+      grantId: grant.id,
+      createdAtMs: BigInt(nowMs(ctx)),
+    });
+    return;
+  }
+
+  ctx.db.experiment.insert({
+    ...input,
+    environmentId: input.environmentId,
+    candidateId: input.candidateId,
+    completionTimeSec: input.completionTimeSec ?? undefined,
+    traceArtifactId: input.traceArtifactId ?? undefined,
+    replayArtifactId: input.replayArtifactId ?? undefined,
+    finishedAtMs: input.finishedAtMs ?? undefined,
+    attemptId: grant.attemptId,
+    epoch: grant.epoch,
+    grantId: grant.id,
+    simCase: {
+      ...input.simCase,
+      description: input.simCase.description ?? undefined,
+    },
+  });
+  ctx.db.experimentIdentity.insert({
+    experimentId: input.id,
+    investigationId: input.investigationId,
+    identityHash,
+    authorClass,
+    role: plan.action === "insert_replication" ? "replication" : "canonical",
+    canonicalExperimentId: input.id,
+    replicationOfExperimentId: replicationOf,
+    replicationReason,
+    environmentId: input.environmentId,
+    candidateId: input.candidateId,
+    grantId: grant.id,
+    createdAtMs: BigInt(nowMs(ctx)),
+  });
+}
+
+interface FindingUseReducerInput {
+  id: string;
+  findingId: string;
+  experimentId?: string;
+  candidateId?: string;
+}
+
+function writeFindingUse(ctx: Ctx, grant: GrantRow, input: FindingUseReducerInput): void {
+  const findingRow = ctx.db.finding.id.find(input.findingId);
+  const experimentRow = input.experimentId === undefined ? undefined : resolveExperiment(ctx, input.experimentId);
+  const candidateRow = input.candidateId === undefined ? undefined : ctx.db.candidate.id.find(input.candidateId);
+  const existingSameId = ctx.db.findingUse.id.find(input.id);
+  const useKey = findingUseKey(input);
+  const existingSameKey = ctx.db.findingUse.useKey.find(useKey);
+  const crossEnvironment = findingRow !== null && findingRow.environmentId !== grant.environmentId;
+  const expectedInvestigationId = findingRow?.investigationId;
+  const identical =
+    existingSameId !== null &&
+    existingSameId.useKey === useKey &&
+    existingSameId.findingId === input.findingId &&
+    existingSameId.findingInvestigationId === expectedInvestigationId &&
+    existingSameId.findingEnvironmentId === findingRow?.environmentId &&
+    existingSameId.usedByEnvironmentId === grant.environmentId &&
+    existingSameId.experimentId === input.experimentId &&
+    existingSameId.candidateId === input.candidateId &&
+    existingSameId.crossEnvironment === crossEnvironment &&
+    existingSameId.grantId === grant.id &&
+    existingSameId.attemptId === grant.attemptId &&
+    existingSameId.epoch === grant.epoch;
+  const result = planFindingUse({
+    grant: grantLike(grant),
+    finding: findingRow
+      ? { investigationId: findingRow.investigationId, environmentId: findingRow.environmentId }
+      : undefined,
+    findingTombstoned: ctx.db.tombstone.key.find(`finding:${input.findingId}`) !== null,
+    experiment: experimentRow
+      ? { investigationId: experimentRow.investigationId, environmentId: experimentRow.environmentId }
+      : undefined,
+    candidate: candidateRow
+      ? { investigationId: candidateRow.investigationId, environmentId: candidateRow.environmentId }
+      : undefined,
+    existingSameId: existingSameId ? { identical } : undefined,
+    existingSameKey: existingSameKey !== null,
+    input: {
+      ...input,
+      grantId: grant.id,
+      attemptId: grant.attemptId,
+      epoch: grant.epoch,
+    },
+  });
+  enforce(result);
+  if (result.noOp) return;
+  if (candidateRow && ctx.db.tombstone.key.find(`candidate:${input.candidateId}`)) {
+    reject("candidate_tombstoned", "Finding use candidate is tombstoned");
+  }
+  if (experimentRow && experimentRowIsTombstoned(ctx, experimentRow)) {
+    reject("artifact_tombstoned", "Finding use experiment references a tombstoned artifact");
+  }
+  ctx.db.findingUse.insert({
+    id: input.id,
+    useKey,
+    findingId: input.findingId,
+    findingInvestigationId: findingRow?.investigationId as string,
+    findingEnvironmentId: findingRow?.environmentId as string,
+    usedByEnvironmentId: grant.environmentId as string,
+    experimentId: input.experimentId,
+    candidateId: input.candidateId,
+    crossEnvironment: result.crossEnvironment,
+    grantId: grant.id,
+    attemptId: grant.attemptId,
+    epoch: grant.epoch,
+    createdAtMs: BigInt(nowMs(ctx)),
+  });
 }
 
 export const registerBridge = databaseSchema.reducer(
@@ -357,6 +674,93 @@ export const revokeGrant = databaseSchema.reducer(
     for (const lease of ctx.db.revisionLease.iter()) {
       if (lease.grantId === grantId) ctx.db.revisionLease.environmentId.delete(lease.environmentId);
     }
+  },
+);
+
+export const registerBaseline = databaseSchema.reducer(
+  {
+    id: t.string(),
+    simCase: simCaseInput,
+    sceneSha256: t.string(),
+    controllerSha256: t.string(),
+    assetsManifestSha256: t.string(),
+    engineVersion: t.string(),
+    failureKinds: t.array(t.string()),
+    failureSummary: t.string(),
+    sourceExperimentId: t.option(t.string()),
+    requirements: t.array(requirementRuleInput),
+  },
+  (ctx, input) => {
+    requireBridge(ctx);
+    const existing = ctx.db.baseline.id.find(input.id);
+    const requirements = [...ctx.db.baselineRequirement.baselineId.filter(input.id)]
+      .sort((left, right) => left.ordinal - right.ordinal)
+      .map((row) => ({
+        ruleId: row.ruleId,
+        confluencePageId: row.confluencePageId,
+        confluencePageRevision: row.confluencePageRevision,
+        title: row.title,
+        enforcement: row.enforcement as "checked" | "human_review",
+        ruleJson: row.ruleJson,
+        ordinal: row.ordinal,
+      }));
+    const baselineInput = {
+      ...input,
+      sourceExperimentId: input.sourceExperimentId ?? undefined,
+    };
+    const result = planBaselineRegister(
+      existing
+        ? {
+            baseline: {
+              id: existing.id,
+              simCase: {
+                ...existing.simCase,
+                description: existing.simCase.description ?? undefined,
+              },
+              sceneSha256: existing.sceneSha256,
+              controllerSha256: existing.controllerSha256,
+              assetsManifestSha256: existing.assetsManifestSha256,
+              engineVersion: existing.engineVersion,
+              failureKinds: existing.failureKinds,
+              failureSummary: existing.failureSummary,
+              sourceExperimentId: existing.sourceExperimentId ?? undefined,
+            },
+            requirements,
+          } as BaselineExisting
+        : undefined,
+      baselineInput as BaselineInput,
+    );
+    enforce(result);
+    if (result.noOp) return;
+    ctx.db.baseline.insert({
+      id: input.id,
+      simCase: {
+        ...input.simCase,
+        description: input.simCase.description ?? undefined,
+      },
+      sceneSha256: input.sceneSha256,
+      controllerSha256: input.controllerSha256,
+      assetsManifestSha256: input.assetsManifestSha256,
+      engineVersion: input.engineVersion,
+      failureKinds: input.failureKinds,
+      failureSummary: input.failureSummary,
+      sourceExperimentId: input.sourceExperimentId ?? undefined,
+      registeredBy: ctx.sender.toHexString(),
+      createdAtMs: BigInt(nowMs(ctx)),
+    });
+    input.requirements.forEach((requirement, ordinal) => {
+      ctx.db.baselineRequirement.insert({
+        key: `${input.id}:${requirement.ruleId}`,
+        baselineId: input.id,
+        ruleId: requirement.ruleId,
+        confluencePageId: requirement.confluencePageId,
+        confluencePageRevision: requirement.confluencePageRevision,
+        title: requirement.title,
+        enforcement: requirement.enforcement,
+        ruleJson: requirement.ruleJson,
+        ordinal,
+      });
+    });
   },
 );
 
@@ -513,6 +917,9 @@ export const commitRevision = databaseSchema.reducer(
       reject("revision_missing", "Fork source revision does not exist");
     }
     const source = ctx.db.artifactRef.id.find(input.sourceArtifactId);
+    if (ctx.db.tombstone.key.find(`artifact:${input.sourceArtifactId}`)) {
+      reject("artifact_tombstoned", "Revision source artifact is tombstoned");
+    }
     if (
       !source ||
       source.kind !== "controller_source" ||
@@ -581,6 +988,9 @@ export const recordArtifact = databaseSchema.reducer(
       }
       reject("duplicate_id", "Artifact id already exists with different fields");
     }
+    if (ctx.db.tombstone.key.find(`artifact:${input.id}`)) {
+      reject("artifact_tombstoned", "Artifact id is tombstoned");
+    }
     const result = checkArtifactScope(
       { ...grantData, maxBytes: Number(grant.maxBytes), bytesUsed: Number(grant.bytesUsed) },
       input.storageKey,
@@ -626,66 +1036,33 @@ export const recordExperiment = databaseSchema.reducer(
     startedAtMs: t.i64(),
     finishedAtMs: t.option(t.i64()),
   },
-  (ctx, input) => {
-    const grant = requireGrant(ctx, input.grant, "record_experiment");
-    requireScope(grant, {
-      investigationId: input.investigationId,
-      environmentId: input.environmentId ?? undefined,
-    });
-    validIds(
-      input.id,
-      input.investigationId,
-      input.environmentId ?? undefined,
-      input.candidateId ?? undefined,
-      input.traceArtifactId ?? undefined,
-      input.replayArtifactId ?? undefined,
-    );
-    if (!(EXPERIMENT_STATUSES as readonly string[]).includes(input.status)) {
-      reject("invalid_experiment", "Experiment status is invalid");
-    }
-    if (input.failureKinds.some((kind) => !(FAILURE_KINDS as readonly string[]).includes(kind))) {
-      reject("invalid_experiment", "Experiment failure kind is invalid");
-    }
-    if (!isSha256(input.assetsSha256) || !isSha256(input.controllerSha256)) {
-      reject("invalid_id", "Experiment hashes must be lowercase SHA-256");
-    }
-    parseObjectJson(input.simCase.sceneOverridesJson, "invalid_experiment");
-    if (input.candidateId && !ctx.db.candidate.id.find(input.candidateId)) {
-      reject("candidate_missing", "Experiment candidate does not exist");
-    }
-    for (const artifactId of [input.traceArtifactId, input.replayArtifactId]) {
-      if (artifactId && !ctx.db.artifactRef.id.find(artifactId)) {
-        reject("artifact_missing", "Experiment artifact does not exist");
-      }
-    }
-    const existing = ctx.db.experiment.id.find(input.id);
-    const values = {
-      ...input,
-      attemptId: grant.attemptId,
-      epoch: grant.epoch,
-      grantId: grant.id,
-    };
-    if (existing) {
-      if (sameExperiment(existing, values)) return;
-      reject("duplicate_id", "Experiment id already exists with different fields");
-    }
-    ctx.db.experiment.insert({
-      ...input,
-      environmentId: input.environmentId ?? undefined,
-      candidateId: input.candidateId ?? undefined,
-      attemptId: grant.attemptId,
-      epoch: grant.epoch,
-      grantId: grant.id,
-      simCase: {
-        ...input.simCase,
-        description: input.simCase.description ?? undefined,
-      },
-      completionTimeSec: input.completionTimeSec ?? undefined,
-      traceArtifactId: input.traceArtifactId ?? undefined,
-      replayArtifactId: input.replayArtifactId ?? undefined,
-      finishedAtMs: input.finishedAtMs ?? undefined,
-    });
+  (ctx, input) => writeExperiment(ctx, input),
+);
+
+export const commitExperiment = databaseSchema.reducer(
+  {
+    grant: grantRef,
+    id: t.string(),
+    investigationId: t.string(),
+    environmentId: t.option(t.string()),
+    candidateId: t.option(t.string()),
+    simCase: simCaseInput,
+    status: t.string(),
+    failureKinds: t.array(t.string()),
+    completed: t.bool(),
+    completionTimeSec: t.option(t.f64()),
+    changedFunctions: t.array(t.string()),
+    traceArtifactId: t.option(t.string()),
+    replayArtifactId: t.option(t.string()),
+    engineVersion: t.string(),
+    assetsSha256: t.string(),
+    controllerSha256: t.string(),
+    startedAtMs: t.i64(),
+    finishedAtMs: t.option(t.i64()),
+    replicationOf: t.option(t.string()),
+    replicationReason: t.option(t.string()),
   },
+  (ctx, input) => writeExperiment(ctx, input, input.replicationOf, input.replicationReason),
 );
 
 export const recordFinding = databaseSchema.reducer(
@@ -718,16 +1095,13 @@ export const recordFinding = databaseSchema.reducer(
       if (item.artifactId && !ctx.db.artifactRef.id.find(item.artifactId)) {
         reject("artifact_missing", "Finding artifact does not exist");
       }
-      if (item.experimentId && !ctx.db.experiment.id.find(item.experimentId)) {
+      if (item.experimentId && !resolveExperiment(ctx, item.experimentId)) {
         reject("experiment_missing", "Finding experiment does not exist");
       }
     }
     for (const link of input.links) {
       if (!ctx.db.finding.id.find(link.toFindingId)) {
         reject("finding_missing", "Finding link target does not exist");
-      }
-      if (ctx.db.tombstone.key.find(`finding:${link.toFindingId}`)) {
-        reject("finding_tombstoned", "Finding link target is tombstoned");
       }
     }
     const existing = ctx.db.finding.id.find(input.id);
@@ -763,6 +1137,26 @@ export const recordFinding = databaseSchema.reducer(
         sameJson(oldLinks, input.links);
       if (identical) return;
       reject("duplicate_id", "Finding id already exists with different fields");
+    }
+
+    for (const item of input.evidence) {
+      if (item.artifactId && ctx.db.tombstone.key.find(`artifact:${item.artifactId}`)) {
+        reject("artifact_tombstoned", "Finding evidence artifact is tombstoned");
+      }
+      if (item.experimentId) {
+        const sourceExperiment = resolveExperiment(ctx, item.experimentId);
+        if (sourceExperiment && experimentRowIsTombstoned(ctx, sourceExperiment)) {
+          reject("artifact_tombstoned", "Finding evidence experiment references a tombstoned artifact");
+        }
+      }
+    }
+    for (const link of input.links) {
+      if (ctx.db.tombstone.key.find(`finding:${link.toFindingId}`)) {
+        reject("finding_tombstoned", "Finding link target is tombstoned");
+      }
+    }
+    if (ctx.db.tombstone.key.find(`finding:${input.id}`)) {
+      reject("finding_tombstoned", "Finding id is tombstoned");
     }
 
     ctx.db.finding.insert({
@@ -807,6 +1201,26 @@ export const recordFinding = databaseSchema.reducer(
       "finding",
       input.id,
     );
+  },
+);
+
+export const recordFindingUse = databaseSchema.reducer(
+  {
+    grant: grantRef,
+    id: t.string(),
+    findingId: t.string(),
+    experimentId: t.option(t.string()),
+    candidateId: t.option(t.string()),
+  },
+  (ctx, input) => {
+    const operation = input.experimentId === undefined ? "submit_candidate" : "record_experiment";
+    const grant = requireGrant(ctx, input.grant, operation);
+    writeFindingUse(ctx, grant, {
+      id: input.id,
+      findingId: input.findingId,
+      experimentId: input.experimentId ?? undefined,
+      candidateId: input.candidateId ?? undefined,
+    });
   },
 );
 
@@ -855,6 +1269,12 @@ export const submitCandidate = databaseSchema.reducer(
       if (identical) return;
       reject("immutable_candidate", "Candidate id is immutable");
     }
+    if (ctx.db.tombstone.key.find(`artifact:${input.sourceArtifactId}`)) {
+      reject("artifact_tombstoned", "Candidate source artifact is tombstoned");
+    }
+    if (ctx.db.tombstone.key.find(`candidate:${input.id}`)) {
+      reject("candidate_tombstoned", "Candidate id is tombstoned");
+    }
     const artifact = ctx.db.artifactRef.id.find(input.sourceArtifactId);
     if (
       !artifact ||
@@ -871,6 +1291,9 @@ export const submitCandidate = databaseSchema.reducer(
         revision.controllerSha256 !== input.controllerSha256
       ) {
         reject("revision_mismatch", "Candidate revision must match its environment and controller hash");
+      }
+      if (ctx.db.tombstone.key.find(`revision:${input.revisionId}`)) {
+        reject("revision_tombstoned", "Candidate source revision is tombstoned");
       }
     }
     for (const findingId of input.basedOnFindings) {
@@ -894,6 +1317,13 @@ export const submitCandidate = databaseSchema.reducer(
       epoch: grant.epoch,
       submittedAtMs: BigInt(nowMs(ctx)),
     });
+    for (const findingId of input.basedOnFindings) {
+      writeFindingUse(ctx, grant, {
+        id: ctx.newUuidV4().toString(),
+        findingId,
+        candidateId: input.id,
+      });
+    }
     enqueueFor(
       ctx,
       "elastic_index",
@@ -934,8 +1364,12 @@ export const recordEvaluation = databaseSchema.reducer(
         reject("invalid_evaluation", "Case evaluation status is invalid");
       }
       validIds(item.experimentId ?? undefined);
-      if (item.experimentId && !ctx.db.experiment.id.find(item.experimentId)) {
+      if (item.experimentId && !resolveExperiment(ctx, item.experimentId)) {
         reject("experiment_missing", "Evaluation experiment does not exist");
+      }
+      const caseExperiment = item.experimentId ? resolveExperiment(ctx, item.experimentId) : undefined;
+      if (caseExperiment && experimentRowIsTombstoned(ctx, caseExperiment)) {
+        reject("artifact_tombstoned", "Evaluation experiment references a tombstoned artifact");
       }
     }
     const submitted = ctx.db.candidate.id.find(input.candidateId);
@@ -949,6 +1383,33 @@ export const recordEvaluation = databaseSchema.reducer(
       reject("artifact_missing", "Evaluation report artifact does not exist");
     }
     const existing = ctx.db.evaluation.id.find(input.id);
+    const cases = input.cases.map((item) => ({
+      ...item,
+      experimentId: item.experimentId ?? undefined,
+      completionTimeSec: item.completionTimeSec ?? undefined,
+    }));
+    if (
+      existing &&
+      existing.candidateId === input.candidateId &&
+      existing.investigationId === input.investigationId &&
+      existing.evaluatorAttemptId === grant.attemptId &&
+      existing.grantId === grant.id &&
+      existing.suite === input.suite &&
+      sameJson(existing.cases, cases) &&
+      existing.allRequiredPassed === input.allRequiredPassed &&
+      existing.medianCompletionTimeSec === (input.medianCompletionTimeSec ?? undefined) &&
+      existing.status === input.status &&
+      existing.reportArtifactId === (input.reportArtifactId ?? undefined)
+    ) return;
+    if (ctx.db.tombstone.key.find(`candidate:${input.candidateId}`)) {
+      reject("candidate_tombstoned", "Evaluation candidate is tombstoned");
+    }
+    if (
+      input.reportArtifactId &&
+      ctx.db.tombstone.key.find(`artifact:${input.reportArtifactId}`)
+    ) {
+      reject("artifact_tombstoned", "Evaluation report artifact is tombstoned");
+    }
     const plan = planEvaluationWrite(
       existing
         ? {
@@ -978,11 +1439,7 @@ export const recordEvaluation = databaseSchema.reducer(
       evaluatorAttemptId: grant.attemptId,
       grantId: grant.id,
       suite: input.suite,
-      cases: input.cases.map((item) => ({
-        ...item,
-        experimentId: item.experimentId ?? undefined,
-        completionTimeSec: item.completionTimeSec ?? undefined,
-      })),
+      cases,
       allRequiredPassed: input.allRequiredPassed,
       medianCompletionTimeSec: input.medianCompletionTimeSec ?? undefined,
       status: input.status,
@@ -1030,6 +1487,9 @@ export const recordReview = databaseSchema.reducer(
     }
     if (!candidateRow || candidateRow.investigationId !== input.investigationId) {
       reject("candidate_missing", "Candidate does not exist in this investigation");
+    }
+    if (ctx.db.tombstone.key.find(`candidate:${input.candidateId}`)) {
+      reject("candidate_tombstoned", "Review candidate is tombstoned");
     }
     if (candidateRow.controllerSha256 !== input.controllerSha256) {
       reject("sha_mismatch", "Review hash does not match the candidate");
@@ -1122,9 +1582,12 @@ export const recordTombstone = databaseSchema.reducer(
       reject("invalid_tombstone", "Tombstone target kind is invalid");
     }
     if (
-      input.targetKind !== "evidence" &&
-      !isUuid(input.targetId)
+      input.targetKind === "evidence" &&
+      (!/^(0|[1-9]\d{0,19})$/.test(input.targetId) || BigInt(input.targetId) > 18_446_744_073_709_551_615n)
     ) {
+      reject("invalid_id", "Evidence tombstone id must be a decimal u64 string");
+    }
+    if (input.targetKind !== "evidence" && !isUuid(input.targetId)) {
       reject("invalid_id", "Tombstone target id must be a UUID");
     }
     const key = `${input.targetKind}:${input.targetId}`;
