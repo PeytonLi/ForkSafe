@@ -14,6 +14,7 @@ import {
 import { requireServiceToken } from "./lib/auth.js";
 import { LOG_TAIL_MAX_BYTES } from "./lib/constants.js";
 import { assertUUID } from "./lib/validators.js";
+import { evaluatorSandboxEnv } from "./lib/evaluatorBackend.js";
 
 function createCloudProvider(): CloudDaytonaProvider {
   const config = loadDaytonaConfig();
@@ -59,6 +60,7 @@ export const provision = internalAction({
           attemptId: op.attemptId,
         }),
         snapshot: op.snapshot,
+        ...(evaluatorSandboxEnv(op.purpose, op.snapshot) ? { envVars: evaluatorSandboxEnv(op.purpose, op.snapshot) } : {}),
         resources: op.resources,
         reservedSandboxCount: op.reservedSandboxCount ?? 0,
         autoStopMinutes: loadDaytonaConfig().defaults[op.purpose as SandboxPurpose].autoStopMinutes,
