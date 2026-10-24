@@ -11,14 +11,14 @@
     "state": "active"
   },
   "execution": {
-    "name": "forksafe-exec-v2",
+    "name": "forksafe-exec-v3",
     "dockerfile": "infra/daytona/execution/Dockerfile",
     "resources": {
       "cpu": 2,
       "memory": 4,
       "disk": 10
     },
-    "id": "41080883-b8f9-4441-b85f-eef1b5ad2c79",
+    "id": "284cb742-09e4-4f36-9f21-40f521d85c70",
     "state": "active"
   }
 }

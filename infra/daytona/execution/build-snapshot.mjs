@@ -13,25 +13,32 @@ if (!contextPath) {
 }
 const context = resolve(contextPath);
 const snapshotsPath = resolve(root, "infra/daytona/snapshots.json");
-const snapshotName = "forksafe-exec-v2";
+const snapshotNamePattern = /^forksafe-exec-v[23]$/;
 
 async function main() {
   if (!process.env.DAYTONA_API_KEY) {
     throw new Error("DAYTONA_API_KEY is required");
   }
+  const snapshots = JSON.parse(await readFile(snapshotsPath, "utf8"));
+  const execution = snapshots.execution;
+  if (
+    !snapshotNamePattern.test(execution?.name ?? "") ||
+    execution.dockerfile !== "infra/daytona/execution/Dockerfile"
+  ) {
+    throw new Error("execution snapshot configuration is invalid");
+  }
   const client = new Daytona({
     apiKey: process.env.DAYTONA_API_KEY,
     apiUrl: process.env.DAYTONA_API_URL,
   });
-  const snapshots = JSON.parse(await readFile(snapshotsPath, "utf8"));
-  const execution = snapshots.execution;
-  if (execution.name !== snapshotName || execution.dockerfile !== "infra/daytona/execution/Dockerfile") {
-    throw new Error("execution snapshot configuration does not match forksafe-exec-v2");
-  }
+  const snapshotName = execution.name;
   const dockerfile = resolve(context, "Dockerfile");
   const existing = (await client.snapshot.list({ page: 1, limit: 100 })).items.find(
     (item) => item.name === snapshotName,
   );
+  if (existing && snapshotName === "forksafe-exec-v3") {
+    throw new Error("forksafe-exec-v3 already exists; refusing to reuse a possibly stale image");
+  }
   let snapshot = existing
     ? await client.snapshot.get(existing.id)
     : await client.snapshot.create(

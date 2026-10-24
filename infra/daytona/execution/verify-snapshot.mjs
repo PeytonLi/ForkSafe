@@ -7,6 +7,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const require = createRequire(resolve(root, "packages/integrations/daytona/package.json"));
 const { Daytona } = require("@daytonaio/sdk");
 const snapshotsPath = resolve(root, "infra/daytona/snapshots.json");
+const snapshotNamePattern = /^forksafe-exec-v[23]$/;
 
 async function main() {
   if (!process.env.DAYTONA_API_KEY) {
@@ -14,7 +15,7 @@ async function main() {
   }
   const snapshots = JSON.parse(await readFile(snapshotsPath, "utf8"));
   const expected = snapshots.execution;
-  if (expected.name !== "forksafe-exec-v2" || !expected.id) {
+  if (!snapshotNamePattern.test(expected?.name ?? "") || !expected.id) {
     throw new Error("execution snapshot is not built");
   }
   const client = new Daytona({
