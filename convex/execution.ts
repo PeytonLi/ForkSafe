@@ -64,7 +64,8 @@ async function putSmallFile(_daytona: unknown, ref: VendorRef, remotePath: strin
 // Artifact pull: the sandbox POSTs the file to a one-shot Convex storage upload URL (write-only,
 // single use) and Convex reads it back from storage. sandbox.fs.downloadFile from the Convex Node
 // runtime failed intermittently on ~0.5 MB files, so it is only the fallback.
-const PY_PUSH = "import json,sys,urllib.request; r=urllib.request.Request(sys.argv[1], data=open(sys.argv[2],'rb').read(), headers={'Content-Type':'application/json'}, method='POST'); print(urllib.request.urlopen(r, timeout=120).read().decode())";
+// No single quotes inside: the snippet is wrapped in single quotes on the sandbox shell.
+const PY_PUSH = "import sys,urllib.request; r=urllib.request.Request(sys.argv[1], data=open(sys.argv[2],\"rb\").read(), headers={\"Content-Type\":\"application/json\"}, method=\"POST\"); print(urllib.request.urlopen(r, timeout=120).read().decode())";
 const JS_PUSH = "const [u,p]=process.argv.slice(1);const fs=require(\"fs\");fetch(u,{method:\"POST\",headers:{\"Content-Type\":\"application/json\"},body:fs.readFileSync(p)}).then(r=>r.text()).then(t=>console.log(t)).catch(e=>{console.error(e.message);process.exit(1)})";
 
 async function pullFile(ctx: { runMutation: Function; storage: { get: Function; delete: Function } }, daytona: { downloadFile: Function }, ref: VendorRef, remotePath: string): Promise<Uint8Array> {
