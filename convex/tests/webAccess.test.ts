@@ -112,7 +112,7 @@ describe("investigation visibility", () => {
     expect(await t.query(api.artifacts.replay, { artifactId })).toEqual({ frames: [] });
   });
 
-  it("documents the candidate lane's reachable private-data bypass with hosted anonymous UI enabled", async () => {
+  it("blocks the candidate lane's private-data bypass on hosted deployments", async () => {
     const t = await seeded();
     await t.run(async (ctx) => {
       await ctx.db.insert("controllerSources", { controllerSha256: sha, artifactId, source: "private controller", bytes: 18, createdAtMs: 1 });
@@ -123,8 +123,9 @@ describe("investigation visibility", () => {
         spacetimeCommitted: true, startedAtMs: 1,
       });
     });
-    expect(await t.query(api.candidates.diff, { candidateId })).toContain("private controller");
-    expect(await t.query(api.candidates.replay, { candidateId })).toEqual({ frames: [] });
+    await expect(t.query(api.candidates.diff, { candidateId })).rejects.toThrow("unauthorized");
+    await expect(t.query(api.candidates.replay, { candidateId })).rejects.toThrow("unauthorized");
+    expect(await t.query(api.candidates.diff, { candidateId, serviceToken: token })).toContain("private controller");
     vi.stubEnv("FORKSAFE_DEV_ANONYMOUS_UI", "false");
     await expect(t.query(api.candidates.diff, { candidateId })).rejects.toThrow("unauthorized");
     await expect(t.withIdentity({ subject: "reader" }).query(api.candidates.replay, { candidateId })).rejects.toThrow("unauthorized");

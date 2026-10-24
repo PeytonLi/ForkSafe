@@ -1,6 +1,5 @@
 import { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
-import { ConvexError } from "convex/values";
 import { beforeAll, describe, expect, it } from "vitest";
 import { CONVEX_FUNCTIONS as functions, CONVEX_RESPONSE_SCHEMAS as schemas } from "./convexClient";
 import type { InvestigationWorkspace } from "./types";
@@ -29,19 +28,11 @@ describe.skipIf(!live)("hosted web Convex contracts", () => {
     schemas.replay.parse(await query(functions.replay, { artifactId: experiment!.replayArtifactId }));
   }, 30_000);
 
-  it("validates candidate replay/diff, or returns typed not-found errors if no candidates exist", async () => {
+  it("fails closed for anonymous candidate replay/diff until the candidate lane supports browser access", async () => {
     const candidates = workspaces.flatMap((w) => w.candidates);
-    if (candidates.length) {
-      for (const candidate of candidates) {
-        schemas.candidateReplay.parse(await query(functions.candidateReplay, { candidateId: candidate.id }));
-        schemas.candidateDiff.parse(await query(functions.candidateDiff, { candidateId: candidate.id }));
-      }
-    } else {
-      console.info("No hosted candidates: checking typed candidate-not-found responses for replay and diff.");
+    for (const candidateId of candidates.length ? candidates.map((c) => c.id) : [crypto.randomUUID()]) {
       for (const name of [functions.candidateReplay, functions.candidateDiff]) {
-        const error = await query(name, { candidateId: crypto.randomUUID() }).then(() => undefined, (e: unknown) => e);
-        expect(error).toBeInstanceOf(ConvexError);
-        expect((error as ConvexError<string>).data).toBe("candidate not found");
+        await expect(query(name, { candidateId })).rejects.toThrow(/unauthorized/i);
       }
     }
   }, 30_000);

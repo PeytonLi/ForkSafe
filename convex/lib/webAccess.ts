@@ -1,5 +1,5 @@
 import type { Auth } from "convex/server";
-import { constantTimeEqual, UnauthorizedError } from "./auth.js";
+import { constantTimeEqual, isLocalDeployment, UnauthorizedError } from "./auth.js";
 
 type Env = Record<string, string | undefined>;
 
@@ -31,8 +31,6 @@ export async function requireWriteIdentity(ctx: { auth: Auth }, token?: string, 
   const identity = await ctx.auth.getUserIdentity();
   if (identity) return `convex-auth:${identity.subject}`;
   if (validServiceToken(token, env)) return "service:integration";
-  let local = false;
-  try { local = ["127.0.0.1", "localhost"].includes(new URL(env.CONVEX_CLOUD_URL ?? "").hostname); } catch { /* fail closed */ }
-  if (local && env.FORKSAFE_DEV_ANONYMOUS_UI === "true") return "local:anonymous-ui";
+  if (isLocalDeployment(env) && env.FORKSAFE_DEV_ANONYMOUS_UI === "true") return "local:anonymous-ui";
   throw new UnauthorizedError();
 }

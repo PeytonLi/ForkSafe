@@ -58,17 +58,15 @@ use `service:integration`; local anonymous writes use `local:anonymous-ui`.
 All authenticated users currently have the same access; there are no tenant,
 project, reviewer-role, approval, or per-user ownership restrictions.
 
-## Known uncovered surface: candidate lane
+## Candidate lane
 
 `convex/candidates.ts` is owned by another lane and was not modified. Both
 `candidates:replay` and `candidates:diff` still call the old synchronous
-`requireUiAccess`, not the new investigation access helper. With hosted
-`FORKSAFE_DEV_ANONYMOUS_UI=true`, anonymous callers knowing a private candidate
-UUID can access its replay/source diff, without checking public investigation
-membership. The regression test demonstrates both bypasses with seeded
-private data. These routes also do not recognize browser auth identities when
-the legacy flag is disabled. The owning lane must adopt the async read policy.
-This is not a complete private-data security boundary until that is fixed.
+`requireUiAccess`, not the new investigation access helper. That helper now
+honors the anonymous flag only on localhost/127.0.0.1 deployments. Hosted
+candidate replay/diff are service-token-only, including for public investigations
+and signed-in browser users, until the owning lane adopts the async read policy.
+Tests verify that the former hosted anonymous bypass is closed.
 
 Other legacy service/runner/Forge endpoints retain their existing separate
 authentication policies. Public UUIDs and restricted-list UUIDs are not secrets.
