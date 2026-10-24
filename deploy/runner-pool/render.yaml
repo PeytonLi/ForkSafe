@@ -5,6 +5,8 @@ services:
     dockerfilePath: deploy/runner-pool/Dockerfile
     dockerContext: .
     envVars:
+      - key: FACTORY_MODE
+        value: cloud
       - key: FACTORY_API_KEY
         sync: false
       - key: RUNNER_POOL_TOKEN

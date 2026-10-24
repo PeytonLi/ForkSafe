@@ -12,6 +12,7 @@ Set these environment variables on the Render worker:
 
 | Name | Purpose |
 | --- | --- |
+| `FACTORY_MODE` | Set to `cloud` to use live Factory sessions. |
 | `FACTORY_API_KEY` | Lets Droid start Factory sessions. |
 | `RUNNER_POOL_TOKEN` | Private service token shared with the Convex deployment. Create a new random value and set the same value on both sides. |
 | `CONVEX_SITE_URL` | Hosted Convex HTTP URL, such as `https://giant-jellyfish-684.convex.site`. |
@@ -54,8 +55,8 @@ children itself. Convex's credential expiry, job reconciliation, and roughly
 ## If no runner starts
 
 - Confirm Convex has `RUNNER_LAUNCH_MODE=external` and `RUNNER_POOL_TOKEN`.
-- Confirm the Render worker has `RUNNER_POOL_TOKEN`, `CONVEX_SITE_URL`, and
-  `FACTORY_API_KEY`; token values must match exactly.
+- Confirm the Render worker has `FACTORY_MODE=cloud`, `FACTORY_API_KEY`,
+  `RUNNER_POOL_TOKEN`, and `CONVEX_SITE_URL`; token values must match exactly.
 - Check that the investigation is still searching and its Daytona execution
   sandbox is ready. The pool will not claim an environment before then.
 - Check `/healthz` and Render logs. The pool never logs claim credentials.
