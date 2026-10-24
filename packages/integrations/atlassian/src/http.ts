@@ -39,18 +39,25 @@ export function basicAuthTransport({
   const baseUrl = siteUrl.replace(/\/+$/, "");
   const basicHeaderValue = btoa(`${email}:${apiToken}`);
   const authorization = `Basic ${basicHeaderValue}`;
+  const safePath = (path: string) => redact(path, [apiToken, basicHeaderValue, email]);
 
   return async ({ method, path, body }) => {
-    const response = await fetchImpl(`${baseUrl}${path}`, {
-      method,
-      headers: {
-        Authorization: authorization,
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
-    const text = response.status === 204 ? "" : await response.text();
+    let response: Response;
+    let text: string;
+    try {
+      response = await fetchImpl(`${baseUrl}${path}`, {
+        method,
+        headers: {
+          Authorization: authorization,
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+      text = response.status === 204 ? "" : await response.text();
+    } catch {
+      throw new AtlassianHttpError(0, method, safePath(path), "request failed");
+    }
     let parsed: unknown = null;
     if (text.length > 0) {
       try {
@@ -65,7 +72,7 @@ export function basicAuthTransport({
         basicHeaderValue,
         email,
       ]);
-      throw new AtlassianHttpError(response.status, method, path, detail);
+      throw new AtlassianHttpError(response.status, method, safePath(path), detail);
     }
     return { status: response.status, body: parsed };
   };

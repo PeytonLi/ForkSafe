@@ -49,4 +49,28 @@ describe("basicAuthTransport", () => {
     expect(JSON.stringify(error)).not.toContain(basic);
     expect(JSON.stringify(error)).not.toContain(email);
   });
+
+  it("sanitizes fetch failures even when the underlying error echoes credentials", async () => {
+    const email = "private@example.test";
+    const token = "private-token";
+    const basic = btoa(`${email}:${token}`);
+    const transport = basicAuthTransport({
+      siteUrl: "https://example.atlassian.net",
+      email,
+      apiToken: token,
+      fetch: (async () => {
+        throw new Error(`${email} ${token} ${basic}`);
+      }) as typeof fetch,
+    });
+    await expect(transport({ method: "POST", path: "/rest/api/3/issue" })).rejects.toThrow("request failed");
+    let error: Error | undefined;
+    try {
+      await transport({ method: "POST", path: `/rest/api/3/issue/${email}?token=${token}` });
+    } catch (caught) {
+      error = caught as Error;
+    }
+    expect(error?.message).not.toContain(email);
+    expect(error?.message).not.toContain(token);
+    expect(error?.message).not.toContain(basic);
+  });
 });
