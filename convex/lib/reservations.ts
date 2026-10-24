@@ -7,7 +7,6 @@ export function decideReserve(
   limit: number,
 ): { ok: true } | { ok: false; reason: "capacity_exhausted" } {
   if (activeCount >= limit) return { ok: false, reason: "capacity_exhausted" };
-  if (kind === "model_turn" && activeCount >= limit) return { ok: false, reason: "capacity_exhausted" };
   return { ok: true };
 }
 

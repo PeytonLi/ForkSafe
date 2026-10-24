@@ -9,6 +9,7 @@
  */
 
 import type * as artifacts from "../artifacts.js";
+import type * as crons from "../crons.js";
 import type * as daytonaPool from "../daytonaPool.js";
 import type * as dispatchers_elastic from "../dispatchers/elastic.js";
 import type * as dispatchers_jira from "../dispatchers/jira.js";
@@ -38,6 +39,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   artifacts: typeof artifacts;
+  crons: typeof crons;
   daytonaPool: typeof daytonaPool;
   "dispatchers/elastic": typeof dispatchers_elastic;
   "dispatchers/jira": typeof dispatchers_jira;
