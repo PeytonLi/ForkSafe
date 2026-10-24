@@ -1,4 +1,5 @@
 import { ConvexError, v } from "convex/values";
+import { internal } from "./_generated/api.js";
 import { internalMutation, internalQuery, query } from "./_generated/server.js";
 import { requireInvestigationRead } from "./lib/webAccess.js";
 import { appId, assertUUID } from "./lib/validators.js";
@@ -68,6 +69,15 @@ export const finishExperiment = internalMutation({
       ...(spacetimeCommitted !== undefined ? { spacetimeCommitted } : {}),
       finishedAtMs: row.finishedAtMs ?? Date.now(),
     });
+    if (spacetimeCommitted) {
+      await ctx.scheduler.runAfter(0, internal.outbox.insert, {
+        destination: "elastic_index",
+        idempotencyKey: `experiment_result:${experimentId}:elastic_index`,
+        operationId: appId(),
+        payload: { kind: "experiment_result", id: experimentId },
+        source: "spacetimedb",
+      });
+    }
     return { updated: true };
   },
 });

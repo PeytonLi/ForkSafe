@@ -23,6 +23,7 @@ import type * as dispatchers_elasticData from "../dispatchers/elasticData.js";
 import type * as dispatchers_jira from "../dispatchers/jira.js";
 import type * as dispatchers_spacetime from "../dispatchers/spacetime.js";
 import type * as evaluation from "../evaluation.js";
+import type * as evaluationReconcile from "../evaluationReconcile.js";
 import type * as evidence from "../evidence.js";
 import type * as execution from "../execution.js";
 import type * as forge from "../forge.js";
@@ -59,6 +60,7 @@ import type * as runnerHttp from "../runnerHttp.js";
 import type * as sandboxActions from "../sandboxActions.js";
 import type * as sandboxData from "../sandboxData.js";
 import type * as sandboxes from "../sandboxes.js";
+import type * as web_health from "../web/health.js";
 import type * as workers from "../workers.js";
 import type * as workflows from "../workflows.js";
 
@@ -84,6 +86,7 @@ declare const fullApi: ApiFromModules<{
   "dispatchers/jira": typeof dispatchers_jira;
   "dispatchers/spacetime": typeof dispatchers_spacetime;
   evaluation: typeof evaluation;
+  evaluationReconcile: typeof evaluationReconcile;
   evidence: typeof evidence;
   execution: typeof execution;
   forge: typeof forge;
@@ -120,6 +123,7 @@ declare const fullApi: ApiFromModules<{
   sandboxActions: typeof sandboxActions;
   sandboxData: typeof sandboxData;
   sandboxes: typeof sandboxes;
+  "web/health": typeof web_health;
   workers: typeof workers;
   workflows: typeof workflows;
 }>;

@@ -22,6 +22,20 @@ const suites: Record<"public" | "withheld", ManifestCase[]> = {
 };
 const EVALUATOR_WORKER = "convex-evaluator";
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const MAX_EVALUATION_RECONCILES = 10;
+const evaluationCommitStatus = v.union(
+  v.literal("pending"),
+  v.literal("committed"),
+  v.literal("commit_failed"),
+  v.literal("not_applicable"),
+);
+
+function bridgeFailureCode(error: unknown): string {
+  if (error && typeof error === "object" && "code" in error && typeof error.code === "string") {
+    return error.code.slice(0, 80);
+  }
+  return "bridge_call_failed";
+}
 
 export const start = internalMutation({
   args: { investigationId: v.string() },
@@ -140,8 +154,62 @@ export const insertEvaluation = internalMutation({
     if (existing) return { duplicate: true };
     const now = Date.now();
     const { evaluationId, ...rest } = args;
-    await ctx.db.insert("evaluations", { appId: evaluationId, ...rest, spacetimeCommitted: false, createdAtMs: now, updatedAtMs: now });
+    await ctx.db.insert("evaluations", {
+      appId: evaluationId,
+      ...rest,
+      spacetimeCommitted: false,
+      commitStatus: "pending",
+      createdAtMs: now,
+      updatedAtMs: now,
+    });
     return { duplicate: false };
+  },
+});
+
+export const markCommitStatus = internalMutation({
+  args: {
+    evaluationId: v.string(),
+    status: evaluationCommitStatus,
+    error: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const row = await ctx.db.query("evaluations").withIndex("by_appId", (q) => q.eq("appId", args.evaluationId)).unique();
+    if (!row) return { updated: false };
+    await ctx.db.patch(row._id, {
+      spacetimeCommitted: args.status === "committed",
+      commitStatus: args.status,
+      commitError: args.error,
+      updatedAtMs: Date.now(),
+    });
+    return { updated: true };
+  },
+});
+
+export const pendingCommitRows = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const indexed = await ctx.db.query("evaluations")
+      .withIndex("by_commitStatus", (q) => q.eq("commitStatus", "pending"))
+      .take(MAX_EVALUATION_RECONCILES);
+    const ids = new Set(indexed.map((row) => row.appId));
+    const legacy = indexed.length < MAX_EVALUATION_RECONCILES
+      ? (await ctx.db.query("evaluations")
+        .withIndex("by_spacetimeCommitted", (q) => q.eq("spacetimeCommitted", false))
+        .take(1_000))
+        .filter((row) => !ids.has(row.appId) && row.commitStatus === undefined)
+        .filter((row) => row.status !== "queued" && row.status !== "running")
+        .slice(0, MAX_EVALUATION_RECONCILES - indexed.length)
+      : [];
+    const rows = [...indexed, ...legacy]
+      .filter((row) => row.status !== "queued" && row.status !== "running")
+      .slice(0, MAX_EVALUATION_RECONCILES);
+    return await Promise.all(rows.map(async (evaluation) => ({
+      evaluation,
+      grant: evaluation.grantId
+        ? await ctx.db.query("grants").withIndex("by_appId", (q) => q.eq("appId", evaluation.grantId!)).unique()
+        : null,
+      attempt: await ctx.db.query("attempts").withIndex("by_appId", (q) => q.eq("appId", evaluation.evaluatorAttemptId)).unique(),
+    })));
   },
 });
 
@@ -374,16 +442,32 @@ export const evaluateNext = internalAction({
     });
     await ctx.runMutation(internal.evaluation.stageEvaluation, { jobId, attemptId: claimed.attemptId, epoch: claimed.epoch, stage: "artifacts_persisted", detail: { evaluationId, ...(signingKeys.size ? { manifestVerified: true, signedManifestKeyIds: [...signingKeys] } : {}) } });
     let committed = false;
+    let commitStatus: "pending" | "committed" | "commit_failed" | "not_applicable" = "pending";
+    let commitError: string | undefined;
     try {
       const result = await ctx.runAction(internal.bridge.recordEvaluation, {
         grant: grantRef, id: evaluationId, candidateId: candidate.appId, investigationId: args.investigationId, suite, cases, allRequiredPassed: allPassed,
         ...(medianTime !== undefined ? { medianCompletionTimeSec: medianTime } : {}), status,
       });
       committed = result.committed;
-    } catch {
+      commitStatus = result.committed
+        ? "committed"
+        : result.mode === "fixture" || result.mode === "not_implemented"
+          ? "not_applicable"
+          : result.mode === "live" || result.mode === "local"
+            ? "pending"
+            : "commit_failed";
+      commitError = result.reason ?? (commitStatus === "commit_failed" ? "spacetime_unavailable" : undefined);
+    } catch (error) {
       committed = false;
+      commitStatus = "commit_failed";
+      commitError = bridgeFailureCode(error);
     }
-    await ctx.runMutation(internal.evidence.markCommitted, { table: "evaluations", appId: evaluationId, committed });
+    await ctx.runMutation(internal.evaluation.markCommitStatus, {
+      evaluationId,
+      status: commitStatus,
+      ...(commitError ? { error: commitError } : {}),
+    });
     await ctx.runMutation(internal.evaluation.stageEvaluation, { jobId, attemptId: claimed.attemptId, epoch: claimed.epoch, stage: "evidence_committed", detail: { evidenceIds: [evaluationId], spacetimeCommitted: committed } });
     await ctx.runMutation(internal.evaluation.completeEvaluation, { jobId, attemptId: claimed.attemptId, epoch: claimed.epoch, outcome: "succeeded" });
     await ctx.scheduler.runAfter(0, internal.evaluation.evaluateNext, { investigationId: args.investigationId });
