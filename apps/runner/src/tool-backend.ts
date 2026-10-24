@@ -19,9 +19,11 @@ export class HttpToolBackend implements ForkSafeToolBackend {
     private readonly lease: Lease,
     private readonly fetcher: typeof fetch = fetch,
     private readonly clock: () => number = Date.now,
+    private readonly credentialId?: string,
   ) {}
 
   run_experiment(input: BackendInput, ctx: ToolCallContext) { return this.post("run_experiment", input, ctx); }
+  propose_controller_revision(input: Parameters<ForkSafeToolBackend["propose_controller_revision"]>[0], ctx: ToolCallContext) { return this.post("propose_controller_revision", input, ctx); }
   submit_candidate(input: Parameters<ForkSafeToolBackend["submit_candidate"]>[0], ctx: ToolCallContext) { return this.post("submit_candidate", input, ctx); }
   read_findings(input: Parameters<ForkSafeToolBackend["read_findings"]>[0], ctx: ToolCallContext) { return this.post("read_findings", input, ctx); }
   write_finding(input: Parameters<ForkSafeToolBackend["write_finding"]>[0], ctx: ToolCallContext) { return this.post("write_finding", input, ctx); }
@@ -35,11 +37,19 @@ export class HttpToolBackend implements ForkSafeToolBackend {
     const signature = createHmac("sha256", this.secret).update(`${timestamp}.${rawBody}`).digest("hex");
     const response = await this.fetcher(`${this.baseUrl.replace(/\/$/, "")}/runner/tools/${name}`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-forksafe-signature": signature, "x-forksafe-timestamp": timestamp },
+      headers: {
+        "content-type": "application/json", "x-forksafe-signature": signature, "x-forksafe-timestamp": timestamp,
+        ...(this.credentialId ? { "x-forksafe-runner": this.credentialId } : {}),
+      },
       body: rawBody,
     });
-    if (!response.ok) throw new Error(`Runner tool ${name} failed: HTTP ${response.status}`);
-    return response.json();
+    const text = await response.text();
+    if (!response.ok) {
+      let detail = "";
+      try { detail = String((JSON.parse(text) as { error?: string }).error ?? ""); } catch { detail = ""; }
+      throw new Error(`Runner tool ${name} failed: HTTP ${response.status}${detail ? ` (${detail})` : ""}`);
+    }
+    return JSON.parse(text) as unknown;
   }
 }
 
@@ -48,6 +58,10 @@ export class LocalToolBackend implements ForkSafeToolBackend {
 
   async run_experiment(_input: BackendInput) {
     return { status: "blocked", reason: "no execution adapter configured (RUNNER_CONTROL_URL unset)" };
+  }
+
+  async propose_controller_revision() {
+    return { status: "blocked", reason: "no_control_plane", detail: "revisions require the Convex control plane" };
   }
 
   async submit_candidate() {

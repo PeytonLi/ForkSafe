@@ -19,6 +19,7 @@ class ActiveToolBackend implements ForkSafeToolBackend {
   constructor(initial: ForkSafeToolBackend) { this.current = initial; }
   set(backend: ForkSafeToolBackend) { this.current = backend; }
   run_experiment(...args: Parameters<ForkSafeToolBackend["run_experiment"]>) { return this.current.run_experiment(...args); }
+  propose_controller_revision(...args: Parameters<ForkSafeToolBackend["propose_controller_revision"]>) { return this.current.propose_controller_revision(...args); }
   submit_candidate(...args: Parameters<ForkSafeToolBackend["submit_candidate"]>) { return this.current.submit_candidate(...args); }
   read_findings(...args: Parameters<ForkSafeToolBackend["read_findings"]>) { return this.current.read_findings(...args); }
   write_finding(...args: Parameters<ForkSafeToolBackend["write_finding"]>) { return this.current.write_finding(...args); }
@@ -39,7 +40,7 @@ export async function main(): Promise<void> {
     secrets: [env.FACTORY_API_KEY ?? "", callbackSecret ?? ""],
   });
   const source = jobSourceUrl
-    ? new HttpJobSource(jobSourceUrl, callbackSecret!)
+    ? new HttpJobSource(jobSourceUrl, callbackSecret!, fetch, process.env.RUNNER_CREDENTIAL_ID)
     : new FileJobSource(jobsDir);
   const localBackend = new LocalToolBackend(resolve("./var/runner/local"));
   const activeBackend = new ActiveToolBackend(localBackend);
@@ -55,7 +56,7 @@ export async function main(): Promise<void> {
     sessions, source, log,
     beforeJob: (lease: Lease) => {
       activeBackend.set(controlUrl
-        ? new HttpToolBackend(controlUrl, callbackSecret!, lease)
+        ? new HttpToolBackend(controlUrl, callbackSecret!, lease, fetch, Date.now, process.env.RUNNER_CREDENTIAL_ID)
         : localBackend);
     },
   });

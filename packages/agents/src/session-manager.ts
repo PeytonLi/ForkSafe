@@ -87,7 +87,7 @@ export class SessionManager {
       investigationId, environmentId, sessionId: id,
       attemptId: crypto.randomUUID(), grantId: crypto.randomUUID(), epoch: 0,
     };
-    const policy: PermissionPolicy = { workspaceRoot: cwd, mcpServerName: "forksafe", allowedMcpTools: ["read_findings", "request_evidence", "run_experiment", "submit_candidate", "write_finding"] };
+    const policy: PermissionPolicy = { workspaceRoot: cwd, mcpServerName: "forksafe", allowedMcpTools: ["read_findings", "request_evidence", "run_experiment", "propose_controller_revision", "submit_candidate", "write_finding"] };
     const mcpServer = createForkSafeMcpServer(
       this.options.toolBackend,
       toolContext,

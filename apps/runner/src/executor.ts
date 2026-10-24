@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { ActivityLog, buildRepairPrompt, SessionCapError, type RepairPromptParams, type SessionManager, type TurnOutcome } from "@forksafe/agents";
-import type { VendorRef } from "@forksafe/contracts";
 import { assertFence, StaleLeaseError } from "./fencing.js";
 import { LeaseKeeper } from "./heartbeat.js";
 import type { JobSource } from "./job-source.js";
@@ -15,6 +14,7 @@ export class RunnerExecutor {
       clock?: () => number;
       sleep?: (ms: number) => Promise<void>;
       beforeJob?: (lease: Lease) => void;
+      maxTurns?: number;
     },
   ) {}
 
@@ -51,22 +51,30 @@ export class RunnerExecutor {
     keeper.start();
     let turn: TurnOutcome | undefined;
     let failure: string | undefined;
+    const turns: TurnOutcome[] = [];
     try {
+      await this.options.source.start?.({ attemptId: lease.attempt.id, epoch: lease.attempt.epoch }).catch(() => undefined);
       const payload = lease.job.payload;
       const prompt = typeof payload.prompt === "string"
         ? payload.prompt
         : payload.repair
           ? buildRepairPrompt(payload.repair as RepairPromptParams)
           : "Review the investigation and use the ForkSafe tools to report evidence-backed findings.";
-      turn = await this.options.sessions.runTurn(sessionId, prompt, {
-        abortSignal: keeper.signal,
-        toolContext: {
-          attemptId: lease.attempt.id,
-          grantId: lease.grant.id,
-          epoch: lease.attempt.epoch,
-        },
-      });
-      if (keeper.signal.aborted) return null;
+      const maxTurns = this.options.maxTurns ?? 3;
+      for (let index = 0; index < maxTurns; index += 1) {
+        turn = await this.options.sessions.runTurn(sessionId, index === 0 ? prompt : CONTINUE_PROMPT, {
+          abortSignal: keeper.signal,
+          toolContext: {
+            attemptId: lease.attempt.id,
+            grantId: lease.grant.id,
+            epoch: lease.attempt.epoch,
+          },
+        });
+        turns.push(turn);
+        if (keeper.signal.aborted) return null;
+        await this.options.source.session?.({ attemptId: lease.attempt.id, epoch: lease.attempt.epoch, session: this.options.sessions.toAgentSession(sessionId) }).catch(() => undefined);
+        if (!turn.success || turn.mode !== "live" || submittedCandidate(turn)) break;
+      }
     } catch (error) {
       if (keeper.signal.aborted) {
         await this.options.sessions.interrupt(sessionId).catch(() => undefined);
@@ -87,7 +95,6 @@ export class RunnerExecutor {
       throw error;
     }
     const session = this.options.sessions.toAgentSession(sessionId);
-    const sessions: VendorRef[] = session.factorySession ? [session.factorySession] : [];
     const payload = {
       operationId,
       jobId: lease.job.id,
@@ -95,9 +102,9 @@ export class RunnerExecutor {
       grantId: lease.grant.id,
       epoch: lease.attempt.epoch,
       outcome: turn?.success && !failure ? "succeeded" as const : "failed" as const,
-      result: turn ? summarize(turn) : { error: failure ?? "turn did not produce a result" },
+      result: turn ? { ...summarize(turn), turns: turns.length, candidateSubmitted: turns.some(submittedCandidate) } : { error: failure ?? "turn did not produce a result" },
       usage: session.tokenUsage,
-      sessions,
+      sessions: [{ ...session, turns: turns.length }],
       finishedAtMs: clock(),
     };
     return this.completeWithRetry(lease, payload, clock, sessionId);
@@ -144,6 +151,15 @@ export class RunnerExecutor {
       data,
     });
   }
+}
+
+const CONTINUE_PROMPT = "Continue the repair. If a revision already passes the baseline case, submit_candidate with its revisionId now; otherwise fix the controller with propose_controller_revision and measure it with run_experiment. Report only measured results.";
+
+function submittedCandidate(turn: TurnOutcome): boolean {
+  return (turn.toolCalls ?? []).some((call: unknown) => {
+    const name = typeof call === "string" ? call : (call as { name?: string; tool?: string })?.name ?? (call as { tool?: string })?.tool;
+    return name === "submit_candidate" || name === "mcp__forksafe__submit_candidate";
+  });
 }
 
 function summarize(turn: TurnOutcome): Record<string, unknown> {
