@@ -62,7 +62,7 @@ describe("live smoke orchestration (hermetic)", () => {
       answerExcerpt: "No fully validated answer available. Inspect authorized citations directly.",
       converseShape: { status: 200, responseKeys: ["message"], messageType: "string", stepCount: 1 } });
     expect(fake.refresh).toHaveBeenCalledTimes(2);
-    expect(fake.deleteByQuery).toHaveBeenCalledWith({ index: ["forksafe-findings", "forksafe-evidence", "forksafe-experiments"],
+    expect(fake.deleteByQuery).toHaveBeenCalledWith({ index: ["forksafe-findings", "forksafe-evidence", "forksafe-experiments", "forksafe-candidates", "forksafe-evaluations"],
       query: { term: { investigationId: result.investigationId } }, refresh: true });
     expect(result.cleanup).toBe("deleted 4 smoke documents");
     expect(fake.store.size).toBe(0);

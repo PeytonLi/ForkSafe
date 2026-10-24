@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { spawnSync } from "node:child_process";
 import { EnvConfig, OutboxDestination } from "@forksafe/contracts";
 import { Client, type estypes } from "@elastic/elasticsearch";
-import { AgentBuilder, BlockedError, ElasticIndexer, ElasticSearch, agentBuilderReadiness, bootstrapIndices, canonicalJSON, createElasticClient, elasticReadiness, mapping, probeElastic, resolveConfig, toDocuments, type CanonicalResolver, type EvidenceDocument } from "../src/index.ts";
+import { AgentBuilder, BlockedError, ElasticIndexer, ElasticSearch, agentBuilderReadiness, bootstrapIndices, canonicalJSON, classifyBulkFailure, createElasticClient, elasticReadiness, mapping, probeElastic, resolveConfig, toDocuments, type CanonicalResolver, type EvidenceDocument } from "../src/index.ts";
 
 const id = "11111111-1111-4111-8111-111111111111";
 const scope = "22222222-2222-4222-8222-222222222222";
@@ -10,6 +10,11 @@ const finding = { id, investigationId: scope, environmentId: id, kind: "behavior
   evidence: [{ kind: "log_excerpt", excerpt: "collision at frame 3", artifactId: id }], createdAtMs: 100 };
 const experiment = { id, investigationId: scope, attemptId: id, epoch: 0, simCase: { caseId: "case-1", suite: "public", seed: 1 },
   status: "succeeded", completed: true, engineVersion: "3", assetsSha256: "a".repeat(64), controllerSha256: "b".repeat(64), startedAtMs: 1 };
+const candidate = { id, investigationId: scope, environmentId: scope, status: "evaluated", controllerSha256: "c".repeat(64),
+  sourceArtifactId: id, changedFunctions: ["controller.step"], basedOnFindings: [], submittedByAttemptId: id, submittedAtMs: 100 };
+const evaluation = { id, candidateId: id, investigationId: scope, evaluatorAttemptId: id, suite: "public", cases: [
+  { caseId: "case-1", status: "passed", failureKinds: [] }, { caseId: "case-2", status: "failed", failureKinds: ["timeout"] },
+], allRequiredPassed: false, status: "failed", createdAtMs: 101 };
 const env = (overrides = {}) => EnvConfig.parse({ ELASTIC_MODE: "fixture", ...overrides });
 const docs = toDocuments(finding);
 const resolver: CanonicalResolver = { resolve: async refs => new Map(refs.map(ref => [ref.id, {
@@ -51,7 +56,7 @@ describe("mappings and indexing", () => {
   });
   it("maps every metadata field strictly", () => {
     expect(mapping.dynamic).toBe("strict");
-    for (const key of ["docType", "kind", "investigationId", "environmentId", "sessionId", "candidateId", "experimentId", "artifactId", "findingId", "failureKinds", "status", "suite", "caseId", "idempotencyKey", "sourceVersion", "sourceSystem", "sourceEntity", "sourceId"]) expect(mapping.properties?.[key]).toEqual({ type: "keyword" });
+    for (const key of ["docType", "kind", "investigationId", "environmentId", "sessionId", "candidateId", "experimentId", "artifactId", "findingId", "failureKinds", "status", "suite", "caseId", "idempotencyKey", "sourceVersion", "sourceSystem", "sourceEntity", "sourceId", "controllerSha256", "changedFunctions"]) expect(mapping.properties?.[key]).toEqual({ type: "keyword" });
     expect(mapping.properties?.createdAt).toEqual({ type: "date", format: "epoch_millis" });
     expect(mapping.properties?.indexedAt).toEqual({ type: "date", format: "epoch_millis" });
     expect(mapping.properties?.text).toMatchObject({ type: "text" });
@@ -60,7 +65,8 @@ describe("mappings and indexing", () => {
   it("bootstraps missing indices and tolerates create races only", async () => {
     const create = vi.fn().mockRejectedValueOnce({ meta: { body: { error: { type: "resource_already_exists_exception" } } } }).mockResolvedValue({});
     await bootstrapIndices({ indices: { exists: vi.fn().mockResolvedValueOnce(true).mockResolvedValue(false), create } });
-    expect(create).toHaveBeenCalledTimes(2);
+    expect(create).toHaveBeenCalledTimes(4);
+    expect(create.mock.calls.map(([request]) => request.index)).toEqual(["forksafe-evidence", "forksafe-experiments", "forksafe-candidates", "forksafe-evaluations"]);
     await expect(bootstrapIndices({ indices: { exists: async () => false, create: async () => { throw new Error("secret"); } } })).rejects.toThrow("Elastic index bootstrap failed");
   });
   it("builds deterministic finding, evidence and experiment IDs and bodies", () => {
@@ -69,6 +75,9 @@ describe("mappings and indexing", () => {
     expect(docs[0]?.body.indexedAt).toBe(100);
     expect(toDocuments({ ...finding, evidence: [] })).toHaveLength(1);
     expect(toDocuments(experiment)[0]).toMatchObject({ id, index: "forksafe-experiments", body: { docType: "experiment_result", suite: "public", caseId: "case-1" } });
+    expect(toDocuments(candidate)[0]).toMatchObject({ id, index: "forksafe-candidates", body: { docType: "candidate", controllerSha256: "c".repeat(64), text: expect.stringContaining("evaluated") } });
+    expect(toDocuments(evaluation)[0]).toMatchObject({ id, index: "forksafe-evaluations", body: { docType: "evaluation", suite: "public", text: expect.stringContaining("cases 1/2") } });
+    expect(toDocuments(evaluation)[0]?.body.text).not.toContain("score");
     expect(() => toDocuments({})).toThrow();
     expect(canonicalJSON({ b: 2, a: 1 })).toBe(canonicalJSON({ a: 1, b: 2 }));
     expect(toDocuments(finding, { now: 7, idempotencyKey: "outbox-key" })[0]?.body).toMatchObject({ indexedAt: 7, idempotencyKey: "outbox-key" });
@@ -95,6 +104,48 @@ describe("mappings and indexing", () => {
     expect(JSON.stringify(await new ElasticIndexer("live", { bulk }).index(finding))).not.toContain("secret");
     await expect(new ElasticIndexer("blocked", { bulk }).index(finding)).rejects.toBeInstanceOf(BlockedError);
     expect(bulk).toHaveBeenCalledTimes(2);
+  });
+  it("classifies permanent parse errors separately from auth and transient failures", async () => {
+    expect(classifyBulkFailure(400, "mapper_parsing_exception")).toBe("permanent");
+    expect(classifyBulkFailure(400, "strict_dynamic_mapping_exception")).toBe("permanent");
+    expect(classifyBulkFailure(500, "server_error")).toBe("transient");
+    expect(classifyBulkFailure(429, "es_rejected_execution_exception")).toBe("transient");
+    expect(classifyBulkFailure(401, "security_exception")).toBe("auth");
+    const bulk = vi.fn().mockResolvedValue({ items: [
+      { index: { status: 400, error: { type: "mapper_parsing_exception", reason: "private data" } } },
+      { index: { status: 403, error: { type: "security_exception", reason: "private data" } } },
+    ] });
+    const results = await new ElasticIndexer("live", { bulk }).index(finding);
+    expect(results.map(({ errorType, status }) => [errorType, status])).toEqual([["permanent", 400], ["auth", 403]]);
+    expect(JSON.stringify(results)).not.toContain("private data");
+  });
+  it("deletes only matching source projections and tolerates write-timeout redelivery by stable IDs", async () => {
+    const indexer = new ElasticIndexer("fixture");
+    await indexer.index(finding);
+    await indexer.index({ ...finding, id: "33333333-3333-4333-8333-333333333333" });
+    await indexer.deleteBySource({ sourceId: finding.id, investigationId: scope });
+    expect([...indexer.store.values()].map((projection) => projection.body.sourceId)).toEqual([
+      "33333333-3333-4333-8333-333333333333",
+      "33333333-3333-4333-8333-333333333333",
+    ]);
+
+    const writtenIds: string[] = [];
+    let first = true;
+    const bulk = vi.fn(async ({ operations }: { operations: Array<Record<string, unknown>> }) => {
+      const ids = operations.filter((operation) => "index" in operation).map((operation) => (operation.index as { _id: string })._id);
+      writtenIds.push(...ids);
+      if (first) {
+        first = false;
+        throw new Error("write succeeded but response timed out");
+      }
+      return { items: docs.map(() => ({ index: { status: 200, result: "updated" } })) } as never;
+    });
+    const live = new ElasticIndexer("live", { bulk });
+    const timedOut = await live.index(finding, { idempotencyKey: "stable" });
+    const retried = await live.index(finding, { idempotencyKey: "stable" });
+    expect(timedOut.every((result) => result.errorType === "transient")).toBe(true);
+    expect(retried.every((result) => result.result === "updated")).toBe(true);
+    expect(writtenIds.slice(0, docs.length)).toEqual(writtenIds.slice(docs.length));
   });
   it("uses the actual contracts outbox destination and key", async () => {
     expect(OutboxDestination.options).toEqual(["elastic_index", "jira_sync", "confluence_link"]);
