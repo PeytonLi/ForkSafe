@@ -31,7 +31,7 @@ export interface ForkSafeToolBackend {
   fork_candidate(input: { candidateId: string; rationale: string; basedOnFindings?: string[] }, ctx: ToolCallContext): Promise<unknown>;
   request_subtask(input: { prompt: string; purpose: string }, ctx: ToolCallContext): Promise<unknown>;
   run_experiment(input: { caseId: string; seed: number; revisionId?: string; hypothesis: string; basedOnFindings?: string[] }, ctx: ToolCallContext): Promise<unknown>;
-  propose_controller_revision(input: { source: string; rationale: string }, ctx: ToolCallContext): Promise<unknown>;
+  propose_controller_revision(input: { source: string; rationale: string; basedOnFindings?: string[] }, ctx: ToolCallContext): Promise<unknown>;
   submit_candidate(input: { revisionId: string; rationale: string; basedOnFindings: string[] }, ctx: ToolCallContext): Promise<unknown>;
   read_findings(input: { scope: "environment" | "investigation"; limit: number }, ctx: ToolCallContext): Promise<unknown>;
   write_finding(input: { kind: z.infer<typeof FindingKind>; summary: string; evidence: { kind: z.infer<typeof EvidenceKind>; experimentId?: string; artifactId?: string; locator: Record<string, unknown>; excerpt?: string }[] }, ctx: ToolCallContext): Promise<unknown>;
@@ -116,8 +116,9 @@ export function createForkSafeMcpServer(
     tool("propose_controller_revision", "Commit a new immutable controller revision. Pass the COMPLETE task_controller.py source (must define plan(scene)); ForkSafe hashes it, diffs it against the baseline and returns revisionId.", {
       source: z.string().min(1).max(200_000),
       rationale: z.string().max(4000),
+      basedOnFindings: z.array(z.string().uuid()).optional(),
     }, call("propose_controller_revision", (input: Parameters<ForkSafeToolBackend["propose_controller_revision"]>[0], callContext) => backend.propose_controller_revision(input, callContext))),
-    tool("submit_candidate", "Submit a committed revision as a candidate for protected evaluation (max 2 per environment).", {
+    tool("submit_candidate", "Submit a committed revision as a candidate for protected evaluation (max 2 per environment). REQUIRES at least one write_finding from this environment first, otherwise it is rejected with reason finding_required. Cite other environments' finding ids you relied on in basedOnFindings.", {
       revisionId: z.string().uuid(),
       rationale: z.string().max(4000),
       basedOnFindings: z.array(z.string().uuid()).optional(),
@@ -125,11 +126,11 @@ export function createForkSafeMcpServer(
       input: { revisionId: string; rationale: string; basedOnFindings?: string[] },
       callContext,
     ) => backend.submit_candidate({ ...input, basedOnFindings: input.basedOnFindings ?? [] }, callContext))),
-    tool("read_findings", "Read existing investigation findings.", {
+    tool("read_findings", "Read investigation findings, other environments' findings first. Call it before patching and cite any finding ids you rely on in basedOnFindings (apply_patch, propose_controller_revision, run_experiment, submit_candidate).", {
       scope: z.enum(["environment", "investigation"]).default("investigation"),
       limit: z.number().int().min(1).max(50).default(20),
     }, call("read_findings", (input: Parameters<ForkSafeToolBackend["read_findings"]>[0], callContext) => backend.read_findings(input, callContext)), { annotations: { readOnlyHint: true } }),
-    tool("write_finding", "Record a structured investigation finding.", {
+    tool("write_finding", "Publish a finding (REQUIRED before submit_candidate): one measured observation shared with every other environment. Cite the experimentId from run_experiment as evidence, e.g. kind limit_violation with evidence [{kind: 'metric', experimentId, locator: {}}].", {
       kind: FindingKind,
       summary: z.string().min(1).max(2000),
       evidence: z.array(z.object({
