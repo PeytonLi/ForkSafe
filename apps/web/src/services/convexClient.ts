@@ -40,14 +40,14 @@ export const CONVEX_FUNCTIONS = {
 
 const q = (name: string) => makeFunctionReference<"query">(name);
 
-const ListItem = z.object({
+export const ListItem = z.object({
   id: z.string().uuid(),
   title: z.string(),
   state: z.union([Investigation.shape.state, z.literal("restricted")]),
   requestedEnvironments: z.number().int().optional(),
   updatedAtMs: z.number().int().optional(),
 });
-const Workspace = z.object({
+export const Workspace = z.object({
   investigation: Investigation,
   environments: z.array(InvestigationEnvironment),
   sessions: z.array(AgentSession),
@@ -58,10 +58,21 @@ const Workspace = z.object({
   cancellation: z.enum(["none", "requested", "confirmed"]).default("none"),
   asOfMs: z.number().int(),
 });
-const Capture = z.union([
+export const Capture = z.union([
   z.object({ accepted: z.literal(true), investigationId: z.string().uuid() }),
   z.object({ accepted: z.literal(false), mode: z.enum(["live", "local", "fixture", "blocked", "not_implemented"]), reason: z.string() }),
 ]);
+
+export const CONVEX_RESPONSE_SCHEMAS = {
+  listInvestigations: z.array(ListItem),
+  workspace: Workspace,
+  findings: z.array(Finding),
+  replay: SimRunResult,
+  candidateReplay: SimRunResult,
+  candidateDiff: z.string(),
+  capture: Capture,
+  recordReview: HumanReview,
+};
 
 function parse<T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, value: unknown, what: string): T {
   const r = schema.safeParse(value);
@@ -105,22 +116,22 @@ export class ConvexForkSafeClient implements ForkSafeClient {
   }
 
   async listInvestigations(): Promise<InvestigationListItem[]> {
-    return parse(z.array(ListItem), await this.query(CONVEX_FUNCTIONS.listInvestigations), "Investigation list");
+    return parse(CONVEX_RESPONSE_SCHEMAS.listInvestigations, await this.query(CONVEX_FUNCTIONS.listInvestigations), "Investigation list");
   }
   async getWorkspace(investigationId: string): Promise<InvestigationWorkspace> {
-    return parse(Workspace, await this.query(CONVEX_FUNCTIONS.workspace, { investigationId }), "Workspace");
+    return parse(CONVEX_RESPONSE_SCHEMAS.workspace, await this.query(CONVEX_FUNCTIONS.workspace, { investigationId }), "Workspace");
   }
   async listFindings(investigationId: string): Promise<Finding[]> {
-    return parse(z.array(Finding), await this.query(CONVEX_FUNCTIONS.findings, { investigationId }), "Findings");
+    return parse(CONVEX_RESPONSE_SCHEMAS.findings, await this.query(CONVEX_FUNCTIONS.findings, { investigationId }), "Findings");
   }
   async getReplay(artifactId: string): Promise<SimRunResult> {
-    return parse(SimRunResult, await this.query(CONVEX_FUNCTIONS.replay, { artifactId }), "Replay");
+    return parse(CONVEX_RESPONSE_SCHEMAS.replay, await this.query(CONVEX_FUNCTIONS.replay, { artifactId }), "Replay");
   }
   async getReplayForCandidate(candidateId: string): Promise<SimRunResult> {
-    return parse(SimRunResult, await this.query(CONVEX_FUNCTIONS.candidateReplay, { candidateId }), "Replay");
+    return parse(CONVEX_RESPONSE_SCHEMAS.candidateReplay, await this.query(CONVEX_FUNCTIONS.candidateReplay, { candidateId }), "Replay");
   }
   async getCandidateDiff(candidateId: string): Promise<string> {
-    return parse(z.string(), await this.query(CONVEX_FUNCTIONS.candidateDiff, { candidateId }), "Diff");
+    return parse(CONVEX_RESPONSE_SCHEMAS.candidateDiff, await this.query(CONVEX_FUNCTIONS.candidateDiff, { candidateId }), "Diff");
   }
   async cancelInvestigation(investigationId: string): Promise<void> {
     try {
@@ -132,7 +143,7 @@ export class ConvexForkSafeClient implements ForkSafeClient {
   async submitReview(input: ReviewInput): Promise<HumanReview> {
     try {
       const r = await this.client.action(makeFunctionReference<"action">(CONVEX_FUNCTIONS.recordReview), { ...input });
-      return parse(HumanReview, r, "Review");
+      return parse(CONVEX_RESPONSE_SCHEMAS.recordReview, r, "Review");
     } catch (e) {
       mapError(e);
     }
@@ -140,7 +151,7 @@ export class ConvexForkSafeClient implements ForkSafeClient {
   async requestCapture(draft: CaptureDraft): Promise<CaptureOutcome> {
     try {
       const r = await this.client.mutation(makeFunctionReference<"mutation">(CONVEX_FUNCTIONS.capture), { ...draft });
-      return parse(Capture, r, "Capture outcome");
+      return parse(CONVEX_RESPONSE_SCHEMAS.capture, r, "Capture outcome");
     } catch (e) {
       mapError(e);
     }

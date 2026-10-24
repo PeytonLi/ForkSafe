@@ -3,6 +3,7 @@ import { InvestigationView } from "./components/InvestigationView";
 import { ReadinessStrip } from "./components/ReadinessStrip";
 import { useClient, useHashRoute } from "./hooks";
 import styles from "./App.module.css";
+import { AuthControls } from "./components/AuthControls";
 
 export function App() {
   const [route, go] = useHashRoute();
@@ -24,6 +25,7 @@ export function App() {
           <ReadinessStrip clientSource={client.source} />
         </div>
       </header>
+      <AuthControls />
       <div className={styles.body}>
         <nav className={styles.nav} aria-label="Investigations">
           <InvestigationList selectedId={route.investigationId} onSelect={(id) => go({ investigationId: id, tab: "capture" })} />

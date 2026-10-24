@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useBrowserAccess } from "../services/browserAccess";
 import { fmtTime, shortId, useClient, useLoad } from "../hooks";
 import { errorCode } from "../services";
 import { CapturePanel } from "./CapturePanel";
@@ -19,6 +20,7 @@ const RUNNING = ["capturing", "admitted", "searching", "evaluating"];
 
 export function InvestigationView({ id, tab, onTab }: { id: string; tab: string; onTab: (t: string) => void }) {
   const client = useClient();
+  const access = useBrowserAccess();
   const ws = useLoad((c) => c.getWorkspace(id), [id], id);
   const [cancelErr, setCancelErr] = useState<string | null>(null);
   const [cancelBusy, setCancelBusy] = useState(false);
@@ -41,6 +43,7 @@ export function InvestigationView({ id, tab, onTab }: { id: string; tab: string;
   };
 
   const cancel = async () => {
+    if (!access.canWrite) { access.showSignIn(); return; }
     if (!confirm("Cancel this investigation? Running experiments will be stopped and partial evidence kept.")) return;
     setCancelBusy(true);
     setCancelErr(null);
@@ -74,7 +77,7 @@ export function InvestigationView({ id, tab, onTab }: { id: string; tab: string;
               </div>
               {running && (
                 <button type="button" className="danger" onClick={cancel} disabled={cancelBusy || w.cancellation !== "none"} data-testid="cancel-investigation">
-                  {w.cancellation === "requested" ? "Cancelling…" : "Cancel investigation"}
+                  {!access.canWrite ? "Sign in to cancel" : w.cancellation === "requested" ? "Cancelling…" : "Cancel investigation"}
                 </button>
               )}
             </div>

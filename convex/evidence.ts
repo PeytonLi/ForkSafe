@@ -1,6 +1,6 @@
 import { ConvexError, v } from "convex/values";
 import { internalMutation, internalQuery, query } from "./_generated/server.js";
-import { requireUiAccess } from "./lib/auth.js";
+import { requireInvestigationRead } from "./lib/webAccess.js";
 import { appId, assertUUID } from "./lib/validators.js";
 
 /** Bridge projection writes. SpacetimeDB is written first by the bridge
@@ -225,7 +225,7 @@ function toContractFinding(row: any) {
 export const findings = query({
   args: { investigationId: v.string(), serviceToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    requireUiAccess(args.serviceToken);
+    await requireInvestigationRead(ctx, args.investigationId, args.serviceToken);
     assertUUID(args.investigationId, "investigationId");
     const rows = await ctx.db.query("findings").withIndex("by_investigation", (q) => q.eq("investigationId", args.investigationId)).collect();
     return rows.sort((a, b) => b.createdAtMs - a.createdAtMs).map(toContractFinding);

@@ -13,6 +13,7 @@
     "test:e2e": "playwright test -c ../../tests/browser/playwright.config.ts"
   },
   "dependencies": {
+    "@convex-dev/auth": "^0.0.96",
     "@forksafe/contracts": "workspace:*",
     "convex": "1.48.0",
     "react": "^19.2.0",
