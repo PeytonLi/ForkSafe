@@ -5,7 +5,7 @@ import {
   deliverJiraPayload,
   operationIdForIdempotencyKey,
 } from "./jira.js";
-import { SpacetimeRejected } from "./spacetime.js";
+import { SpacetimeRejected, SpacetimeUnavailable } from "./spacetime.js";
 
 const investigationId = "11111111-1111-4111-8111-111111111111";
 const candidateId = "22222222-2222-4222-8222-222222222222";
@@ -169,6 +169,10 @@ describe("Jira outbox dispatcher", () => {
       expect(classifyJiraFailure(new AtlassianHttpError(status, "GET", "/issue", "private details")).permanent).toBe(false);
     }
     expect(classifyJiraFailure(new SpacetimeRejected("duplicate_id")).permanent).toBe(true);
+    expect(classifyJiraFailure(new SpacetimeUnavailable())).toEqual({
+      permanent: false,
+      code: "spacetime_unavailable",
+    });
     expect(JSON.stringify(classifyJiraFailure(new AtlassianHttpError(403, "GET", "/issue", "token=private"))))
       .not.toContain("private");
   });

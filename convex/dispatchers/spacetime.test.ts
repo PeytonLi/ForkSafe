@@ -64,6 +64,151 @@ describe("SpacetimeDB HTTP bridge", () => {
     }]);
   });
 
+  it("decodes Maincloud hash columns with numeric suffixes", () => {
+    expect(decodeSqlResponse([{
+      schema: { elements: [satsColumn("controller_sha_256")] },
+      rows: [["a".repeat(64)]],
+    }])).toEqual([{ controllerSha256: "a".repeat(64) }]);
+  });
+
+  it("decodes an empty Maincloud result set", () => {
+    expect(decodeSqlResponse([{
+      schema: { elements: [satsColumn("id")] },
+      rows: [],
+      total_duration_micros: 21,
+    }])).toEqual([]);
+  });
+
+  it.each([
+    "`investigation_id` is not in scope",
+    "Aggregate expressions must have column aliases",
+  ])("maps a plain-text Maincloud SQL error to a safe HTTP code: %s", async (body) => {
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      if (String(input).endsWith("/call/register_bridge")) return new Response("", { status: 200 });
+      return new Response(body, { status: 400 });
+    });
+    const client = new SpacetimeClient({
+      SPACETIMEDB_URI: uri,
+      SPACETIMEDB_DATABASE: `plain-text-sql-error-test-${crypto.randomUUID()}`,
+      SPACETIMEDB_BRIDGE_TOKEN: "wire-token",
+      FORKSAFE_BRIDGE_SECRET: "wire-secret",
+    }, fetcher);
+
+    await expect(client.findingsCount(investigationId))
+      .rejects.toMatchObject({ name: "SpacetimeRejected", code: "http_400" });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("parses review rows using Maincloud's controller_sha_256 column", async () => {
+    const reviewId = "44444444-4444-4444-8444-444444444444";
+    const candidateId = "33333333-3333-4333-8333-333333333333";
+    const evaluationId = "55555555-5555-4555-8555-555555555555";
+    const controllerSha256 = "a".repeat(64);
+    const reviewTable = {
+      schema: { elements: [
+        satsColumn("id"), satsColumn("investigation_id"), satsColumn("candidate_id"),
+        satsColumn("evaluation_id"), satsColumn("controller_sha_256"), satsColumn("decision"),
+        satsColumn("reviewer_identity"), satsColumn("notes"), satsColumn("jira_issue_key"),
+        satsColumn("created_at_ms", "I64"),
+      ] },
+      rows: [[
+        reviewId, investigationId, candidateId, evaluationId, controllerSha256, "approved",
+        "forksafe:reviewer", { none: null }, { none: null }, "1792851276516",
+      ]],
+    };
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      if (String(input).endsWith("/call/register_bridge")) return new Response("", { status: 200 });
+      return Response.json([reviewTable]);
+    });
+    const client = new SpacetimeClient({
+      SPACETIMEDB_URI: uri,
+      SPACETIMEDB_DATABASE: "review-wire-test",
+      SPACETIMEDB_BRIDGE_TOKEN: "wire-token",
+      FORKSAFE_BRIDGE_SECRET: "wire-secret",
+    }, fetcher);
+
+    await expect(client.getReview(reviewId)).resolves.toEqual({
+      id: reviewId,
+      investigationId,
+      candidateId,
+      evaluationId,
+      controllerSha256,
+      decision: "approved",
+      reviewerIdentity: "forksafe:reviewer",
+      createdAtMs: 1792851276516,
+    });
+  });
+
+  it("fetches candidate rows using Maincloud's controller_sha_256 column", async () => {
+    const candidateId = "33333333-3333-4333-8333-333333333333";
+    const environmentId = "66666666-6666-4666-8666-666666666666";
+    const sourceArtifactId = "77777777-7777-4777-8777-777777777777";
+    const attemptId = "88888888-8888-4888-8888-888888888888";
+    const grantId = "99999999-9999-4999-8999-999999999999";
+    const controllerSha256 = "b".repeat(64);
+    const candidateTable = {
+      schema: { elements: [
+        satsColumn("id"), satsColumn("investigation_id"), satsColumn("environment_id"),
+        satsColumn("revision_id"), satsColumn("controller_sha_256"), satsColumn("source_artifact_id"),
+        satsColumn("changed_functions"), satsColumn("rationale"), satsColumn("based_on_findings"),
+        satsColumn("submitted_by_attempt_id"), satsColumn("grant_id"), satsColumn("epoch", "U32"),
+        satsColumn("submitted_at_ms", "I64"),
+      ] },
+      rows: [[
+        candidateId, investigationId, environmentId, { none: null }, controllerSha256,
+        sourceArtifactId, ["drive"], { none: null }, [], attemptId, grantId, 1, "1792851276516",
+      ]],
+    };
+    const evaluationTable = {
+      schema: { elements: [satsColumn("id"), satsColumn("status")] },
+      rows: [["55555555-5555-4555-8555-555555555555", "passed"]],
+    };
+    const emptyReviewTable = { schema: { elements: [satsColumn("decision")] }, rows: [] };
+    const emptyTombstoneTable = { schema: { elements: [satsColumn("key")] }, rows: [] };
+    const fetcher = vi.fn<typeof fetch>(async (input, init = {}) => {
+      const url = String(input);
+      if (url.endsWith("/call/register_bridge")) return new Response("", { status: 200 });
+      const query = String(init.body);
+      if (query.includes("FROM candidate WHERE id")) return Response.json([candidateTable]);
+      if (query.includes("FROM evaluation WHERE candidate_id")) return Response.json([evaluationTable]);
+      if (query.includes("FROM human_review WHERE candidate_id")) return Response.json([emptyReviewTable]);
+      if (query.includes("FROM tombstone")) return Response.json([emptyTombstoneTable]);
+      throw new Error("unexpected SQL query");
+    });
+    const client = new SpacetimeClient({
+      SPACETIMEDB_URI: uri,
+      SPACETIMEDB_DATABASE: "candidate-wire-test",
+      SPACETIMEDB_BRIDGE_TOKEN: "wire-token",
+      FORKSAFE_BRIDGE_SECRET: "wire-secret",
+    }, fetcher);
+
+    await expect(client.getCandidate(candidateId)).resolves.toEqual({
+      id: candidateId,
+      investigationId,
+      environmentId,
+      status: "evaluated",
+      controllerSha256,
+      sourceArtifactId,
+      changedFunctions: ["drive"],
+      basedOnFindings: [],
+      submittedByAttemptId: attemptId,
+      submittedAtMs: 1792851276516,
+    });
+  });
+
+  it.each(["experiment_result", "evaluation"])("does not query tombstones for %s records", async (kind) => {
+    const fetcher = vi.fn<typeof fetch>();
+    const client = new SpacetimeClient({
+      SPACETIMEDB_URI: uri,
+      SPACETIMEDB_DATABASE: "non-tombstone-test",
+      SPACETIMEDB_BRIDGE_TOKEN: "wire-token",
+      FORKSAFE_BRIDGE_SECRET: "wire-secret",
+    }, fetcher);
+
+    await expect(client.isTombstoned(kind, findingId)).resolves.toBe(false);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("classifies the captured reducer rejection body as a permanent code", async () => {
     const fetcher = vi.fn<typeof fetch>(async (input) => {
       if (String(input).endsWith("/call/register_bridge")) {
