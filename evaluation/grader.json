@@ -1,0 +1,16 @@
+{
+  "completionRadiusM": 0.03,
+  "settleDurationSec": 0.5,
+  "penetrationLimitM": 0.001,
+  "penetrationConsecutiveSteps": 5,
+  "maxFinalists": 3,
+  "maxCandidatesPerEnvironment": 2,
+  "rankingPolicy": {
+    "eligibility": "allRequiredPassed",
+    "sortAscending": [
+      "changedFunctionCount",
+      "medianCompletionTimeSec",
+      "candidateId"
+    ]
+  }
+}

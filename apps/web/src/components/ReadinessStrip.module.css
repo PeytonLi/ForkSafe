@@ -1,0 +1,7 @@
+.strip { background: var(--panel); border-bottom: 1px solid var(--line); }
+.row { max-width: var(--page); margin: 0 auto; padding: 0.45rem 1rem; display: flex; flex-wrap: wrap; gap: 0.35rem 0.9rem; align-items: center; font-size: 0.8rem; }
+.item { display: inline-flex; gap: 0.3rem; align-items: center; text-transform: capitalize; }
+.muted { color: var(--muted); }
+.err { color: var(--red); }
+.toggle { font-size: 0.75rem; padding: 0.15rem 0.5rem; margin-left: auto; }
+.detail { max-width: var(--page); margin: 0 auto; padding: 0 1rem 0.6rem 2rem; font-size: 0.8rem; color: var(--muted); overflow-wrap: anywhere; }

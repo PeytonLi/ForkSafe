@@ -1,0 +1,10 @@
+{
+  "_fixture": "recorded response shape; illustrative data, not a live Atlassian call",
+  "id": 1,
+  "globalId": "forksafe:investigation:00000000-0000-4000-8000-000000000001",
+  "object": {
+    "url": "https://forksafe.example.invalid/investigations/demo",
+    "title": "ForkSafe investigation",
+    "summary": "Illustrative fixture link"
+  }
+}

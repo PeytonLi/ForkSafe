@@ -1,0 +1,12 @@
+{
+  "entry": "task_controller.py",
+  "exports": [
+    "plan",
+    "approach_waypoints",
+    "grasp_sequence",
+    "carry_waypoints",
+    "place_sequence",
+    "retreat_waypoints"
+  ],
+  "editablePaths": ["task_controller.py"]
+}

@@ -1,0 +1,1 @@
+"""Protected ForkSafe candidate evaluator."""
