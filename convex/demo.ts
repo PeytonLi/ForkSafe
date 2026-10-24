@@ -7,7 +7,7 @@ import { action } from "./_generated/server.js";
  *  viewable investigation exists. It never fabricates physics: without
  *  Daytona + published bundles it reports accepted:false with the reason. */
 export const seed = action({
-  args: { requestedEnvironments: v.optional(v.number()), autoStart: v.optional(v.boolean()), serviceToken: v.optional(v.string()) },
+  args: { requestedEnvironments: v.optional(v.number()), autoStart: v.optional(v.boolean()), retryFailedCapture: v.optional(v.boolean()), serviceToken: v.optional(v.string()) },
   handler: async (ctx, args): Promise<Record<string, unknown>> => {
     const idempotencyKey = "demo-seed-v1";
     const outcome = await ctx.runMutation(api.investigations.capture, {
@@ -17,7 +17,7 @@ export const seed = action({
     });
     if (!outcome.accepted) return { seeded: false, mode: outcome.mode, reason: outcome.reason };
     const investigation = await ctx.runQuery(internal.investigations.getByAppId, { investigationId: outcome.investigationId });
-    if (investigation?.captureStatus === "recorded" || investigation?.captureStatus === "failed") {
+    if (investigation?.captureStatus === "recorded" || (investigation?.captureStatus === "failed" && !args.retryFailedCapture)) {
       return { seeded: investigation.captureStatus === "recorded", duplicate: true, investigationId: outcome.investigationId, state: investigation.state, captureStatus: investigation.captureStatus, mode: "live" };
     }
     const captured = await ctx.runAction(internal.capture.run, { investigationId: outcome.investigationId });

@@ -195,7 +195,7 @@ export const proposeRevision = internalAction({
     const changed = changedFunctions(baseline.source, args.source);
     const head = await ctx.runQuery(internal.evidence.environmentHead, { environmentId: args.environmentId });
     if (head?.controllerSha256 === sha) return { status: "unchanged", revisionId: head.appId, controllerSha256: sha, changedFunctions: changed };
-    const storageId = await ctx.storage.store(new Blob([bytes as BlobPart]));
+    const storageId = await ctx.storage.store(new Blob([bytes as BlobPart], { type: "application/json" }));
     const artifact = await ctx.runMutation(internal.artifacts.insertCloudArtifact, {
       kind: "controller_source", sha256: sha, bytes: bytes.byteLength, investigationId: args.investigationId,
       attemptId: args.attemptId, visibility: "internal", storageId,

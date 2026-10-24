@@ -14,6 +14,47 @@ import { classifyExperiment } from "./lib/experimentStatus.js";
 
 const SIM_ROOT = "/workspace/sim";
 const RUN_ROOT = "/workspace/runs";
+const SIM_PYTHONPATH = `${SIM_ROOT}/services:${SIM_ROOT}/pydeps`;
+
+// File transfer runs fixed Python snippets through the Daytona SDK's executeCommand directly: the SDK's
+// multipart upload (fs.uploadFile, and codeRun which uses it) fails inside the Convex Node runtime with
+// "BadHeader content-type", and the provider's shell policy rejects the quoting these snippets need.
+// Inputs are validated against strict allowlists before being interpolated and only sandboxes this
+// control plane created (forksafe.purpose label) are touched. Bundles are pulled straight from Convex
+// storage so 37 MB tars never enter the action's memory budget.
+const PY_WRITE_B64 = "import base64,pathlib,sys; p=pathlib.Path(sys.argv[1]); p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(base64.b64decode(sys.argv[2]))";
+const PY_FETCH = "import pathlib,sys,urllib.request; p=pathlib.Path(sys.argv[2]); p.parent.mkdir(parents=True, exist_ok=True); urllib.request.urlretrieve(sys.argv[1], p); print(p.stat().st_size)";
+const SAFE_REMOTE_PATH = /^\/workspace\/[A-Za-z0-9._\/-]+$/;
+const SAFE_BASE64 = /^[A-Za-z0-9+/=]*$/;
+const SAFE_URL = /^https:\/\/[A-Za-z0-9.-]+\/[A-Za-z0-9._\/?=&%-]*$/;
+
+async function trustedExec(ref: VendorRef, command: string, timeoutSec: number): Promise<{ exitCode: number; output: string }> {
+  const config = loadDaytonaConfig();
+  if (config.mode !== "cloud" || !config.apiKey) throw new ConvexError("daytona_cloud_provider_blocked");
+  const sandbox = await new Daytona({ apiKey: config.apiKey, apiUrl: config.apiUrl }).get(ref.id);
+  const purpose = sandbox.labels["forksafe.purpose"];
+  if (purpose !== "execution" && purpose !== "runner" && purpose !== "evaluator") throw new ConvexError("sandbox_not_owned");
+  try {
+    const result = await sandbox.process.executeCommand(command, "/workspace", undefined, timeoutSec);
+    return { exitCode: result.exitCode ?? 1, output: (result.result ?? "").slice(-2000) };
+  } catch (error) {
+    throw new ConvexError(`daytona_exec_failed:${error instanceof Error ? error.name : "unknown"}`);
+  }
+}
+
+async function putSmallFile(_daytona: unknown, ref: VendorRef, remotePath: string, bytes: Uint8Array): Promise<void> {
+  if (bytes.byteLength > 96_000) throw new ConvexError("file_too_large_for_inline_transfer");
+  const encoded = Buffer.from(bytes).toString("base64");
+  if (!SAFE_REMOTE_PATH.test(remotePath) || !SAFE_BASE64.test(encoded)) throw new ConvexError("file_transfer_input_rejected");
+  const result = await trustedExec(ref, `python3 -c '${PY_WRITE_B64}' ${remotePath} ${encoded}`, 60);
+  if (result.exitCode !== 0) throw new ConvexError(`file_write_failed:${remotePath}`);
+}
+
+async function fetchToFile(_daytona: unknown, ref: VendorRef, url: string, remotePath: string): Promise<void> {
+  if (!SAFE_REMOTE_PATH.test(remotePath) || !SAFE_URL.test(url)) throw new ConvexError("file_transfer_input_rejected");
+  const result = await trustedExec(ref, `python3 -c '${PY_FETCH}' '${url}' ${remotePath}`, 300);
+  if (result.exitCode !== 0) throw new ConvexError(`file_fetch_failed:${remotePath}`);
+}
 
 function provider(): CloudDaytonaProvider {
   const config = loadDaytonaConfig();
@@ -40,15 +81,22 @@ export const ensureSimBundle = internalAction({
     const bundle = await ctx.runQuery(internal.bundles.get, { key: "simulator" });
     if (!bundle) throw new ConvexError("simulator_bundle_missing");
     if (op.bundleSha256 === bundle.sha256) return { ready: true, bundleSha256: bundle.sha256 };
-    const blob = await ctx.storage.get(bundle.storageId);
-    if (!blob) throw new ConvexError("simulator_bundle_missing");
+    const bundleUrl = await ctx.storage.getUrl(bundle.storageId);
+    if (!bundleUrl) throw new ConvexError("simulator_bundle_missing");
     const daytona = provider();
-    await daytona.uploadFile(ref, "/workspace/sim.tar", new Uint8Array(await blob.arrayBuffer()));
+    await fetchToFile(daytona, ref, bundleUrl, "/workspace/sim.tar");
     const extract = await daytona.exec(ref, { command: `python3 -m tarfile -e /workspace/sim.tar ${SIM_ROOT}`, cwd: "/workspace", timeoutSec: 120 });
     if (extract.exitCode !== 0) throw new ConvexError("simulator_bundle_extract_failed");
+    // forksafe-exec-v1 ships mujoco+numpy only; the simulator also imports pydantic, so install it into
+    // a bundle-local target dir (deterministic regardless of HOME) until the execution image adds it.
+    const deps = await daytona.exec(ref, {
+      command: `python3 -m pip install --quiet --no-cache-dir --target ${SIM_ROOT}/pydeps pydantic==2.14.1`,
+      cwd: SIM_ROOT, env: { PYTHONPATH: SIM_PYTHONPATH }, timeoutSec: 180,
+    });
+    if (deps.exitCode !== 0) return { ready: false, detail: `pydeps_install_failed:${deps.output.slice(-300)}` };
     const preflight = await daytona.exec(ref, {
       command: `python3 ${SIM_ROOT}/forksafe_preflight.py`, cwd: SIM_ROOT,
-      env: { PYTHONPATH: `${SIM_ROOT}/services` }, timeoutSec: 120,
+      env: { PYTHONPATH: SIM_PYTHONPATH }, timeoutSec: 120,
     });
     if (preflight.exitCode !== 0) {
       return { ready: false, detail: preflight.output.slice(-400) };
@@ -98,16 +146,20 @@ export const runCase = internalAction({
   handler: async (ctx, args): Promise<CaseRunOutcome> => {
     const started = Date.now();
     const { ref } = await readyRef(ctx, args.sandboxOpId);
+    console.log("runCase:stage", "ensure_bundle", args.experimentId);
     const ensured = await ctx.runAction(internal.execution.ensureSimBundle, { sandboxOpId: args.sandboxOpId });
     if (!ensured.ready) throw new ConvexError("simulator_bundle_not_ready");
     const daytona = provider();
     const runDir = `${RUN_ROOT}/${args.experimentId}`;
     const encoder = new TextEncoder();
-    await daytona.uploadFile(ref, `${runDir}/controller/task_controller.py`, encoder.encode(args.controllerSource));
-    await daytona.uploadFile(ref, `${runDir}/case.json`, encoder.encode(JSON.stringify({
+    console.log("runCase:stage", "put_controller", args.experimentId);
+    await putSmallFile(daytona, ref, `${runDir}/controller/task_controller.py`, encoder.encode(args.controllerSource));
+    console.log("runCase:stage", "put_case", args.experimentId);
+    await putSmallFile(daytona, ref, `${runDir}/case.json`, encoder.encode(JSON.stringify({
       caseId: args.simCase.caseId, suite: args.simCase.suite, seed: args.simCase.seed,
       sceneOverrides: args.simCase.sceneOverrides, ...(args.simCase.description ? { description: args.simCase.description } : {}),
     })));
+    console.log("runCase:stage", "exec_simulator", args.experimentId);
     const timeoutSec = Math.min(60, Math.max(1, args.timeoutSec ?? 30));
     const command = [
       "python3 -m simulator.cli",
@@ -118,10 +170,15 @@ export const runCase = internalAction({
       `--experiment-id ${args.experimentId}`,
       `--timeout-sec ${timeoutSec}`,
     ].join(" ");
-    const run = await daytona.exec(ref, {
-      command, cwd: SIM_ROOT, timeoutSec: timeoutSec * 4 + 60,
-      env: { PYTHONPATH: `${SIM_ROOT}/services`, PYTHONDONTWRITEBYTECODE: "1", HOME: runDir, TMPDIR: runDir },
-    });
+    let run: { exitCode: number; output: string };
+    try {
+      run = await daytona.exec(ref, {
+        command, cwd: SIM_ROOT, timeoutSec: timeoutSec * 4 + 60,
+        env: { PYTHONPATH: SIM_PYTHONPATH, PYTHONDONTWRITEBYTECODE: "1", HOME: runDir, TMPDIR: runDir },
+      });
+    } catch (error) {
+      run = { exitCode: -1, output: `exec_failed:${error instanceof Error ? error.message : "unknown"}` };
+    }
     const expectedSha = await sha256(encoder.encode(args.controllerSource));
     let resultBytes: Uint8Array | undefined;
     let traceBytes: Uint8Array | undefined;
@@ -151,7 +208,7 @@ export const runCase = internalAction({
     const status = shaMismatch ? "invalid" : classifyExperiment({ completed, failureKinds });
     const store = async (bytes: Uint8Array, kind: "replay" | "trace") => {
       if (bytes.byteLength > 8 * 1024 * 1024) return undefined;
-      const storageId = await ctx.storage.store(new Blob([bytes as BlobPart]));
+      const storageId = await ctx.storage.store(new Blob([bytes as BlobPart], { type: "application/json" }));
       const inserted = await ctx.runMutation(internal.artifacts.insertCloudArtifact, {
         kind, sha256: await sha256(bytes), bytes: bytes.byteLength, investigationId: args.investigationId,
         attemptId: args.attemptId, visibility: args.simCase.suite === "withheld" ? "withheld" : "internal", storageId,
@@ -199,10 +256,10 @@ export const launchRunner = internalAction({
     const { ref } = await readyRef(ctx, args.sandboxOpId);
     const bundle = await ctx.runQuery(internal.bundles.get, { key: "runner" });
     if (!bundle) throw new ConvexError("runner_bundle_missing");
-    const blob = await ctx.storage.get(bundle.storageId);
-    if (!blob) throw new ConvexError("runner_bundle_missing");
+    const bundleUrl = await ctx.storage.getUrl(bundle.storageId);
+    if (!bundleUrl) throw new ConvexError("runner_bundle_missing");
     const daytona = provider();
-    await daytona.uploadFile(ref, "/workspace/runner/runner.mjs", new Uint8Array(await blob.arrayBuffer()));
+    await fetchToFile(daytona, ref, bundleUrl, "/workspace/runner/runner.mjs");
     const factoryKey = process.env.FACTORY_API_KEY;
     const handle = await daytona.startCommand(ref, {
       command: "node /workspace/runner/runner.mjs",

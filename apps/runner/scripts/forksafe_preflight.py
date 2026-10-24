@@ -5,9 +5,11 @@ root = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(root, "services"))
 try:
     import mujoco  # noqa: F401
+    import numpy  # noqa: F401
+    import pydantic  # noqa: F401
     mujoco_version = mujoco.__version__
 except Exception as error:  # pragma: no cover - reported to Convex
-    print(json.dumps({"ok": False, "error": f"mujoco_import_failed: {error}"}))
+    print(json.dumps({"ok": False, "error": f"sim_import_failed: {error}"}))
     sys.exit(2)
 assets = os.path.join(root, "assets", "robots")
 digest = hashlib.sha256()
