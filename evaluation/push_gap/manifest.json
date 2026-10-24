@@ -1,0 +1,26 @@
+{
+  "version": "1",
+  "suiteId": "push-gap-public",
+  "taskFamily": "push_through_gap",
+  "cases": [
+    {
+      "caseId": "push-gap-aligned",
+      "suite": "public",
+      "taskFamily": "push_through_gap",
+      "seed": 0,
+      "description": "Push the cube straight through the aligned gap.",
+      "sceneOverrides": {}
+    },
+    {
+      "caseId": "push-gap-offset",
+      "suite": "public",
+      "taskFamily": "push_through_gap",
+      "seed": 0,
+      "description": "Align laterally before pushing through the offset gap.",
+      "sceneOverrides": {
+        "gapDx": 0.06,
+        "targetDx": 0.06
+      }
+    }
+  ]
+}
