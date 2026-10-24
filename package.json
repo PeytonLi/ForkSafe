@@ -17,6 +17,7 @@
     "test:e2e": "pnpm --filter @forksafe/web test:e2e",
     "benchmark": "node scripts/benchmark.mjs",
     "daytona:prepare": "node scripts/daytona-prepare.mjs",
+    "daytona:egress-probe": "pnpm --filter @forksafe/daytona daytona:egress-probe",
     "smoke:hosted": "node scripts/smoke-hosted.mjs",
     "cleanup:sandboxes": "node scripts/cleanup-sandboxes.mjs"
   },

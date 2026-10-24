@@ -77,10 +77,97 @@ describe("Daytona providers", () => {
       "forksafe.purpose": "execution",
     });
     expect(create.mock.calls[0]?.[0].labels["forksafe.investigation"]).toBe("investigation");
+    expect(create.mock.calls[0]?.[0]).not.toHaveProperty("domainAllowList");
+    expect(create.mock.calls[0]?.[0]).not.toHaveProperty("outboundProxyUrl");
     await expect(provider.create(spec("op-2"))).rejects.toBeInstanceOf(CapacityError);
     rows.splice(0);
     await expect(provider.create(spec("op-3", 1))).rejects.toBeInstanceOf(CapacityError);
     expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes runner network settings from the environment to the create request", async () => {
+    const runnerConfig = loadDaytonaConfig({
+      DAYTONA_MODE: "cloud",
+      DAYTONA_RUNNER_DOMAIN_ALLOWLIST: " api.factory.ai, app.factory.ai ",
+      DAYTONA_RUNNER_OUTBOUND_PROXY_URL: "https://probe-user:probe-pass@proxy.example",
+    });
+    const base = spec("op-network");
+    const runnerSpec: SandboxSpec = {
+      ...base,
+      purpose: "runner",
+      labels: { ...base.labels, "forksafe.purpose": "runner" },
+    };
+    const provider = new CloudDaytonaProvider(fake as unknown as Daytona, runnerConfig);
+
+    await provider.create(runnerSpec);
+
+    expect(create.mock.calls[0]?.[0]).toMatchObject({
+      domainAllowList: "api.factory.ai,app.factory.ai",
+      outboundProxyUrl: "https://probe-user:probe-pass@proxy.example",
+    });
+  });
+
+  it("rejects mutually exclusive runner network settings before contacting Daytona", async () => {
+    const base = spec("op-network-conflict");
+    const provider = new CloudDaytonaProvider(fake as unknown as Daytona, config());
+    const invalidSpec: SandboxSpec = {
+      ...base,
+      purpose: "runner",
+      labels: { ...base.labels, "forksafe.purpose": "runner" },
+      networkPolicy: {
+        purpose: "runner",
+        domainAllowList: ["api.factory.ai"],
+        networkBlockAll: true,
+      },
+    };
+
+    await expect(provider.create(invalidSpec)).rejects.toThrow("daytona_network_policy_conflict");
+    expect(fake.list).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("does not expose proxy URL userinfo in Daytona errors or logs", async () => {
+    const proxyUrl = "https://probe-user:probe-pass@proxy.example";
+    const client = {
+      ...fake,
+      create: vi.fn(async () => { throw new Error(`request failed for ${proxyUrl}`); }),
+      get: vi.fn(async () => { throw new Error(`request failed for ${proxyUrl}`); }),
+    };
+    const provider = new CloudDaytonaProvider(client as unknown as Daytona, config());
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const base = spec("op-proxy-error");
+    const runnerSpec: SandboxSpec = {
+      ...base,
+      purpose: "runner",
+      labels: { ...base.labels, "forksafe.purpose": "runner" },
+      networkPolicy: { purpose: "runner", outboundProxyUrl: proxyUrl },
+    };
+
+    const rejectedError = async (operation: Promise<unknown>) => {
+      try {
+        await operation;
+      } catch (error) {
+        if (error instanceof Error) return error;
+      }
+      throw new Error("expected_daytona_operation_to_fail");
+    };
+
+    try {
+      const createError = await rejectedError(provider.create(runnerSpec));
+      expect(createError.message).toBe("daytona_create_ambiguous");
+      expect(createError.message).not.toContain("probe-user");
+      expect(createError.message).not.toContain("probe-pass");
+      expect(createError.message).not.toContain(proxyUrl);
+
+      const getError = await rejectedError(provider.get({ provider: "daytona", id: "sandbox-proxy-error" }));
+      expect(getError.message).toBe("daytona_request_failed:Error");
+      expect(getError.message).not.toContain("probe-user");
+      expect(getError.message).not.toContain("probe-pass");
+      expect(getError.message).not.toContain(proxyUrl);
+      expect(log).not.toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it("reports cloud readiness blocked without an API key and does not expose a failed request's key", async () => {
