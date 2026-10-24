@@ -33,6 +33,54 @@ FAILURE_KINDS = {
 }
 
 
+class PlanValidationError(ValueError):
+    pass
+
+
+def finite_json(value: Any) -> Any:
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {key: finite_json(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [finite_json(item) for item in value]
+    return value
+
+
+def validate_plan(plan: Any) -> list[dict[str, Any]]:
+    if not isinstance(plan, list) or len(plan) > 256:
+        raise PlanValidationError("plan must be a list of at most 256 skills")
+
+    def validate_value(value: Any, depth: int) -> None:
+        if depth > 6:
+            raise PlanValidationError("plan nesting depth exceeds 6")
+        if value is None or isinstance(value, (bool, int, float, str)):
+            return
+        if isinstance(value, list):
+            for item in value:
+                validate_value(item, depth + 1)
+            return
+        if isinstance(value, dict):
+            if any(not isinstance(key, str) for key in value):
+                raise PlanValidationError("plan object keys must be strings")
+            for item in value.values():
+                validate_value(item, depth + 1)
+            return
+        raise PlanValidationError(f"plan contains unsupported value {type(value).__name__}")
+
+    for skill in plan:
+        if not isinstance(skill, dict):
+            raise PlanValidationError("each plan skill must be an object")
+        validate_value(skill, 1)
+    try:
+        encoded = json.dumps(plan, allow_nan=True, sort_keys=True, separators=(",", ":")).encode()
+    except (TypeError, ValueError, RecursionError) as exc:
+        raise PlanValidationError(f"plan is not JSON serializable: {type(exc).__name__}") from exc
+    if len(encoded) > 64 * 1024:
+        raise PlanValidationError("plan exceeds 64 KiB")
+    return plan
+
+
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -154,6 +202,13 @@ def _controller_scene(scene: BuiltScene, data: mujoco.MjData) -> dict[str, Any]:
     }
 
 
+def controller_input(case: SimCase, seed: int) -> dict[str, Any]:
+    scene = build_scene(case)
+    data = mujoco.MjData(scene.model)
+    _set_initial_state(scene, data, seed)
+    return _controller_scene(scene, data)
+
+
 def _frame(scene: BuiltScene, data: mujoco.MjData, executor: SkillExecutor) -> dict[str, Any]:
     bodies = []
     for body_id in range(1, scene.model.nbody):
@@ -234,16 +289,32 @@ def run_case(
     experiment_id: UUID,
     timeout_sec: float = 30,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    start_wall = time.perf_counter()
-    asset_hash = verify_assets()
     controller, controller_hash = _load_controller(controller_dir)
+    plan = validate_plan(controller.plan(controller_input(case, seed)))
+    result, trace, _ = run_plan(
+        case,
+        seed,
+        experiment_id,
+        plan,
+        controller_hash,
+        timeout_sec,
+    )
+    return result, trace
+
+
+def run_plan(
+    case: SimCase,
+    seed: int,
+    experiment_id: UUID,
+    plan: list[dict[str, Any]],
+    controller_hash: str,
+    timeout_sec: float = 30,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    physics_start = time.perf_counter()
+    asset_hash = verify_assets()
     scene = build_scene(case)
     data = mujoco.MjData(scene.model)
     _set_initial_state(scene, data, seed)
-    controller_input = _controller_scene(scene, data)
-    plan = controller.plan(controller_input)
-    if not isinstance(plan, list) or any(not isinstance(skill, dict) for skill in plan):
-        raise ValueError("controller plan must return a list of skill objects")
     executor = SkillExecutor(scene, data, plan, scene.speed_scale)
     allowed_pairs, forbidden_pairs = _contact_pairs(scene)
     frames: list[dict[str, Any]] = [_frame(scene, data, executor)]
@@ -387,6 +458,12 @@ def run_case(
             "completed": completed,
             "failure": result.get("firstFailure"),
         },
-        "wallTimeSec": time.perf_counter() - start_wall,
     }
-    return result, trace
+    physics_wall_sec = time.perf_counter() - physics_start
+    metrics = {
+        "simSteps": step_count,
+        "simTimeSec": float(data.time),
+        "physicsWallSec": physics_wall_sec,
+        "stepsPerSec": step_count / physics_wall_sec if physics_wall_sec else 0.0,
+    }
+    return finite_json(result), finite_json(trace), metrics
