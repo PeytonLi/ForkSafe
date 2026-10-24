@@ -76,7 +76,9 @@ export class RunnerExecutor {
         turns.push(turn);
         if (keeper.signal.aborted) return null;
         await this.options.source.session?.({ attemptId: lease.attempt.id, epoch: lease.attempt.epoch, session: this.options.sessions.toAgentSession(sessionId) }).catch(() => undefined);
-        if (!turn.success || turn.mode !== "live" || submittedCandidate(turn)) break;
+        // A failed live turn (e.g. a denied built-in tool cancelling the turn) is not fatal:
+        // the next turn re-anchors the agent on the ForkSafe tools. Fixture/local turns run once.
+        if (turn.mode !== "live" || submittedCandidate(turn)) break;
       }
     } catch (error) {
       if (keeper.signal.aborted) {
@@ -156,7 +158,7 @@ export class RunnerExecutor {
   }
 }
 
-const CONTINUE_PROMPT = "Continue the repair. If a revision already passes the baseline case, submit_candidate with its revisionId now; otherwise fix the controller with propose_controller_revision and measure it with run_experiment. Report only measured results.";
+const CONTINUE_PROMPT = "Continue the repair. You have no shell, script or file tools here (they are denied); use only the forksafe tools. If a revision already passes the baseline case, submit_candidate with its revisionId now; otherwise fix the controller with propose_controller_revision and measure it with run_experiment. Report only measured results.";
 
 function submittedCandidate(turn: TurnOutcome): boolean {
   return (turn.toolCalls ?? []).some((call: unknown) => {

@@ -490,7 +490,8 @@ export const setCapture = internalMutation({
     const now = Date.now();
     await ctx.db.patch(investigation._id, {
       captureStatus: args.captureStatus, updatedAtMs: now, version: investigation.version + 1,
-      ...(args.captureStatus === "recorded" ? { state: "admitted" as const } : {}),
+      // A late/duplicate "recorded" must not pull an already-started investigation back to admitted.
+      ...(args.captureStatus === "recorded" && ["created", "capturing", "admitted"].includes(investigation.state) ? { state: "admitted" as const } : {}),
       ...(args.captureStatus === "failed" ? { state: "failed" as const, lastError: args.error ?? "capture_failed", finishedAtMs: now } : {}),
     });
     return { version: investigation.version + 1, autoStart: investigation.autoStart ?? false };

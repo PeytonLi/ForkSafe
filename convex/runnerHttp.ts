@@ -79,10 +79,14 @@ export function registerRunnerRoutes(router: HttpRouter): void {
           return json({ lease: null, retryAfterMs: 5_000, reason: "grant_install_failed" });
         }
         await ctx.runMutation(internal.runnerControl.markGrantInstalled, { credentialId: auth.credential.appId, attemptId: lease.attemptId, epoch: lease.epoch, grantId: grant.grantId, bridgeMode: install.mode });
+        const baselineBundle = await ctx.runQuery(internal.bundles.get, { key: "baseline_controller" });
+        const baselineBlob = baselineBundle?.storageId ? await ctx.storage.get(baselineBundle.storageId) : null;
+        const baselineControllerSource = baselineBlob ? (await baselineBlob.text()).slice(0, 20_000) : undefined;
         const payload = {
           ...(job.payload ?? {}),
           repair: {
             investigationTitle: investigation.title, environmentIndex: environment.index, baselineCase: investigation.baselineCase,
+            ...(baselineControllerSource ? { baselineControllerSource } : {}),
             failureSummary: job.payload?.failureSummary ?? "The baseline controller collides with the divider while carrying the cube.",
             findingsDigest: "Call read_findings to see what other environments found.",
             budgets: { maxExperiments: environment.budgets.maxExperiments, experimentsUsed: environment.experimentsUsed, maxCandidates: environment.budgets.maxCandidates, candidatesUsed: environment.candidatesUsed },
