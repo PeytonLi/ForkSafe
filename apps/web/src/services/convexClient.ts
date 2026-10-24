@@ -319,9 +319,16 @@ export class ConvexForkSafeClient implements ForkSafeClient {
       mapError(e);
     }
   }
-  async findFailure(taskFamily: import("@forksafe/contracts").TaskFamily): Promise<FailureSearchOutcome> {
+  async findFailure(
+    taskFamily: import("@forksafe/contracts").TaskFamily,
+    options?: { sceneOverrides?: Record<string, number>; seed?: number },
+  ): Promise<FailureSearchOutcome> {
     try {
-      const result = await this.client.action(makeFunctionReference<"action">(CONVEX_FUNCTIONS.findFailure), { taskFamily });
+      const result = await this.client.action(makeFunctionReference<"action">(CONVEX_FUNCTIONS.findFailure), {
+        taskFamily,
+        ...(options?.sceneOverrides !== undefined ? { sceneOverrides: options.sceneOverrides } : {}),
+        ...(options?.seed !== undefined ? { seed: options.seed } : {}),
+      });
       return parse(CONVEX_RESPONSE_SCHEMAS.findFailure, result, "Failure search") as FailureSearchOutcome;
     } catch (e) {
       mapError(e);

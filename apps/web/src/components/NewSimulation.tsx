@@ -2,11 +2,12 @@ import { useState } from "react";
 import { DEFAULT_TASK_FAMILY, TASK_FAMILIES, TASK_FAMILY_SPECS, validateSceneOverrides, type TaskFamily } from "@forksafe/contracts";
 import { changedOverrides, defaultOverride } from "../scene";
 import { useClient } from "../hooks";
-import type { FailureSearchOutcome } from "../services";
+import type { ControllerChoiceValue, FailureSearchOutcome } from "../services";
 import { useBrowserAccess } from "../services/browserAccess";
 import { sceneActionMessage } from "../services/sceneActionMessage";
 import { human } from "./tone";
 import { ReplayViewer } from "../viewer/ReplayViewer";
+import { ControllerChoice } from "./ControllerChoice";
 import { SceneFields } from "./SceneFields";
 import { SegThumb } from "./SegThumb";
 import styles from "./NewSimulation.module.css";
@@ -19,6 +20,7 @@ export function NewSimulation({ onAccepted }: { onAccepted: (investigationId: st
   const [overrides, setOverrides] = useState<Record<string, number>>(() => defaultOverride(DEFAULT_TASK_FAMILY));
   const [seed, setSeed] = useState(1);
   const [environments, setEnvironments] = useState(1);
+  const [controller, setController] = useState<ControllerChoiceValue>("approved");
   const [title, setTitle] = useState("");
   const [searching, setSearching] = useState(false);
   const [searchResult, setSearchResult] = useState<FailureSearchOutcome | null>(null);
@@ -40,7 +42,10 @@ export function NewSimulation({ onAccepted }: { onAccepted: (investigationId: st
     setSearching(true);
     setSearchResult(null);
     try {
-      const result = await client.findFailure(taskFamily);
+      const result = await client.findFailure(taskFamily, {
+        sceneOverrides: changedOverrides(taskFamily, overrides),
+        seed,
+      });
       setSearchResult(result);
       if (result.found) {
         setOverrides({ ...defaultOverride(taskFamily), ...result.sceneOverrides });
@@ -68,6 +73,7 @@ export function NewSimulation({ onAccepted }: { onAccepted: (investigationId: st
         sceneOverrides: changedOverrides(taskFamily, overrides),
         requestedEnvironments: environments,
         taskFamily,
+        controller,
       });
       if (result.accepted) {
         onAccepted(result.investigationId);
@@ -179,6 +185,7 @@ export function NewSimulation({ onAccepted }: { onAccepted: (investigationId: st
         <section aria-labelledby="agents-heading" className={styles.card}>
           <h2 id="agents-heading">Agents</h2>
           <p className={styles.description}>Your agents will explore this scene in {environments} environment{environments === 1 ? "" : "s"}.</p>
+          <ControllerChoice taskFamily={taskFamily} value={controller} onChange={setController} />
           <fieldset className={styles.environmentFieldset}>
             <legend>Agent environments</legend>
             <div className={`seg seg-fill ${styles.environmentSegments}`} role="group" aria-label="Environment count">

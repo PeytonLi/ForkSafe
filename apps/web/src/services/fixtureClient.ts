@@ -558,7 +558,10 @@ export class FixtureClient implements ForkSafeClient {
     }));
   }
 
-  findFailure(_taskFamily: import("@forksafe/contracts").TaskFamily): Promise<FailureSearchOutcome> {
+  findFailure(
+    _taskFamily: import("@forksafe/contracts").TaskFamily,
+    _options?: { sceneOverrides?: Record<string, number>; seed?: number },
+  ): Promise<FailureSearchOutcome> {
     return this.wait(() => ({
       mode: "fixture" as const,
       found: false as const,

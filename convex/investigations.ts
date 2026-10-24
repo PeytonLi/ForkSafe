@@ -580,17 +580,22 @@ export const getByAppId = internalQuery({
 });
 
 export const setCapture = internalMutation({
-  args: { investigationId: v.string(), captureStatus: v.union(v.literal("running"), v.literal("recorded"), v.literal("failed")), error: v.optional(v.string()) },
+  args: {
+    investigationId: v.string(), captureStatus: v.union(v.literal("running"), v.literal("recorded"), v.literal("failed")),
+    error: v.optional(v.string()), promote: v.optional(v.boolean()),
+  },
   handler: async (ctx, args) => {
     const investigation = await ctx.db.query("investigations").withIndex("by_appId", (q) => q.eq("appId", args.investigationId)).unique();
     if (!investigation) throw new ConvexError("investigation_not_found");
     const now = Date.now();
+    const promote = args.promote ?? true;
     await ctx.db.patch(investigation._id, {
       captureStatus: args.captureStatus, updatedAtMs: now, version: investigation.version + 1,
       // A late/duplicate "recorded" must not pull an already-started investigation back to admitted.
-      ...(args.captureStatus === "recorded" && investigation.retryOfInvestigationId
+      // promote defaults true. A solved baseline passes false and stays in its current state.
+      ...(args.captureStatus === "recorded" && promote && investigation.retryOfInvestigationId
         ? { state: "completed" as const, finishedAtMs: now }
-        : args.captureStatus === "recorded" && ["created", "capturing", "admitted"].includes(investigation.state)
+        : args.captureStatus === "recorded" && promote && ["created", "capturing", "admitted"].includes(investigation.state)
           ? { state: "admitted" as const }
           : {}),
       ...(args.captureStatus === "failed" ? { state: "failed" as const, lastError: args.error ?? "capture_failed", finishedAtMs: now } : {}),
