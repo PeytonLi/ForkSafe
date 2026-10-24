@@ -235,3 +235,11 @@ describe("Jira failure diagnostics", () => {
     expect(failureDiagnostic(new Error(`boom ${"a".repeat(40)}`))).toBe("Error:boom [redacted]");
   });
 });
+
+describe("Jira investigation lookup reference", () => {
+  it("uses Convex's module:function path form (a dot path is rejected at runtime)", async () => {
+    const { getFunctionName } = await import("convex/server");
+    const { getInvestigationRef } = await import("./jira.js");
+    expect(getFunctionName(getInvestigationRef)).toBe("dispatchers/jira:getInvestigation");
+  });
+});

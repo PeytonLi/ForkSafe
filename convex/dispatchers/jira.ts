@@ -16,7 +16,7 @@ type JiraMode = "live" | "blocked" | "not_implemented";
 type DispatchResult = { delivered: boolean; mode: JiraMode; reason?: string };
 type Snapshot = { investigation: Investigation; environments: InvestigationEnvironment[] } | null;
 
-const getInvestigationRef = makeFunctionReference<"query">("dispatchers/jira.getInvestigation");
+export const getInvestigationRef = makeFunctionReference<"query">("dispatchers/jira:getInvestigation");
 const UUID_NAMESPACE = "f8a11234-51cc-5db4-b570-7f1e480da7b7";
 
 export async function operationIdForIdempotencyKey(key: string): Promise<string> {
