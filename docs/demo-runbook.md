@@ -1,172 +1,96 @@
-# ForkSafe demo runbook
+# 3-minute demo of the hosted app
 
-The reliable demo today is a clearly labelled recorded browser story plus a real
-local physics benchmark. You can also show read-only cloud health. Do not present
-these three things as one completed hosted repair.
+This is a script. **DO** lines are things you click or type. **SAY** lines are
+what you tell the audience. Times are a guide.
 
-## 1. Preflight
+Hosted app: https://giant-jellyfish-684.convex.site
 
-From the repository root, with authorized development credentials injected or
-stored in ignored `.env.local`:
+## Before you start (10 minutes earlier)
 
-```sh
-pnpm run doctor --live
-pnpm smoke:hosted
-pnpm cleanup:sandboxes
-```
+- DO: open https://giant-jellyfish-684.convex.site/health. Every service you
+  plan to mention should be green. Factory shows as configured but not probed;
+  that is normal.
+- DO: sign in with the invite code (ask Peyton). The two live runs below are not
+  on the public list, so signed-out visitors cannot open them.
+- DO: open these two investigations in tabs so you are not hunting for them:
+  - `195d5a1f-aea3-4f10-af1a-c428fffffca3` (completed and approved)
+  - `fbdc8b1c-8970-4b7b-930f-6b917270a1b7` (awaiting review, has shared findings)
+- DO: in a terminal, run `pnpm cleanup:sandboxes` (dry run) to confirm no stray
+  sandboxes are holding the Daytona cap of 5.
+- DO: have a fixture tab ready as a backup: `VITE_FORKSAFE_DATA=fixture pnpm dev`,
+  then http://localhost:5173.
+- Never show `.env.local`, request headers, tokens or raw cloud responses on screen.
 
-Read the output before continuing. Blocked rows are warnings unless you use
-`doctor --strict`; a failed configured live probe exits 1. Factory remains
-`not_verified`. The smoke command is read-only endpoint health, not a Factory
-tool call or a Daytona physics run. Cleanup is dry-run unless you add `--yes`.
+## The script
 
-Have Node 22, pnpm, Python 3.12, uv, both CLIs, the virtual environment and pinned
-assets ready. If needed, run `pnpm run setup` before the presentation.
-Keep a browser window at <http://localhost:5173> and a separate terminal for
-the benchmark. Do not display credentials, headers or raw cloud response bodies.
+**0:00 The problem**
 
-## 2. Seed checkpoint
+- DO: show the home page.
+- SAY: "A robot arm is supposed to place a block, but it clips a divider. ForkSafe
+  helps us find out why, and prove that a fix really works before anyone ships it."
 
-```sh
-pnpm seed:demo
-```
+**0:20 The baseline**
 
-Today this reports `convex/demo.ts not on main yet (pipeline lane)` and exits 2.
-That is an honest stop for hosted seeding, not a successful seed. Once the
-pipeline lane supplies that module, the command invokes `demo:seed` on the
-configured deployment and needs `CONVEX_DEPLOY_KEY`. Check that lane's seed
-contract before making a hosted run. Do not repeatedly seed a shared deployment
-without understanding its idempotency.
+- DO: open the `195d5a1f...` investigation and play the baseline replay.
+- SAY: "This replay is real MuJoCo physics, recorded in a cloud sandbox. Everyone
+  is looking at the same failure, not a description of it."
 
-The fixture tour below does not depend on seed data.
+**0:45 Independent environments**
 
-## 3. Start the local demo
+- DO: show the environments list.
+- SAY: "ForkSafe started two separate environments. Each one has its own sandbox
+  and its own Factory agent. They can't edit each other's work, and an old,
+  slow attempt can never overwrite a newer one."
 
-```sh
-VITE_FORKSAFE_DATA=fixture pnpm dev
-```
+**1:10 Shared evidence**
 
-This starts Vite, simulator and evaluator on 5173, 8000 and 8001. It does not
-start cloud workers, Convex or SpacetimeDB. The explicit fixture override prevents
-a saved hosted URL from silently changing this tour.
+- DO: switch to the `fbdc8b1c...` tab, open Evidence, and point at the
+  finding-influence graph.
+- SAY: "Every experiment and finding goes into one shared database,
+  SpacetimeDB. Here, one environment wrote a finding and the other environment
+  used it. The graph shows which finding led to which fix."
 
-Say: “This browser story is recorded fixture data. I'll separately show real
-local physics and which cloud endpoints are reachable.”
+**1:40 Protected evaluation**
 
-## 4. Walk the web screens
+- DO: open Compare for a candidate. Turn on the ghost so the original failing
+  run plays behind the fixed one, then show its public and withheld results.
+- SAY: "Each fix is tested in a fresh sandbox, on public cases and on withheld
+  cases the agents never saw. Both candidates here passed 10 out of 10 public
+  cases. The evaluator signs its results, and ForkSafe throws away anything
+  unsigned or tampered with."
 
-1. Open <http://localhost:5173>. Show the banner **Showing recorded fixture data,
-   not live results** and the readiness strip. Expand the readiness details to
-   distinguish the web data source from integration readiness.
-2. In **Investigations**, choose **Panda clips divider**. The Capture tab has
-   **Baseline replay**, **Captured failure**, and **Scenario editor**.
-   Point out seed **1042**, the controller/assets hashes and engine version.
-3. Scrub the baseline replay to **4.1 s**, or use **Jump to failure**.
-   Say: “This recording shows cube contact with the divider. Its seed and
-   controller version make the observation traceable.” Do not say it ran now.
-4. Show the **Scenario editor** fields, seed and **Environments (1–10)**.
-   If you click **Record baseline run** in fixture mode, it explicitly reports
-   that fixture mode cannot run physics. This is useful to show the boundary;
-   it is not a live capture button in this tour.
-5. Click **Environments**. Show the separate environment tiles and open
-   **Experiment timeline** on the first tile. Say: “These are independent
-   investigation histories in the fixture, not one agent's unverified summary.”
-6. Click **Evidence**. Show findings with environment provenance. Explain that
-   an explanation should lead back to the underlying experiment and artifacts.
-7. Click **Compare & review**. Select a candidate if needed. Scrub the shared
-   replay control to **5 s** and show both original and candidate frame readouts.
-   Point out **plan_transit** in the changed functions, the full candidate
-   SHA-256, and the recorded public-suite **10/10 passed** result.
-   Say: “These are fixture evaluation results; a live candidate must be evaluated
-   independently against its exact hash, including withheld cases.”
-8. Select **Approve for engineering review**, enter notes in **Notes (optional)**,
-   and submit. Show the review history and matching controller hash.
-   Say: “This is an engineering review, not permission to deploy a robot.
-   In fixture mode it is signed as the fixture reviewer and saved in this browser.”
+**2:15 Human review**
 
-Optional boundary checks: choose the **fast transit** investigation and click
-**Cancel investigation**, accept the confirmation and show the cancellation
-pending phase. Choosing **Restricted** shows **Access denied**. Neither action
-proves hosted authorization or cancels a real cloud sandbox in fixture mode.
+- DO: back on `195d5a1f...`, open the review and point at the controller SHA.
+- SAY: "A person approved this fix. The approval is tied to this exact controller
+  hash, so nobody can swap the code after the review. The same review appears in
+  Jira as issue FS-3."
 
-## 5. Jira / Forge checkpoint
+**2:45 Honest status**
 
-There is no Jira panel embedded in the web tabs. The investigation header only
-shows a Jira key when one is attached. The native **ForkSafe investigation**
-panel and **Start ForkSafe investigation** issue action live in Jira.
+- DO: open `/health` again.
+- SAY: "This page tells you what is live and what isn't. We never show recorded
+  data as if it were live."
 
-Only show the following if the Forge app has actually been built, deployed and
-installed into the authorized Jira development site:
+## If something breaks
 
-1. Open a linked Jira issue and its **ForkSafe investigation** panel.
-2. Show the mode label and integration readiness, requirements revision,
-   candidate comparison and exact-hash review controls.
-3. If it says fixture, say so. Do not submit a remote review or start real work
-   unless that is part of the authorized demo plan.
+Keep it honest: say what is down, switch to what still works, and don't claim a
+live repair you didn't show.
 
-The app code exists, but the checked-in remote URL is a placeholder and ops has
-not verified deployment/installation. Remote mode depends on the backend/Forge
-lanes completing configuration. Follow [the Forge guide](../apps/forge/README.md).
-A successful Jira project probe establishes project access, not this panel.
+| What broke | What you see | What to do | What to say |
+| --- | --- | --- | --- |
+| The hosted app does not load | Browser error or blank page | Switch to the fixture tab (`VITE_FORKSAFE_DATA=fixture pnpm dev`) | "The hosted app is down, so I'll show the same flow with recorded data. The banner says it is recorded." |
+| SpacetimeDB Maincloud is down | Health shows SpacetimeDB red; evidence views empty | Show the Convex parts (replay, candidates, review) and skip shared evidence, or use fixture mode | "The shared evidence database is unreachable right now, so I'll skip that part." |
+| Daytona is down or at the cap | Health shows Daytona red, or new runs don't start | Use the two finished runs; don't start a new one. Run `pnpm cleanup:sandboxes` afterwards | "We're only looking at runs that already finished." |
+| Factory is down | New runs stall in searching | Use the finished runs | "The agent provider is down; these runs finished earlier." |
+| Elastic is down | Search or "Why did this fail?" fails | Skip search. Scores never depend on Elastic | "Search is a convenience; scoring doesn't depend on it." |
+| "Why did this fail?" or the timeline won't load | Panel shows it is unavailable | Expected today: those Convex functions aren't deployed to the hosted app yet. Show them in the fixture tab | "That panel is built but not deployed yet; here it is with recorded data." |
+| Jira is down | FS-3 won't open | Show the review in the web app instead | "Jira is a copy of the review; the decision lives in ForkSafe." |
+| Everything is down | Nothing cloud works | Fixture tour, then optionally `pnpm benchmark` for real local physics | "This is a recording, plus real physics on my laptop. It is not a live cloud repair." |
 
-## 6. Elastic Agent Builder checkpoint
+After the demo:
 
-There is no Agent Builder chat screen in the ForkSafe web app. If an authorized
-Kibana project has the read-only agent/tools configured and this investigation's
-evidence is actually indexed, open **Agent Builder** in Kibana and select that
-agent. Ask:
+- DO: `pnpm cleanup:sandboxes`; if it lists sandboxes you created, run it with `--yes`.
 
-> For investigation <actual investigation UUID>, which experiments show divider
-> contact, and what evidence supports the candidate's clearance? Cite docType,
-> id, investigationId and sourceVersion for every source.
-
-Use a real indexed ID, not a fixture UUID that was never uploaded. Keep tools
-scoped to that investigation. Check returned references against canonical
-evidence; an answer with missing/stale/unauthorized citations is not a result to
-present as verified. Say: “This is evidence navigation, not an evaluator score.”
-
-Ops verified the agents-list endpoint, not a scoped converse request. If tools,
-data or package `KIBANA_API_KEY` configuration are missing, explain the
-dependency and skip this portion rather than inventing an answer. See the
-[Elastic guide](../packages/integrations/elastic/README.md).
-
-## 7. Run real local physics
-
-In the second terminal:
-
-```sh
-pnpm benchmark
-```
-
-Expected baseline summary:
-
-```text
-[ops] Running simulator baseline fallback (known collision is an expected result)
-[ops] Result: completed=false; failureKinds=["forbidden_contact"]
-[ops] Wall time: <measured seconds>s
-```
-
-Say: “This command ran the baseline controller in MuJoCo now. The known collision
-is the expected measured failure; the command succeeded because it produced a
-parseable result.” This is a single baseline run, not a measured parallel speedup
-or a hosted repair. Crashes and unparseable output exit nonzero.
-
-## 8. Teardown
-
-1. Stop root dev with Ctrl-C; it shuts down all three process groups.
-2. End any real ForkSafe work before deleting its sandboxes.
-3. Review the dry-run list, then explicitly confirm owned-resource cleanup:
-
-```sh
-pnpm cleanup:sandboxes
-pnpm cleanup:sandboxes --yes
-```
-
-Only exact `forksafe.project=forksafe` resources are eligible, and
-`trueforge*` names are excluded. Do not clean up another project's resources.
-Local artifacts remain under `var/artifacts`; fixture review storage stays in
-the browser. Clear that site's local storage for a fresh fixture review demo.
-
-For failures, use [troubleshooting](troubleshooting.md). For the difference
-between code, fixtures and live evidence, use the
-[integration matrix](integration-matrix.md).
+More help: [on-call runbook](operations/runbook.md), [troubleshooting](troubleshooting.md),
+[what is live](integration-matrix.md).
