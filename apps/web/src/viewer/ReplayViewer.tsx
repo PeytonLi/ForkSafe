@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import * as THREE from "three";
 import type { SimRunResult } from "@forksafe/contracts";
 import { mjToThreePos, mjToThreeQuat, sampleAt, type Sample } from "./transform";
@@ -212,12 +212,13 @@ interface Props {
   label: string;
   scene: Record<string, number>;
   compact?: boolean;
+  captionExtra?: ReactNode;
   /** Original (failing) run drawn as a translucent ghost on the same clock. */
   ghost?: SimRunResult;
 }
 
 /** Renders sampled authoritative state; it never runs physics or scores. */
-export function ReplayViewer({ replay, t, label, scene, ghost, compact = false }: Props) {
+export function ReplayViewer({ replay, t, label, scene, ghost, compact = false, captionExtra }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const s3Ref = useRef<Scene3D | null>(null);
   const [webglError, setWebglError] = useState<string | null>(null);
@@ -296,6 +297,7 @@ export function ReplayViewer({ replay, t, label, scene, ghost, compact = false }
         ) : !compact ? (
           <span className={styles.muted}>{smp?.attached ? "Cube grasped" : "No contact"}</span>
         ) : null}
+        {captionExtra}
       </figcaption>
     </figure>
   );
