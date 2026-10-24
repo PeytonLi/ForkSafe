@@ -18,10 +18,8 @@ import {
   planLeaseAcquire,
   planLeaseRenew,
   planOutboxEnqueue,
-  planBridgeRotation,
   planOutboxFailure,
   secretsMatch,
-  validateFindingUse,
   validateFindingInput,
   validateGrantUse,
   type GrantLike,
@@ -253,51 +251,24 @@ function sameExperiment(existing: unknown, input: unknown): boolean {
   );
 }
 
-function requireBridgeSecret(ctx: Ctx, secret: string): void {
-  const configured = ctx.env.FORKSAFE_BRIDGE_SECRET;
-  if (configured === undefined || configured.length === 0) {
-    reject("bridge_secret_not_configured", "bridge secret not configured");
-  }
-  if (!secretsMatch(configured, secret)) {
-    reject("bridge_secret_mismatch", "Bridge secret does not match");
-  }
-}
-
-function upsertBridgeIdentity(ctx: Ctx): void {
-  const existing = ctx.db.bridgeIdentity.identity.find(ctx.sender);
-  const row = {
-    identity: ctx.sender,
-    role: "convex",
-    registeredAtMs: BigInt(nowMs(ctx)),
-  };
-  if (existing) ctx.db.bridgeIdentity.identity.update({ ...existing, ...row });
-  else ctx.db.bridgeIdentity.insert(row);
-}
-
 export const registerBridge = databaseSchema.reducer(
   { secret: t.string() },
   (ctx, { secret }) => {
-    requireBridgeSecret(ctx, secret);
-    upsertBridgeIdentity(ctx);
-  },
-);
-
-/** Registers the caller as the only "convex" bridge identity. Runs in one
- *  reducer transaction, so stale identities lose authority atomically. */
-export const rotateBridgeIdentity = databaseSchema.reducer(
-  { secret: t.string() },
-  (ctx, { secret }) => {
-    requireBridgeSecret(ctx, secret);
-    const rows = [...ctx.db.bridgeIdentity.iter()];
-    const { revokeHex } = planBridgeRotation(
-      rows.map((row) => ({ identityHex: row.identity.toHexString(), role: row.role })),
-      ctx.sender.toHexString(),
-    );
-    const revoke = new Set(revokeHex);
-    for (const row of rows) {
-      if (revoke.has(row.identity.toHexString())) ctx.db.bridgeIdentity.identity.delete(row.identity);
+    const configured = ctx.env.FORKSAFE_BRIDGE_SECRET;
+    if (configured === undefined || configured.length === 0) {
+      reject("bridge_secret_not_configured", "bridge secret not configured");
     }
-    upsertBridgeIdentity(ctx);
+    if (!secretsMatch(configured, secret)) {
+      reject("bridge_secret_mismatch", "Bridge secret does not match");
+    }
+    const existing = ctx.db.bridgeIdentity.identity.find(ctx.sender);
+    const row = {
+      identity: ctx.sender,
+      role: "convex",
+      registeredAtMs: BigInt(nowMs(ctx)),
+    };
+    if (existing) ctx.db.bridgeIdentity.identity.update({ ...existing, ...row });
+    else ctx.db.bridgeIdentity.insert(row);
   },
 );
 
@@ -836,55 +807,6 @@ export const recordFinding = databaseSchema.reducer(
       "finding",
       input.id,
     );
-  },
-);
-
-export const recordFindingUse = databaseSchema.reducer(
-  {
-    grant: grantRef,
-    id: t.string(),
-    findingId: t.string(),
-    experimentId: t.option(t.string()),
-    candidateId: t.option(t.string()),
-  },
-  (ctx, input) => {
-    const grant = requireGrant(ctx, input.grant, "record_finding");
-    const experimentId = input.experimentId ?? undefined;
-    const candidateId = input.candidateId ?? undefined;
-    validIds(input.id, input.findingId, experimentId, candidateId);
-    const finding = ctx.db.finding.id.find(input.findingId);
-    const experimentRow = experimentId ? ctx.db.experiment.id.find(experimentId) : undefined;
-    const candidateRow = candidateId ? ctx.db.candidate.id.find(candidateId) : undefined;
-    const targetRow = experimentRow
-      ? { investigationId: experimentRow.investigationId, environmentId: experimentRow.environmentId ?? undefined }
-      : candidateRow
-        ? { investigationId: candidateRow.investigationId, environmentId: candidateRow.environmentId }
-        : undefined;
-    const existing = ctx.db.findingUse.id.find(input.id);
-    const check = validateFindingUse({
-      grant: { investigationId: grant.investigationId, environmentId: grant.environmentId ?? undefined },
-      finding: finding ? { investigationId: finding.investigationId, environmentId: finding.environmentId } : undefined,
-      findingTombstoned: Boolean(ctx.db.tombstone.key.find(`finding:${input.findingId}`)),
-      targetCount: (experimentId ? 1 : 0) + (candidateId ? 1 : 0),
-      target: targetRow,
-      existing: existing
-        ? { findingId: existing.findingId, experimentId: existing.experimentId ?? undefined, candidateId: existing.candidateId ?? undefined }
-        : undefined,
-      requested: { findingId: input.findingId, experimentId, candidateId },
-    });
-    enforce(check);
-    if (check.duplicate || !finding || !targetRow) return;
-    ctx.db.findingUse.insert({
-      id: input.id,
-      investigationId: grant.investigationId,
-      findingId: input.findingId,
-      findingEnvironmentId: finding.environmentId,
-      usedByEnvironmentId: (grant.environmentId ?? targetRow.environmentId)!,
-      experimentId,
-      candidateId,
-      createdByAttemptId: grant.attemptId,
-      createdAtMs: BigInt(nowMs(ctx)),
-    });
   },
 );
 

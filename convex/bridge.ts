@@ -401,10 +401,11 @@ export const recordFindingUse = internalAction({
       throw new ConvexError("finding_use_target_invalid");
     }
     const client = new BridgeClient(ctx);
-    return await client.call("record_finding_use", {
+    const reducerArgs = {
       grant: args.grant, id: args.id, findingId: args.findingId,
       experimentId: option(args.experimentId), candidateId: option(args.candidateId),
-    });
+    };
+    return await client.call("record_finding_use", reducerArgs);
   },
 });
 
