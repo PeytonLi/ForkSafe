@@ -223,3 +223,15 @@ describe("Jira candidate verdicts", () => {
     expect(JSON.stringify(verdicts)).not.toContain("withheld-0");
   });
 });
+
+describe("Jira failure diagnostics", () => {
+  it("logs zod issue paths without values and redacts long tokens", async () => {
+    const { failureDiagnostic } = await import("./jira.js");
+    const { z } = await import("zod");
+    const parsed = z.object({ review: z.object({ decision: z.string().regex(/^[a-z]+$/) }) }).safeParse({ review: { decision: "SECRET-VALUE" } });
+    expect(parsed.success).toBe(false);
+    const line = failureDiagnostic(parsed.success ? null : parsed.error);
+    expect(line).toBe("zod:review.decision");
+    expect(failureDiagnostic(new Error(`boom ${"a".repeat(40)}`))).toBe("Error:boom [redacted]");
+  });
+});

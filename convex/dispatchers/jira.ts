@@ -32,6 +32,13 @@ export async function operationIdForIdempotencyKey(key: string): Promise<string>
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+/** Error shape for logs: zod issue paths only (never values), else the error class and a short message. */
+export function failureDiagnostic(error: unknown): string {
+  if (error instanceof ZodError) return `zod:${error.issues.slice(0, 12).map((issue) => issue.path.join(".") || "(root)").join(",")}`;
+  if (error instanceof Error) return `${error.name}:${error.message.replace(/[A-Za-z0-9+/=_-]{32,}/g, "[redacted]").slice(0, 160)}`;
+  return typeof error;
+}
+
 export function classifyJiraFailure(error: unknown): { permanent: boolean; code: string } {
   if (error instanceof SpacetimeRejected) return { permanent: true, code: `spacetime_${safeCode(error.code)}` };
   if (error instanceof SpacetimeUnavailable) return { permanent: false, code: "spacetime_unavailable" };
@@ -284,6 +291,7 @@ export const dispatch = internalAction({
       return { delivered: true, mode: "live" };
     } catch (error) {
       const failure = classifyJiraFailure(error);
+      console.log("jira:dispatch_failed", failure.code, failureDiagnostic(error));
       if (failure.permanent && key) {
         await ctx.runMutation(internal.dispatchers.jira.deadLetter, {
           idempotencyKey: key,
