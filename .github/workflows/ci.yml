@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  node:
+    name: TypeScript and fixture browser tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      INTEGRATION_LIVE: "0"
+      VITE_FORKSAFE_DATA: fixture
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install SpacetimeDB CLI for bindings and typecheck
+        run: |
+          curl -sSf https://install.spacetimedb.com | sh -s -- -y
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: pnpm typecheck
+      - run: pnpm -r --if-present test
+      - run: pnpm test:integration
+      - name: Build the fixture web app
+        run: env -u VITE_CONVEX_URL pnpm --filter @forksafe/web build
+      - name: Install Chromium and system dependencies
+        run: pnpm --filter @forksafe/web exec playwright install --with-deps chromium
+      - name: Browser story without a hosted backend
+        run: env -u VITE_CONVEX_URL pnpm test:e2e
+      - name: Upload failed browser report and traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-failure
+          path: |
+            apps/web/playwright-report/
+            apps/web/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  python:
+    name: Python physics and pinned assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --frozen
+      - name: Cache pinned robot assets
+        uses: actions/cache@v4
+        with:
+          path: assets/robots/mujoco_menagerie
+          key: robot-assets-${{ runner.os }}-${{ hashFiles('scripts/fetch-assets.mjs', 'assets/robots/manifest.json') }}
+      - name: Fetch assets and verify the pinned tree SHA
+        run: |
+          node scripts/fetch-assets.mjs
+          node --input-type=module -e "import {verifyAssets} from './scripts/lib/runtime.mjs'; console.log('assets sha256:',verifyAssets());"
+      - run: .venv/bin/pytest -q
