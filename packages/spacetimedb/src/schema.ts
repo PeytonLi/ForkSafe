@@ -190,21 +190,6 @@ export const findingLink = table(
   },
 );
 
-export const findingUse = table(
-  { name: "finding_use", public: true },
-  {
-    id: t.string().primaryKey(),
-    investigationId: t.string().index("btree"),
-    findingId: t.string().index("btree"),
-    findingEnvironmentId: t.string(),
-    usedByEnvironmentId: t.string(),
-    experimentId: t.option(t.string()),
-    candidateId: t.option(t.string()),
-    createdByAttemptId: t.string(),
-    createdAtMs: t.i64(),
-  },
-);
-
 export const candidate = table(
   { name: "candidate", public: true },
   {
@@ -311,7 +296,6 @@ const databaseSchema = schema(
     finding,
     evidence,
     findingLink,
-    findingUse,
     candidate,
     evaluation,
     humanReview,
