@@ -114,13 +114,25 @@ export async function run(ctx) {
     return null;
   }, { timeoutMs: 60_000, intervalMs: 1_000 });
   const pendingRevocation = reservedState?.job?.pendingRevocation;
+  // grants.markRevoked clears pendingRevocation once SpacetimeDB confirms the revoke, so a
+  // fast revoke shows up as a revoked attempt-one grant instead of a pending marker.
+  const attempt1AfterExpiry = reservedState?.state.attempts.find((attempt) => attempt.appId === attempt1Id);
+  const attempt1Grants = reservedState?.state.grants.filter((grant) => grant.attemptId === attempt1Id) ?? [];
+  const attempt1GrantRevoked = attempt1AfterExpiry?.grantRevokedAtMs !== undefined
+    && attempt1Grants.length > 0
+    && attempt1Grants.every((grant) => grant.revokedAtMs !== undefined && grant.spacetimeRevoked === true);
   ctx.checks.check(
     "K2",
-    "expired job is reserved for one retry with pending revocation of attempt one",
+    "expired job is reserved for one retry and attempt one's grant is pending revocation or already revoked",
     Boolean(reservedState
-      && pendingRevocation?.attemptId === attempt1Id
-      && reservedState.job.attemptsUsed === 1),
-    { job: reservedState?.job ?? null, pendingRevocation: pendingRevocation ?? null },
+      && reservedState.job.attemptsUsed === 1
+      && (pendingRevocation?.attemptId === attempt1Id || attempt1GrantRevoked)),
+    {
+      job: reservedState?.job ?? null,
+      pendingRevocation: pendingRevocation ?? null,
+      attempt1GrantRevokedAtMs: attempt1AfterExpiry?.grantRevokedAtMs ?? null,
+      attempt1Grants: attempt1Grants.map(({ appId, revokedAtMs, spacetimeRevoked, revokeReason }) => ({ appId, revokedAtMs, spacetimeRevoked, revokeReason })),
+    },
   );
   if (!reservedState) {
     await recordSessionEvidence(ctx);

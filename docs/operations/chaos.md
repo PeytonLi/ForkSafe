@@ -69,7 +69,7 @@ S1, S2, and S5 are not reached if no runner starts. A stall is 150 seconds with 
 Starts R1, waits for an open model turn and running job, waits ten seconds, then SIGKILLs R1's process group. It observes lease expiry, starts R2 using the same credential, and replays R1's heartbeat, completion, and `read_findings` requests while attempt two is active.
 
 - **K1** checks the 25–35 second expiry interval and lease bound.
-- **K2** checks the reserved retry and pending revocation of attempt one.
+- **K2** checks the reserved retry and that attempt one's grant is either pending revocation or already revoked in SpacetimeDB (`grants.markRevoked` clears `pendingRevocation` once the revoke commits).
 - **K3** checks that attempt two has a higher epoch and is active.
 - **K4** requires stale requests to be rejected without changing the active job/attempt or creating a non-stale acknowledgement.
 - **K5** is the strict HTTP 409 / `stale_epoch` check for all three replays.
