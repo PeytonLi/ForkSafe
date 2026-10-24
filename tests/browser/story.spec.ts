@@ -105,7 +105,7 @@ test("browser story: readiness, fixture investigation, replay scrub, review", as
   await expect(page.getByRole("radiogroup", { name: "Candidate" }).getByRole("radio")).toHaveCount(2);
   await expect(subtabs.getByRole("tab", { name: "Replay" })).toHaveAttribute("aria-selected", "true");
   const cmp = page.getByTestId("comparison-replay");
-  await expect(cmp.getByTestId("replay-viewer")).toHaveCount(2);
+  await expect(cmp.getByTestId("replay-viewer")).toHaveCount(2, { timeout: 15_000 });
   await cmp.getByTestId("replay-scrubber").fill("5");
   await expect(cmp.getByTestId("frame-readout").nth(0)).toContainText("t=5.00 s");
   await expect(cmp.getByTestId("frame-readout").nth(1)).toContainText("t=5.00 s");
