@@ -2,7 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api.js";
 import { internalMutation, internalQuery } from "./_generated/server.js";
 import { RUNNER_CREDENTIAL_TTL_MS } from "./lib/constants.js";
-import { byAppId, claimJob, completeJob, heartbeatAttempt, recordStageRow } from "./lib/jobOps.js";
+import { byAppId, claimJob, completeJob, currentStages, heartbeatAttempt, recordStageRow } from "./lib/jobOps.js";
 import { randomSecret } from "./lib/runnerAuth.js";
 import { appId, assertUUID } from "./lib/validators.js";
 
@@ -214,6 +214,13 @@ export const complete = internalMutation({
     };
     const stages = ["artifacts_persisted", "evidence_committed"] as const;
     for (const stage of stages) {
+      if (stage === "artifacts_persisted") {
+        const stages = await currentStages(ctx, job, attempt);
+        if (!stages.some((row) => row.stage === "work_started")) {
+          const started = await recordStageRow(ctx, job, attempt, args.epoch, "work_started", { implied: true, runnerOperationId: args.operationId });
+          if ("stale" in started) return { accepted: false, reason: "stale_epoch" };
+        }
+      }
       const stageResult = await recordStageRow(ctx, job, attempt, args.epoch, stage, { runnerOperationId: args.operationId, ...(stage === "evidence_committed" ? { evidenceIds: args.sessions.map((session) => session.id) } : {}) });
       if ("stale" in stageResult) return { accepted: false, reason: "fenced" };
       if (job.state !== "artifacts_pending" && job.state !== "evidence_pending") {

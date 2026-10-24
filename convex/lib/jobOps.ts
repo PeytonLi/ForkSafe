@@ -109,6 +109,9 @@ export async function completeJob(
     await ctx.db.patch(attempt._id, { state: "fenced", outcome: "stale_completion_rejected", endedAtMs: Date.now() });
     return { rejected: true as const, reason: decision.reason };
   }
+  if (!decision.ok && decision.reason === "expired") {
+    return { rejected: true as const, reason: decision.reason };
+  }
   if (!decision.ok) throw new ConvexError(decision.reason);
   const now = Date.now();
   await ctx.db.patch(attempt._id, { state: decision.attemptState, outcome, endedAtMs: now });
