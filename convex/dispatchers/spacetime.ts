@@ -494,6 +494,17 @@ function extractCode(value: unknown): string | undefined {
   return matches.at(-1)?.[1]?.toLowerCase();
 }
 
+/** Convex's process.env does not enumerate, so `{ ...process.env }` is empty.
+ *  Copy the SpacetimeDB keys explicitly when overriding the bridge token. */
+export function spacetimeEnvironment(token: string | null | undefined, source: Environment = runtimeEnvironment()): Environment {
+  return {
+    SPACETIMEDB_URI: source.SPACETIMEDB_URI,
+    SPACETIMEDB_DATABASE: source.SPACETIMEDB_DATABASE,
+    FORKSAFE_BRIDGE_SECRET: source.FORKSAFE_BRIDGE_SECRET,
+    SPACETIMEDB_BRIDGE_TOKEN: token || source.SPACETIMEDB_BRIDGE_TOKEN,
+  };
+}
+
 function runtimeEnvironment(): Environment {
   return (globalThis as typeof globalThis & { process?: { env?: Environment } }).process?.env ?? {};
 }

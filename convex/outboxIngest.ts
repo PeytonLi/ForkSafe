@@ -1,6 +1,6 @@
 import { internal } from "./_generated/api.js";
 import { internalAction } from "./_generated/server.js";
-import { SpacetimeClient } from "./dispatchers/spacetime.js";
+import { SpacetimeClient, spacetimeEnvironment } from "./dispatchers/spacetime.js";
 import { spacetimeConfig } from "./lib/spacetime.js";
 
 const DESTINATIONS = ["elastic_index", "jira_sync", "confluence_link"] as const;
@@ -42,7 +42,7 @@ export const tick = internalAction({
     const config = spacetimeConfig(process.env);
     if (config.mode !== "live" && config.mode !== "local") return { mode: config.mode, inserted: 0, duplicates: 0, skipped: 0, failed: 0 };
     const token = await ctx.runAction(internal.bridge.sharedBridgeToken, {});
-    const client = new SpacetimeClient(token ? { ...process.env, SPACETIMEDB_BRIDGE_TOKEN: token } : process.env);
+    const client = new SpacetimeClient(spacetimeEnvironment(token));
     const rows = await client.sql("SELECT * FROM outbox_entry WHERE status = 'pending'");
     const { entries, skipped } = toIngestEntries(rows);
     let inserted = 0;

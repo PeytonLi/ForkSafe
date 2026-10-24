@@ -11,7 +11,7 @@ import { createElasticClient, elasticReadiness, resolveConfig } from "../../pack
 import { ElasticIndexer } from "../../packages/integrations/elastic/src/indexer.js";
 import { internal } from "../_generated/api.js";
 import { internalAction } from "../_generated/server.js";
-import { SpacetimeClient, SpacetimeRejected } from "./spacetime.js";
+import { SpacetimeClient, spacetimeEnvironment, SpacetimeRejected } from "./spacetime.js";
 import { ZodError } from "zod";
 
 type RecordKind = "finding" | "experiment_result" | "candidate" | "evaluation";
@@ -200,7 +200,7 @@ export const dispatch = internalAction({
     if (!client) return { delivered: false, mode: "blocked", reason: "elastic_not_configured" };
     const indexer = new ElasticIndexer(mode, client);
     const bridgeToken = await ctx.runAction(internal.bridge.sharedBridgeToken, {});
-    const spacetime = new SpacetimeClient(bridgeToken ? { ...process.env, SPACETIMEDB_BRIDGE_TOKEN: bridgeToken } : process.env);
+    const spacetime = new SpacetimeClient(spacetimeEnvironment(bridgeToken));
     try {
       return await deliverElasticPayload(args.payload, {
         mode,

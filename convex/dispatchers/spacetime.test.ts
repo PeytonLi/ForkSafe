@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { SpacetimeClient, SpacetimeRejected, decodeSqlResponse } from "./spacetime.js";
+import { SpacetimeClient, SpacetimeRejected, decodeSqlResponse, spacetimeEnvironment } from "./spacetime.js";
 import { SpacetimeConfigError } from "../lib/spacetime.js";
 
 const findingId = "11111111-1111-4111-8111-111111111111";
@@ -426,5 +426,16 @@ describe("Maincloud positional SATS decoding", () => {
       schema: { elements: [col("notes", option({ String: [] }))] },
       rows: [[[7, "x"]]],
     }])).toThrow("temporarily unavailable");
+  });
+});
+
+describe("spacetimeEnvironment", () => {
+  it("copies SpacetimeDB keys from a non-enumerable env like Convex's process.env", () => {
+    const values: Record<string, string> = { SPACETIMEDB_URI: "https://maincloud.spacetimedb.com", SPACETIMEDB_DATABASE: "forksafe", FORKSAFE_BRIDGE_SECRET: "s" };
+    const opaque = new Proxy({}, { get: (_target, key) => values[String(key)], ownKeys: () => [] }) as Record<string, string | undefined>;
+    expect({ ...opaque }).toEqual({});
+    const env = spacetimeEnvironment("bridge-token", opaque);
+    expect(env).toMatchObject({ SPACETIMEDB_URI: values.SPACETIMEDB_URI, SPACETIMEDB_DATABASE: "forksafe", SPACETIMEDB_BRIDGE_TOKEN: "bridge-token" });
+    expect(() => new SpacetimeClient(env)).not.toThrow();
   });
 });

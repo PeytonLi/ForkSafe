@@ -10,7 +10,7 @@ import { makeFunctionReference } from "convex/server";
 import { ZodError } from "zod";
 import { internal } from "../_generated/api.js";
 import { internalAction, internalMutation, internalQuery } from "../_generated/server.js";
-import { SpacetimeClient, SpacetimeRejected, SpacetimeUnavailable } from "./spacetime.js";
+import { SpacetimeClient, spacetimeEnvironment, SpacetimeRejected, SpacetimeUnavailable } from "./spacetime.js";
 
 type JiraMode = "live" | "blocked" | "not_implemented";
 type DispatchResult = { delivered: boolean; mode: JiraMode; reason?: string };
@@ -262,7 +262,7 @@ export const dispatch = internalAction({
       apiToken: env.ATLASSIAN_API_TOKEN,
     }));
     const bridgeToken = await ctx.runAction(internal.bridge.sharedBridgeToken, {});
-    const spacetime = new SpacetimeClient(bridgeToken ? { ...process.env, SPACETIMEDB_BRIDGE_TOKEN: bridgeToken } : process.env);
+    const spacetime = new SpacetimeClient(spacetimeEnvironment(bridgeToken));
     const snapshot = (query: { id?: string; jiraIssueKey?: string }) =>
       ctx.runQuery(getInvestigationRef, query);
     const key = jiraIdempotencyKey(args.payload);
