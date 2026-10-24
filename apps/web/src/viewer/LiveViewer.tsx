@@ -87,30 +87,38 @@ export function LiveViewer({ experimentId, scene, label, compact = false, onFini
 
   return (
     <div ref={wrapperRef} className={styles.liveViewer} data-testid="live-viewer" data-state={snapshot.status}>
-      {snapshot.status === "waiting" && <p className={styles.status} role="status">Waiting for the sandbox to start…</p>}
-      {snapshot.status === "streaming" && (
-        <div className={styles.statusBar}>
+      <div className={styles.statusBar}>
+        {snapshot.status === "waiting" && <p className={styles.status} role="status">Waiting for the sandbox to start…</p>}
+        {snapshot.status === "streaming" && (
           <Badge tone={snapshot.mode === "fixture" ? "amber" : "green"}>
             {snapshot.mode === "fixture" ? "Fixture stream" : "Live"}
           </Badge>
-          {playback.lagSec > 1 && <button type="button" className={styles.skip} onClick={() => {
+        )}
+        {snapshot.status === "unavailable" && (
+          <p className={styles.status} role="status">Live view isn't available for this run. The full replay will appear here when it finishes.</p>
+        )}
+        {snapshot.status === "finished" && <p className={styles.status} role="status">Full replay ready.</p>}
+        <button
+          type="button"
+          className={`${styles.skip} ${snapshot.status === "streaming" && playback.lagSec > 1 ? "" : styles.skipHidden}`}
+          disabled={snapshot.status !== "streaming" || playback.lagSec <= 1}
+          aria-hidden={snapshot.status !== "streaming" || playback.lagSec <= 1}
+          onClick={() => {
             buffer.skipToLatest();
             setPlayback({ t: buffer.t, state: "playing", lagSec: buffer.lagSec });
-          }}>Skip to latest</button>}
-        </div>
-      )}
-      {snapshot.status === "unavailable" && (
-        <p className={styles.status} role="status">Live view isn't available for this run. The full replay will appear here when it finishes.</p>
-      )}
-      {snapshot.status === "finished" && <p className={styles.status} role="status">Full replay ready.</p>}
+          }}
+        >Skip to latest</button>
+      </div>
       {visible && replay ? (
         <ReplayViewer replay={replay} t={playback.t} label={label} scene={scene} compact={compact} />
       ) : (
         <div className={styles.canvasPlaceholder} aria-hidden="true" />
       )}
-      {snapshot.status === "streaming" && playback.state === "buffering" && (
-        <span className={styles.buffering} role="status">Buffering</span>
-      )}
+      <span
+        className={`${styles.buffering} ${snapshot.status === "streaming" && playback.state === "buffering" ? "" : styles.bufferingHidden}`}
+        role="status"
+        aria-hidden={snapshot.status !== "streaming" || playback.state !== "buffering"}
+      >Buffering</span>
     </div>
   );
 }

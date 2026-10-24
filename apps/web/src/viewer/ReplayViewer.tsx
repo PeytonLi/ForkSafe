@@ -218,20 +218,24 @@ interface Props {
 
 /** Renders sampled authoritative state; it never runs physics or scores. */
 export function ReplayViewer({ replay, t, label, scene, ghost, compact = false }: Props) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const s3Ref = useRef<Scene3D | null>(null);
   const [webglError, setWebglError] = useState<string | null>(null);
   const smp = sampleAt(replay.frames, t);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
     const wrap = wrapRef.current;
-    if (!canvas || !wrap) return;
+    if (!wrap) return;
+    const canvas = document.createElement("canvas");
+    canvas.className = styles.canvas!;
+    canvas.setAttribute("aria-label", `${label} replay, 3D view`);
+    canvas.setAttribute("role", "img");
+    wrap.appendChild(canvas);
     let s3: Scene3D;
     try {
       s3 = build(canvas, scene);
     } catch (e) {
+      canvas.remove();
       setWebglError((e as Error).message || "WebGL unavailable");
       return;
     }
@@ -252,8 +256,9 @@ export function ReplayViewer({ replay, t, label, scene, ghost, compact = false }
       s3.renderer.dispose();
       s3.renderer.forceContextLoss();
       s3Ref.current = null;
+      canvas.remove();
     };
-  }, [scene]);
+  }, [label, scene]);
 
   useEffect(() => {
     const s3 = s3Ref.current;
@@ -277,9 +282,7 @@ export function ReplayViewer({ replay, t, label, scene, ghost, compact = false }
           <div className={styles.fallback} role="note">
             3D view unavailable ({webglError}). Frame data is still shown below.
           </div>
-        ) : (
-          <canvas ref={canvasRef} className={styles.canvas} aria-label={`${label} replay, 3D view`} role="img" />
-        )}
+        ) : null}
       </div>
       <figcaption className={styles.caption}>
         <strong>{label}</strong>

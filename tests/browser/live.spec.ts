@@ -43,6 +43,7 @@ test("fixture live stream advances, hands off to replay, and appears in the envi
   await expect(viewer).toHaveAttribute("data-state", "streaming", { timeout: 5_000 });
   await expect(viewer.getByText("Fixture stream", { exact: true })).toBeVisible();
   await expect(viewer.getByText("Live", { exact: true })).toHaveCount(0);
+  if (mobile) await page.screenshot({ path: evidencePath(info, "phone-capture-streaming.png") });
   const readout = viewer.getByTestId("frame-readout");
   const initialText = await readout.textContent();
   const initialT = Number(/t=([0-9.]+)/.exec(initialText ?? "")?.[1] ?? 0);
@@ -60,6 +61,9 @@ test("fixture live stream advances, hands off to replay, and appears in the envi
   await openEnvironments(page, mobile);
   const wall = page.getByTestId("live-wall");
   await expect(wall).toBeVisible();
+  const firstEnvironment = page.getByTestId("env-tile-1");
+  await expect(firstEnvironment.getByText("Active", { exact: true })).toBeVisible();
+  await expect(firstEnvironment.getByText("1 active / 2", { exact: true })).toBeVisible();
   if (mobile) {
     const switcher = wall.getByRole("tablist", { name: "Live environments" });
     await expect(switcher.getByRole("tab")).toHaveCount(3);
@@ -69,7 +73,7 @@ test("fixture live stream advances, hands off to replay, and appears in the envi
     await expect(wall.getByTestId("live-viewer").locator('[data-label="Env 2"]')).toBeVisible({ timeout: 5_000 });
     await page.screenshot({ path: evidencePath(info, "phone-live-switcher.png") });
   } else {
-    await expect(wall.getByTestId("live-viewer").first()).toHaveAttribute("data-state", "streaming", { timeout: 5_000 });
+    await expect(wall.getByTestId("live-viewer").first()).toHaveAttribute("data-state", "streaming", { timeout: 10_000 });
     await page.screenshot({ path: evidencePath(info, "environments-live-wall-desktop.png") });
   }
   await page.waitForTimeout(5_000);

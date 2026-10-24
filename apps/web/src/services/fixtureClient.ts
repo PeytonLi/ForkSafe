@@ -64,6 +64,10 @@ interface FixtureStreamSource {
   experimentId: string;
   replayArtifactId: string;
   frames: SimFrame[];
+  environmentId?: string;
+  originalEnvironmentState?: InvestigationEnvironment["state"];
+  activeSessionId?: string;
+  originalSessionState?: AgentSession["state"];
   originalStatus: ExperimentResult["status"];
   originalReplayArtifactId?: string;
   originalFinishedAtMs?: number;
@@ -73,6 +77,10 @@ interface FixtureStreamRun extends LiveStreamSnapshot {
   investigationId: string;
   experimentId: string;
   frames: SimFrame[];
+  environmentId?: string;
+  originalEnvironmentState?: InvestigationEnvironment["state"];
+  activeSessionId?: string;
+  originalSessionState?: AgentSession["state"];
   listeners: Set<(snapshot: LiveStreamSnapshot) => void>;
   cursor: number;
   timer?: ReturnType<typeof setTimeout>;
@@ -148,11 +156,19 @@ export class FixtureClient implements ForkSafeClient {
     for (const experiment of experiments.values()) {
       const replayArtifactId = experiment.replayArtifactId ?? baselineReplayId;
       const replay = this.data.replays[replayArtifactId] ?? baselineReplay;
+      const environment = experiment.environmentId
+        ? this.data.environments.find((e) => e.id === experiment.environmentId)
+        : undefined;
+      const activeSession = environment
+        ? this.data.sessions.find((s) => s.environmentId === environment.id)
+        : undefined;
       this.fixtureStreams.set(experiment.id, {
         investigationId: investigation.id,
         experimentId: experiment.id,
         replayArtifactId,
         frames: replay.frames,
+        ...(environment ? { environmentId: environment.id, originalEnvironmentState: environment.state } : {}),
+        ...(activeSession ? { activeSessionId: activeSession.id, originalSessionState: activeSession.state } : {}),
         originalStatus: experiment.status,
         originalReplayArtifactId: experiment.replayArtifactId,
         originalFinishedAtMs: experiment.finishedAtMs,
@@ -160,6 +176,8 @@ export class FixtureClient implements ForkSafeClient {
       experiment.status = "running";
       experiment.replayArtifactId = undefined;
       experiment.finishedAtMs = undefined;
+      if (environment) environment.state = "active";
+      if (activeSession) activeSession.state = "streaming";
     }
   }
 
@@ -184,6 +202,10 @@ export class FixtureClient implements ForkSafeClient {
         investigationId: source.investigationId,
         experimentId: source.experimentId,
         frames: source.frames,
+        ...(source.environmentId ? { environmentId: source.environmentId } : {}),
+        ...(source.originalEnvironmentState ? { originalEnvironmentState: source.originalEnvironmentState } : {}),
+        ...(source.activeSessionId ? { activeSessionId: source.activeSessionId } : {}),
+        ...(source.originalSessionState ? { originalSessionState: source.originalSessionState } : {}),
         listeners: new Set(),
         cursor: 0,
         started: false,
@@ -225,6 +247,10 @@ export class FixtureClient implements ForkSafeClient {
               experiment.replayArtifactId = run!.originalReplayArtifactId;
               experiment.finishedAtMs = run!.originalFinishedAtMs;
             }
+            const environment = this.data.environments.find((e) => e.id === run!.environmentId);
+            if (environment && run!.originalEnvironmentState) environment.state = run!.originalEnvironmentState;
+            const activeSession = this.data.sessions.find((s) => s.id === run!.activeSessionId);
+            if (activeSession && run!.originalSessionState) activeSession.state = run!.originalSessionState;
             this.emit(run!.investigationId);
           }, 100);
           return;

@@ -35,6 +35,16 @@ describe("fixture live stream", () => {
     const initialWorkspace = await initialWorkspacePromise;
     expect(initialWorkspace.experiments.find((e) => e.id === BASELINE_EXPERIMENT_ID)).toMatchObject({ status: "running" });
     expect(initialWorkspace.experiments.find((e) => e.id === BASELINE_EXPERIMENT_ID)?.replayArtifactId).toBeUndefined();
+    const environment = initialWorkspace.environments[0]!;
+    expect(environment.state).toBe("active");
+    expect(initialWorkspace.sessions.filter((session) =>
+      session.environmentId === environment.id && (session.state === "streaming" || session.state === "idle"),
+    )).toHaveLength(1);
+    const environmentExperiment = initialWorkspace.experiments
+      .filter((e) => e.environmentId === environment.id)
+      .sort((a, b) => b.startedAtMs - a.startedAtMs)[0]!;
+    const environmentUpdates: { status: string }[] = [];
+    client.watchLive(environmentExperiment.id, (next) => environmentUpdates.push(next));
 
     await vi.advanceTimersByTimeAsync(1_500);
     expect(updates.at(-1)?.status).toBe("streaming");
@@ -52,5 +62,14 @@ describe("fixture live stream", () => {
       status: "physics_failure",
       replayArtifactId: BASELINE_REPLAY_ID,
     });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(environmentUpdates.at(-1)?.status).toBe("finished");
+    const environmentRestoredPromise = client.getWorkspace(INVESTIGATION_ID);
+    await vi.advanceTimersByTimeAsync(0);
+    const environmentRestored = await environmentRestoredPromise;
+    expect(environmentRestored.environments.find((e) => e.id === environment.id)?.state).toBe("closed");
+    expect(environmentRestored.sessions.filter((session) =>
+      session.environmentId === environment.id && (session.state === "streaming" || session.state === "idle"),
+    )).toHaveLength(0);
   });
 });
