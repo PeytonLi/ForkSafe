@@ -45,5 +45,6 @@
     "status": "passed",
     "reportArtifactId": "00000000-0000-4000-8000-000000000181",
     "createdAtMs": 1761199500000
-  }
+  },
+  "evidencePackUrl": "https://forksafe.example.invalid/evidence/fixture-pack"
 }

@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { SIM } from "@forksafe/contracts";
 import { shortSha, useClient, useLoad } from "../hooks";
 import type { CaptureOutcome, InvestigationWorkspace } from "../services";
@@ -7,7 +7,7 @@ import { ReplayViewer } from "../viewer/ReplayViewer";
 import { replayDuration } from "../viewer/transform";
 import { useReplayClock } from "../viewer/useReplayClock";
 import { Badge, Panel } from "./Panel";
-import { human, stateTone } from "./tone";
+import { human, stateTone, words } from "./tone";
 import styles from "./CapturePanel.module.css";
 import { useBrowserAccess } from "../services/browserAccess";
 
@@ -16,6 +16,7 @@ export function CapturePanel({ workspace }: { workspace: InvestigationWorkspace 
   const baseline = workspace.experiments.find((e) => e.id === inv.baselineExperimentId);
   const replayId = baseline?.replayArtifactId;
   const replay = useLoad((c) => (replayId ? c.getReplay(replayId) : Promise.resolve(null)), [replayId]);
+  const [editorOpen, setEditorOpen] = useState(false);
 
   return (
     <div className={styles.grid}>
@@ -42,7 +43,7 @@ export function CapturePanel({ workspace }: { workspace: InvestigationWorkspace 
             {baseline?.failureKinds.length ? (
               <>
                 <dt>Failure</dt>
-                <dd>{baseline.failureKinds.map(human).join(", ")}</dd>
+                <dd>{baseline.failureKinds.map(words).join(", ")}</dd>
               </>
             ) : null}
             <dt>Controller</dt>
@@ -53,8 +54,17 @@ export function CapturePanel({ workspace }: { workspace: InvestigationWorkspace 
             <dd>{baseline?.engineVersion ?? "—"}</dd>
           </dl>
           {inv.baselineCase.description && <p className={styles.note}>{inv.baselineCase.description}</p>}
+          <footer className={styles.cardFooter}>
+            <SceneEditor
+              scene={inv.baselineCase.sceneOverrides}
+              seed={inv.baselineCase.seed}
+              envs={inv.requestedEnvironments}
+              open={editorOpen}
+              onOpen={() => setEditorOpen(true)}
+              onClose={() => setEditorOpen(false)}
+            />
+          </footer>
         </section>
-        <SceneEditor scene={inv.baselineCase.sceneOverrides} seed={inv.baselineCase.seed} envs={inv.requestedEnvironments} />
       </div>
     </div>
   );
@@ -78,17 +88,17 @@ function BaselineReplay({ replay, scene }: { replay: NonNullable<Awaited<ReturnT
 }
 
 const FIELDS: [string, string, number][] = [
-  ["divider_x", "Divider x (m)", 0.005],
-  ["divider_y", "Divider y (m)", 0.005],
-  ["divider_height", "Divider height (m)", 0.005],
-  ["cube_start_x", "Cube start x (m)", 0.005],
-  ["cube_start_y", "Cube start y (m)", 0.005],
-  ["target_x", "Target x (m)", 0.005],
-  ["target_y", "Target y (m)", 0.005],
+  ["divider_x", "Position x (m)", 0.005],
+  ["divider_y", "Position y (m)", 0.005],
+  ["divider_height", "Height (m)", 0.005],
+  ["cube_start_x", "Start x (m)", 0.005],
+  ["cube_start_y", "Start y (m)", 0.005],
+  ["target_x", "Position x (m)", 0.005],
+  ["target_y", "Position y (m)", 0.005],
 ];
 
 /** Named parameters change between runs only; recording goes through the client. */
-function SceneEditor({ scene, seed, envs }: { scene: Record<string, number>; seed: number; envs: number }) {
+function SceneEditor({ scene, seed, envs, open, onOpen, onClose }: { scene: Record<string, number>; seed: number; envs: number; open: boolean; onOpen: () => void; onClose: () => void }) {
   const client = useClient();
   const access = useBrowserAccess();
   const [draft, setDraft] = useState<Record<string, number>>(() => ({ ...scene }));
@@ -96,7 +106,21 @@ function SceneEditor({ scene, seed, envs }: { scene: Record<string, number>; see
   const [envCount, setEnvCount] = useState(envs);
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<CaptureOutcome | { error: string } | null>(null);
+  const sheetRef = useRef<HTMLElement>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
   const changed = useMemo(() => FIELDS.filter(([k]) => draft[k] !== scene[k]).map(([k]) => k), [draft, scene]);
+
+  useEffect(() => {
+    if (!open) return;
+    openerRef.current = document.activeElement as HTMLElement | null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    sheetRef.current?.querySelector<HTMLInputElement>("input")?.focus();
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      openerRef.current?.focus();
+    };
+  }, [open]);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -114,48 +138,102 @@ function SceneEditor({ scene, seed, envs }: { scene: Record<string, number>; see
     }
   };
 
+  const onSheetKeyDown = (e: KeyboardEvent<HTMLElement>) => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      onClose();
+      return;
+    }
+    if (e.key !== "Tab" || !sheetRef.current) return;
+    const focusable = Array.from(sheetRef.current.querySelectorAll<HTMLElement>("button, input, textarea, select, [tabindex]:not([tabindex='-1'])"));
+    if (!focusable.length) return;
+    const first = focusable[0]!;
+    const last = focusable[focusable.length - 1]!;
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
+
+  if (!open) {
+    return <button type="button" className={styles.editScenario} onClick={onOpen} data-testid="open-scenario">Edit scenario</button>;
+  }
+
   return (
-    <form className={styles.card} onSubmit={submit} aria-labelledby="editor-h" data-testid="scene-editor">
-      <h3 id="editor-h">Scenario editor</h3>
-      <p className={styles.note}>
-        Edit named parameters, then record a new baseline run. Timeout {SIM.timeoutSec} s, completion radius {SIM.completionRadiusM * 1000} mm.
-      </p>
-      <div className={styles.fields}>
-        {FIELDS.map(([k, label, step]) => (
-          <label key={k} className={styles.field}>
-            <span>{label}</span>
-            <input
-              type="number"
-              step={step}
-              value={draft[k] ?? ""}
-              onChange={(e) => setDraft((d) => ({ ...d, [k]: Number(e.target.value) }))}
-            />
-          </label>
-        ))}
-        <label className={styles.field}>
-          <span>Seed</span>
-          <input type="number" min={0} step={1} value={draftSeed} onChange={(e) => setDraftSeed(Math.max(0, Math.round(Number(e.target.value))))} />
-        </label>
-        <label className={styles.field}>
-          <span>Environments (1–10)</span>
-          <input type="number" min={1} max={10} value={envCount} onChange={(e) => setEnvCount(Math.min(10, Math.max(1, Math.round(Number(e.target.value)))))} />
-        </label>
-      </div>
-      <div className={styles.actions}>
-        <button type={access.canWrite ? "submit" : "button"} onClick={access.canWrite ? undefined : access.showSignIn} className="primary" disabled={busy}>
-          {!access.canWrite ? "Sign in to capture" : busy ? "Requesting…" : "Record baseline run"}
-        </button>
-        {changed.length > 0 && <span className={styles.note}>{changed.length} parameter(s) changed</span>}
-      </div>
-      {outcome && (
-        <p role="status" className={"error" in outcome || !outcome.accepted ? styles.warn : styles.ok} data-testid="capture-outcome">
-          {"error" in outcome
-            ? `Request failed: ${outcome.error}`
-            : outcome.accepted
-              ? `Capture accepted as investigation ${outcome.investigationId.slice(0, 8)}.`
-              : `Not recorded (${human(outcome.mode)}): ${outcome.reason}`}
+    <div className={styles.sheetBackdrop} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <section className={styles.sheet} role="dialog" aria-modal="true" aria-labelledby="editor-h" ref={sheetRef} onKeyDown={onSheetKeyDown} data-testid="scenario-sheet">
+        <header className={styles.sheetHead}>
+          <div>
+            <span className={styles.sheetEyebrow}>Baseline settings</span>
+            <h2 id="editor-h">Edit scenario</h2>
+          </div>
+          <button type="button" className={styles.closeSheet} onClick={onClose} aria-label="Close scenario editor">×</button>
+        </header>
+        <p className={styles.note}>
+          Adjust the setup and run settings. Timeout {SIM.timeoutSec} s; completion radius {SIM.completionRadiusM * 1000} mm.
         </p>
-      )}
-    </form>
+        <form onSubmit={submit} data-testid="scene-editor">
+          <div className={styles.fields}>
+            <fieldset className={styles.fieldGroup}>
+              <legend>Divider</legend>
+              {FIELDS.slice(0, 3).map(([k, label, step]) => (
+                <label key={k} className={styles.field}>
+                  <span>{label}</span>
+                  <input type="number" step={step} value={draft[k] ?? ""} onChange={(e) => setDraft((d) => ({ ...d, [k]: Number(e.target.value) }))} />
+                </label>
+              ))}
+            </fieldset>
+            <fieldset className={styles.fieldGroup}>
+              <legend>Cube</legend>
+              {FIELDS.slice(3, 5).map(([k, label, step]) => (
+                <label key={k} className={styles.field}>
+                  <span>{label}</span>
+                  <input type="number" step={step} value={draft[k] ?? ""} onChange={(e) => setDraft((d) => ({ ...d, [k]: Number(e.target.value) }))} />
+                </label>
+              ))}
+            </fieldset>
+            <fieldset className={styles.fieldGroup}>
+              <legend>Target</legend>
+              {FIELDS.slice(5).map(([k, label, step]) => (
+                <label key={k} className={styles.field}>
+                  <span>{label}</span>
+                  <input type="number" step={step} value={draft[k] ?? ""} onChange={(e) => setDraft((d) => ({ ...d, [k]: Number(e.target.value) }))} />
+                </label>
+              ))}
+            </fieldset>
+            <fieldset className={styles.fieldGroup}>
+              <legend>Run</legend>
+              <label className={styles.field}>
+                <span>Seed</span>
+                <input type="number" min={0} step={1} value={draftSeed} onChange={(e) => setDraftSeed(Math.max(0, Math.round(Number(e.target.value))))} />
+              </label>
+              <label className={styles.field}>
+                <span>Environments (1–10)</span>
+                <input type="number" min={1} max={10} value={envCount} onChange={(e) => setEnvCount(Math.min(10, Math.max(1, Math.round(Number(e.target.value)))))} />
+              </label>
+            </fieldset>
+          </div>
+          <div className={styles.actions}>
+            <button type={access.canWrite ? "submit" : "button"} onClick={access.canWrite ? undefined : access.showSignIn} className="primary" disabled={busy}>
+              {!access.canWrite ? "Sign in to capture" : busy ? "Requesting…" : "Record baseline run"}
+            </button>
+            <button type="button" onClick={onClose}>Cancel</button>
+            {changed.length > 0 && <span className={styles.note}>{changed.length} parameter(s) changed</span>}
+          </div>
+        </form>
+        {outcome && (
+          <p role="status" className={"error" in outcome || !outcome.accepted ? styles.warn : styles.ok} data-testid="capture-outcome">
+            {"error" in outcome
+              ? `Request failed: ${outcome.error}`
+              : outcome.accepted
+                ? `Capture accepted as investigation ${outcome.investigationId.slice(0, 8)}.`
+                : `Not recorded (${human(outcome.mode)}): ${outcome.reason}`}
+          </p>
+        )}
+      </section>
+    </div>
   );
 }

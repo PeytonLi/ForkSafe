@@ -53,9 +53,26 @@ describe("Forge manifest", () => {
     );
     for (const item of functionModules) {
       expect(item.key).toMatch(/^[a-zA-Z0-9_-]+$/);
-      expect(item.handler).toBe("generated/resolver.handler");
+      expect(item.handler).toBe(
+        item.key === "selfcheck"
+          ? "generated/resolver.selfcheck"
+          : "generated/resolver.handler",
+      );
       expect(functions.has(item.key)).toBe(true);
     }
+    expect(manifest.modules.webtrigger).toContainEqual({
+      key: "forksafe-selfcheck",
+      function: "selfcheck",
+    });
+    expect(await readFile(indexPath, "utf8")).toMatch(
+      /handlers\.getPanel\(\{\s*payload:\s*\{\},\s*context:\s*\{\}/,
+    );
+    expect(await readFile(indexPath, "utf8")).toContain(
+      '"getReviewDetails"',
+    );
+    expect(await readFile(indexPath, "utf8")).toContain(
+      '"requestMoreInvestigation"',
+    );
 
     const resources = new Map(manifest.resources.map((item) => [item.key, item.path]));
     for (const item of modules) {

@@ -10,7 +10,7 @@ Parse `EnvConfig` from `@forksafe/contracts` (or use `resolveConfig()`). `elasti
 * `ELASTIC_MODE=local`: optional `ELASTICSEARCH_URL`, default `http://127.0.0.1:9200`; no authentication.
 * `ELASTIC_MODE=fixture`: no client; `ElasticIndexer` stores deterministic projections in `store`. Pass `indexer.store.values()` to `ElasticSearch` after indexing for a deterministic fixture snapshot; construct a new search instance to reflect subsequent writes.
 * `ELASTIC_MODE=disabled`: readiness `not_implemented`, indexing throws `BlockedError`, search returns `blocked` rather than pretending a successful call.
-* `ELASTIC_AGENT_BUILDER_MODE=cloud`: `KIBANA_URL` and `KIBANA_API_KEY` required. Use a dedicated read-only Agent Builder agent/tool configuration and least-privilege API key. The prompt is not an authorization boundary; this package only invokes converse, never tool/agent mutation endpoints. Canonical checks protect returned citations. Agent Builder's UI `read_only` option is not an authorization control.
+* `ELASTIC_AGENT_BUILDER_MODE=cloud`: `KIBANA_URL` and `KIBANA_API_KEY` required. Use a dedicated read-only Agent Builder agent/tool configuration and least-privilege API key. The prompt is not an authorization boundary; the legacy `AgentBuilder` client only invokes converse; `ForkSafeEvidenceAgent.ensureAgent()` (and `pnpm agent:ensure` / `smoke:agent`) creates or updates only the stable `forksafe.*` tools and `forksafe-evidence-agent`, and never deletes. Canonical checks protect returned citations. Agent Builder's UI `read_only` option is not an authorization control.
 * Agent Builder `fixture` / `disabled` (`local` also uses fallback): deterministic search-based answer labeled **Deterministic fallback — Agent Builder not used**. Missing cloud credentials never trigger fallback or network requests.
 
 ## Bootstrap (local or Serverless)
@@ -63,7 +63,7 @@ The caller implements authorization for its authenticated principal. `record` mu
 
 ## Live verification
 
-Provide `ELASTICSEARCH_URL`, `ELASTICSEARCH_API_KEY`, `KIBANA_URL`, and `KIBANA_API_KEY` through a secret manager or injected environment, never checked-in files. A Serverless key authorized for both services can be bound separately to both key names. The smoke requires index/write/search/refresh/delete-by-query privileges on the three ForkSafe indices and access to Agent Builder converse. It does not create or modify Kibana agents or tools.
+Provide `ELASTICSEARCH_URL`, `ELASTICSEARCH_API_KEY`, `KIBANA_URL`, and `KIBANA_API_KEY` through a secret manager or injected environment, never checked-in files. A Serverless key authorized for both services can be bound separately to both key names. The smoke requires index/write/search/refresh/delete-by-query privileges on the three ForkSafe indices and access to Agent Builder converse. `smoke` does not create or modify Kibana agents or tools; `smoke:agent` and `agent:ensure` additionally need Agent Builder tool/agent write access.
 
 ```sh
 pnpm install
@@ -82,3 +82,7 @@ pnpm --filter @forksafe/elastic test
 Cleanup runs in `finally`: delete-by-query is restricted to the fresh investigation ID across the three ForkSafe indices, with refresh enabled. `--keep` explicitly skips cleanup; use the printed investigation ID to remove retained smoke documents later. Do not run a broad delete against shared indices. The Agent Builder conversation is retained in Kibana; cleanup deletes indexed smoke documents only.
 
 Live Serverless verification succeeded with all four documents created then updated with identical bodies, three authorized hits, and one revoked hit dropped. Both bootstrap calls succeeded without Serverless mapping/settings changes. The real converse response was HTTP 200 with `conversation_id`, `steps` and `response.message` (a string), matching the existing parser. The default agent did not supply resolvable structured citations: the integration honestly returned **No fully validated answer available. Inspect authorized citations directly.**, with zero authorized citations. A successful converse is not proof of a grounded or canonically authorized answer.
+
+## Evidence agent, status and reconcile
+
+`ForkSafeEvidenceAgent` (`ensureAgent`, `ask`), `status`, `recordIndexErrors`, `reconcile` and the `smoke:agent` live smoke are documented in [docs/integrations/elastic.md](../../../docs/integrations/elastic.md).

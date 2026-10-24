@@ -6,7 +6,6 @@ import json
 import os
 import statistics
 import subprocess
-import sys
 import tempfile
 import time
 from contextlib import asynccontextmanager
@@ -22,6 +21,12 @@ from simulator.models import SimCase
 
 from evaluator.grader import rank
 from evaluator.models import CandidateEvaluation
+from evaluator.run_candidate import (
+    CandidateIntegrityError,
+    CaseInfrastructureError,
+    execute_case,
+)
+from evaluator.sandbox import probe_isolation
 from evaluator.telemetry import EvaluatorTelemetry, init_telemetry
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -229,101 +234,55 @@ def _run_case(
     state: EvaluatorState,
     candidate: CandidateRecord,
     case_payload: dict[str, Any],
+    suite: Literal["public", "withheld"] | None = None,
 ) -> dict[str, Any]:
     case_id = str(case_payload["caseId"])
-    experiment_id = uuid4()
     try:
         source_bytes = candidate.source_path.read_bytes()
     except OSError:
         return {
             "caseId": case_id,
             "status": "invalid",
-            "experimentId": str(experiment_id),
+            "experimentId": str(uuid4()),
             "failureKinds": ["missing_artifact"],
         }
     if hashlib.sha256(source_bytes).hexdigest() != candidate.controller_sha256:
         raise HTTPException(status_code=409, detail="stored controller bytes do not match registered SHA")
-    with tempfile.TemporaryDirectory(dir=state.work_root) as temporary:
-        workspace = Path(temporary)
-        controller_dir = workspace / "controller"
-        controller_dir.mkdir()
-        (controller_dir / "task_controller.py").write_bytes(source_bytes)
-        case_path = workspace / "case.json"
-        case_path.write_text(json.dumps(case_payload))
-        output_dir = workspace / "artifacts"
-        command = [
-            sys.executable,
-            "-m",
-            "simulator.cli",
-            "--controller-dir",
-            str(controller_dir),
-            "--case-json",
-            str(case_path),
-            "--seed",
-            str(case_payload["seed"]),
-            "--out-dir",
-            str(output_dir),
-            "--experiment-id",
-            str(experiment_id),
-            "--timeout-sec",
-            "30",
-        ]
-        environment = {
-            "HOME": str(workspace),
-            "PATH": os.defpath,
-            "PYTHONDONTWRITEBYTECODE": "1",
-            "PYTHONPATH": str(ROOT / "services"),
-            "TMPDIR": str(workspace),
-        }
-        try:
-            subprocess.run(
-                command,
-                cwd=workspace,
-                env=environment,
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=40,
+    selected_suite = suite or (
+        case_payload["suite"] if case_payload["suite"] in {"public", "withheld"} else "public"
+    )
+    attempt_id = uuid4()
+    try:
+        with tempfile.TemporaryDirectory(dir=state.work_root) as temporary:
+            report = execute_case(
+                candidate.source_path,
+                candidate.controller_sha256,
+                case_payload,
+                selected_suite,
+                attempt_id,
+                candidate.candidate_id,
+                candidate.investigation_id,
+                Path(temporary) / "artifacts",
+                work_dir=state.work_root,
+                require_netns=probe_isolation()["netns"],
             )
-        except subprocess.TimeoutExpired:
-            return {
-                "caseId": case_id,
-                "status": "invalid",
-                "experimentId": str(experiment_id),
-                "failureKinds": ["missing_artifact"],
-            }
-        result_path = output_dir / "result.json"
-        trace_path = output_dir / "trace.json"
-        if not result_path.is_file() or not trace_path.is_file():
-            return {
-                "caseId": case_id,
-                "status": "invalid",
-                "experimentId": str(experiment_id),
-                "failureKinds": ["missing_artifact"],
-            }
-        result = json.loads(result_path.read_text())
-    failure_kinds = list(result.get("failureKinds", []))
-    if result.get("controllerSha256") != candidate.controller_sha256:
+    except CandidateIntegrityError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (CaseInfrastructureError, subprocess.TimeoutExpired):
         return {
             "caseId": case_id,
             "status": "invalid",
-            "experimentId": str(experiment_id),
-            "failureKinds": ["invalid_run"],
+            "experimentId": str(uuid4()),
+            "failureKinds": ["missing_artifact"],
         }
-    if result.get("completed") and not failure_kinds:
-        status = "passed"
-    elif INVALID_FAILURES.intersection(failure_kinds):
-        status = "invalid"
-    else:
-        status = "failed"
     item = {
         "caseId": case_id,
-        "status": status,
-        "experimentId": str(experiment_id),
-        "failureKinds": failure_kinds,
+        "status": report["status"],
+        "experimentId": report["experimentId"],
+        "failureKinds": report["failureKinds"],
     }
-    if result.get("completionTimeSec") is not None:
-        item["completionTimeSec"] = result["completionTimeSec"]
+    if report.get("completionTimeSec") is not None:
+        item["completionTimeSec"] = report["completionTimeSec"]
     return item
 
 
@@ -343,7 +302,7 @@ def _evaluate(
             "forksafe.eval.case_id": payload["caseId"] if suite == "public" else None,
         }
         with state.telemetry.span("evaluator.case", attributes) as span:
-            result = _run_case(state, candidate, payload)
+            result = _run_case(state, candidate, payload, suite)
             span.set_attribute("forksafe.eval.case_status", result["status"])
         cases.append(result)
     all_passed = bool(cases) and all(case["status"] == "passed" for case in cases)

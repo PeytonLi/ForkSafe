@@ -18,11 +18,19 @@ export type DaytonaResources = {
   diskGiB: number;
 };
 
+export type DaytonaNetworkPolicy = {
+  purpose: "runner" | "execution" | "evaluator";
+  domainAllowList?: string[];
+  networkBlockAll?: boolean;
+  outboundProxyUrl?: string;
+};
+
 export type SandboxSpec = {
   operationId: string;
   reservedSandboxCount?: number;
   purpose: SandboxPurpose;
   labels: SandboxLabels;
+  networkPolicy?: DaytonaNetworkPolicy;
   snapshot?: string;
   image?: string;
   resources: DaytonaResources;

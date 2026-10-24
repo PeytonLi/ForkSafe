@@ -13,9 +13,11 @@
   "scripts": {
     "build": "spacetime build --module-path .",
     "generate": "spacetime generate --lang typescript --out-dir client/module_bindings --module-path . -y",
+    "check:bindings": "node scripts/check-bindings.mjs",
     "typecheck": "node scripts/ensure-bindings.mjs && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.client.json",
     "test": "vitest run test/unit",
-    "test:local": "node scripts/smoke-local.mjs"
+    "test:local": "node scripts/smoke-local.mjs",
+    "test:migration": "node scripts/migration-check.mjs"
   },
   "dependencies": {
     "@forksafe/contracts": "workspace:*",
