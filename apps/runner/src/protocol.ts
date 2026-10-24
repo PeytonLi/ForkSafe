@@ -6,7 +6,6 @@ import {
   Heartbeat,
   Job,
   JobKind,
-  VendorRef,
   uuid,
 } from "@forksafe/contracts";
 
@@ -40,10 +39,10 @@ export const CompletionRequest = z.object({
   attemptId: Attempt.shape.id,
   grantId: ExecutionGrant.shape.id,
   epoch: z.number().int().nonnegative(),
-  outcome: z.enum(["succeeded", "failed"]),
+  outcome: z.enum(["succeeded", "failed", "infra_failed"]),
   result: z.record(z.unknown()),
   usage: AgentSession.shape.tokenUsage.optional(),
-  sessions: z.array(VendorRef),
+  sessions: z.array(AgentSession.partial({ investigationId: true, environmentId: true })),
   finishedAtMs: z.number().int(),
 });
 export type CompletionRequest = z.infer<typeof CompletionRequest>;

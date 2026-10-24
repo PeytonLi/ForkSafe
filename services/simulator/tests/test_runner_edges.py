@@ -5,12 +5,12 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from simulator import assets
 from simulator.models import SimCase
-from simulator.runner import run_case
+from simulator.runner import run_case, run_plan
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -102,6 +102,24 @@ def test_noop_and_raising_controllers_fail_closed(tmp_path):
     )
     cli_result = _run_cli(tmp_path, raising, case, 0)
     assert cli_result["failureKinds"] == ["invalid_run"]
+
+
+def test_run_plan_returns_evaluator_metrics_without_trace_wall_time():
+    case = SimCase(caseId="metrics-check", suite="public", seed=0, sceneOverrides={})
+    _, trace, metrics = run_plan(
+        case, 0, UUID(int=1), [], "0" * 64, timeout_sec=0
+    )
+
+    assert set(metrics) == {
+        "simSteps",
+        "simTimeSec",
+        "physicsWallSec",
+        "stepsPerSec",
+    }
+    assert metrics["simSteps"] == 0
+    assert metrics["simTimeSec"] == 0
+    assert metrics["stepsPerSec"] == 0
+    assert "wallTimeSec" not in trace
 
 
 def test_cli_arguments_are_not_visible_to_controller(tmp_path):

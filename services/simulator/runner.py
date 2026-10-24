@@ -35,6 +35,54 @@ FAILURE_KINDS = {
 }
 
 
+class PlanValidationError(ValueError):
+    pass
+
+
+def finite_json(value: Any) -> Any:
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {key: finite_json(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [finite_json(item) for item in value]
+    return value
+
+
+def validate_plan(plan: Any) -> list[dict[str, Any]]:
+    if not isinstance(plan, list) or len(plan) > 256:
+        raise PlanValidationError("plan must be a list of at most 256 skills")
+
+    def validate_value(value: Any, depth: int) -> None:
+        if depth > 6:
+            raise PlanValidationError("plan nesting depth exceeds 6")
+        if value is None or isinstance(value, (bool, int, float, str)):
+            return
+        if isinstance(value, list):
+            for item in value:
+                validate_value(item, depth + 1)
+            return
+        if isinstance(value, dict):
+            if any(not isinstance(key, str) for key in value):
+                raise PlanValidationError("plan object keys must be strings")
+            for item in value.values():
+                validate_value(item, depth + 1)
+            return
+        raise PlanValidationError(f"plan contains unsupported value {type(value).__name__}")
+
+    for skill in plan:
+        if not isinstance(skill, dict):
+            raise PlanValidationError("each plan skill must be an object")
+        validate_value(skill, 1)
+    try:
+        encoded = json.dumps(plan, allow_nan=True, sort_keys=True, separators=(",", ":")).encode()
+    except (TypeError, ValueError, RecursionError) as exc:
+        raise PlanValidationError(f"plan is not JSON serializable: {type(exc).__name__}") from exc
+    if len(encoded) > 64 * 1024:
+        raise PlanValidationError("plan exceeds 64 KiB")
+    return plan
+
+
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -187,6 +235,18 @@ def _controller_scene(scene: BuiltScene, data: mujoco.MjData) -> dict[str, Any]:
     }
 
 
+def controller_input(
+    case: SimCase,
+    seed: int,
+    *,
+    base_config: dict[str, object] | None = None,
+) -> dict[str, Any]:
+    scene = build_scene(case, base_config=base_config)
+    data = mujoco.MjData(scene.model)
+    _set_initial_state(scene, data, seed)
+    return _controller_scene(scene, data)
+
+
 def _frame(scene: BuiltScene, data: mujoco.MjData, executor: SkillExecutor) -> dict[str, Any]:
     bodies = []
     for body_id in range(1, scene.model.nbody):
@@ -262,27 +322,28 @@ def _result(
 
 class RunSession:
     def __init__(self) -> None:
-        raise TypeError("use RunSession.start()")
+        raise TypeError("use RunSession.start() or RunSession.from_plan()")
 
     @classmethod
-    def start(
+    def from_plan(
         cls,
-        controller_dir: Path,
         case: SimCase,
         seed: int,
         experiment_id: UUID,
+        plan: list[dict[str, Any]],
+        controller_hash: str,
         timeout_sec: float = 30,
         *,
         base_config: dict[str, object] | None = None,
     ) -> RunSession:
         session = cls.__new__(cls)
-        session.start_wall = time.perf_counter()
-        session.controller_dir = Path(controller_dir)
+        session.physics_start_wall = time.perf_counter()
+        session.controller_dir: Path | None = None
         session.case = case
         session.seed = int(seed)
         session.experiment_id = experiment_id
         session.asset_hash = verify_assets()
-        controller, session.controller_hash = _load_controller(session.controller_dir)
+        session.controller_hash = controller_hash
         session.scene = build_scene(case, base_config=base_config)
         with tempfile.TemporaryDirectory() as directory:
             model_path = Path(directory) / "compiled.mjb"
@@ -291,12 +352,7 @@ class RunSession:
         session.data = mujoco.MjData(session.scene.model)
         session.rng = np.random.default_rng(seed)
         _set_initial_state(session.scene, session.data, seed, session.rng)
-        controller_input = _controller_scene(session.scene, session.data)
-        session.plan = controller.plan(controller_input)
-        if not isinstance(session.plan, list) or any(
-            not isinstance(skill, dict) for skill in session.plan
-        ):
-            raise ValueError("controller plan must return a list of skill objects")
+        session.plan = plan
         session.executor = SkillExecutor(
             session.scene, session.data, session.plan, session.scene.speed_scale
         )
@@ -321,6 +377,34 @@ class RunSession:
         )
         session.finished = False
         session.restored_from: dict[str, Any] | None = None
+        return session
+
+    @classmethod
+    def start(
+        cls,
+        controller_dir: Path,
+        case: SimCase,
+        seed: int,
+        experiment_id: UUID,
+        timeout_sec: float = 30,
+        *,
+        base_config: dict[str, object] | None = None,
+    ) -> RunSession:
+        controller_dir = Path(controller_dir)
+        controller, controller_hash = _load_controller(controller_dir)
+        plan = validate_plan(
+            controller.plan(controller_input(case, seed, base_config=base_config))
+        )
+        session = cls.from_plan(
+            case,
+            seed,
+            experiment_id,
+            plan,
+            controller_hash,
+            timeout_sec,
+            base_config=base_config,
+        )
+        session.controller_dir = controller_dir
         return session
 
     def step(self) -> bool:
@@ -511,11 +595,21 @@ class RunSession:
                 "completed": self.completed,
                 "failure": result.get("firstFailure"),
             },
-            "wallTimeSec": time.perf_counter() - self.start_wall,
         }
         if self.restored_from is not None:
             trace["restoredFrom"] = self.restored_from
-        return result, trace
+        return finite_json(result), finite_json(trace)
+
+    def metrics(self) -> dict[str, Any]:
+        physics_wall_sec = time.perf_counter() - self.physics_start_wall
+        return {
+            "simSteps": self.step_count,
+            "simTimeSec": float(self.data.time),
+            "physicsWallSec": physics_wall_sec,
+            "stepsPerSec": (
+                self.step_count / physics_wall_sec if physics_wall_sec else 0.0
+            ),
+        }
 
 
 def run_case(
@@ -525,9 +619,28 @@ def run_case(
     experiment_id: UUID,
     timeout_sec: float = 30,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    return _run_case_with_config(
-        controller_dir, case, seed, experiment_id, timeout_sec
+    controller, controller_hash = _load_controller(controller_dir)
+    plan = validate_plan(controller.plan(controller_input(case, seed)))
+    result, trace, _ = run_plan(
+        case, seed, experiment_id, plan, controller_hash, timeout_sec
     )
+    return result, trace
+
+
+def run_plan(
+    case: SimCase,
+    seed: int,
+    experiment_id: UUID,
+    plan: list[dict[str, Any]],
+    controller_hash: str,
+    timeout_sec: float = 30,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    session = RunSession.from_plan(
+        case, seed, experiment_id, plan, controller_hash, timeout_sec
+    )
+    session.run_to_end()
+    result, trace = session.finish()
+    return result, trace, session.metrics()
 
 
 def _run_case_with_config(

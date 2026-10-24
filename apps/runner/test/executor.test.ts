@@ -177,4 +177,25 @@ describe("RunnerExecutor", () => {
     expect(operationIds[1]).toBe(operationIds[0]);
     expect(delays).toEqual([250]);
   });
+  it("reports a non-cap session-open failure as infra_failed instead of letting the lease expire", async () => {
+    const lease = sampleLease();
+    const completions: { outcome: string; result: Record<string, unknown> }[] = [];
+    const source = {
+      heartbeat: vi.fn(async () => ({ ok: true as const, leasedUntilMs: Date.now() + 30_000, epoch: 0 })),
+      complete: vi.fn(async (completion: { outcome: string; result: Record<string, unknown> }) => {
+        completions.push(completion);
+        return { accepted: true };
+      }),
+    };
+    const sessions = {
+      idleSessionFor: () => undefined,
+      createSession: async () => { throw new Error("Failed to start Droid: executable not found (droid)"); },
+    };
+    const executor = new RunnerExecutor({ sessions: sessions as never, source: source as never, log: new ActivityLog() });
+    await expect(executor.execute(lease)).resolves.toMatchObject({ accepted: true });
+    expect(completions).toHaveLength(1);
+    expect(completions[0]).toMatchObject({ outcome: "infra_failed" });
+    expect(String(completions[0]!.result.error)).toMatch(/^session_open_failed:Failed to start Droid/);
+    expect(source.heartbeat).not.toHaveBeenCalled();
+  });
 });

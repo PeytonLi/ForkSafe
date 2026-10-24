@@ -439,7 +439,7 @@ def restore_session(
         raise SnapshotIntegrityError("snapshot integration state size does not match")
 
     session = RunSession.__new__(RunSession)
-    session.start_wall = time.perf_counter()
+    session.physics_start_wall = time.perf_counter()
     session.controller_dir = Path(controller_dir)
     session.case = case
     session.seed = int(manifest["seed"])

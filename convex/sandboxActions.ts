@@ -70,7 +70,7 @@ export const provision = internalAction({
         status: "ready",
         sandbox: handle.ref,
       });
-      if (op.environmentId) {
+      if (op.environmentId && op.purpose !== "runner") {
         await ctx.runMutation(internal.sandboxes.markEnvironmentReady, {
           environmentId: op.environmentId,
           sandbox: handle.ref,
@@ -96,12 +96,17 @@ export const terminate = internalAction({
     if (op.status === "terminated") return { alreadyGone: true };
     await ctx.runMutation(internal.sandboxes.updateSandboxOp, { sandboxOpId: op.appId, status: "terminating" });
     if (!op.sandbox) {
+      // Nothing addressable was ever created (create failed or was rejected), so there is nothing
+      // to destroy; release the reservation so cancellation can finalize. Untracked sandboxes are
+      // caught by the label-based orphan sweep, not by this op.
       await ctx.runMutation(internal.sandboxes.updateSandboxOp, {
         sandboxOpId: op.appId,
-        status: "ambiguous_terminate",
+        status: "terminated",
+        terminatedAtMs: Date.now(),
+        releaseReservation: true,
         lastError: "sandbox_reference_missing",
       });
-      return { ambiguous: true };
+      return { alreadyGone: true, noSandbox: true };
     }
     try {
       const provider = createCloudProvider();
@@ -143,8 +148,26 @@ export const reconcileSandbox = internalAction({
             status: "ready",
             sandbox: sandbox.ref,
           });
-          resolved += 1;
+        } else {
+          // The provider listing is authoritative: no sandbox carries this operation label, so the
+          // create never happened and its retained reservation must stop counting toward capacity.
+          await ctx.runMutation(internal.sandboxes.updateSandboxOp, {
+            sandboxOpId: op.appId,
+            status: "terminated",
+            terminatedAtMs: Date.now(),
+            releaseReservation: true,
+            lastError: "create_never_materialized",
+          });
         }
+        resolved += 1;
+      } else if (op.status === "ambiguous_terminate" && !op.sandbox) {
+        await ctx.runMutation(internal.sandboxes.updateSandboxOp, {
+          sandboxOpId: op.appId,
+          status: "terminated",
+          terminatedAtMs: Date.now(),
+          releaseReservation: true,
+        });
+        resolved += 1;
       } else if (op.status === "ambiguous_terminate" && op.sandbox) {
         const sandbox = await provider.get(op.sandbox as VendorRef);
         if (!sandbox) {

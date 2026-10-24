@@ -10,7 +10,7 @@ from uuid import UUID
 import mujoco
 
 from simulator.models import SimCase
-from simulator.runner import RunSession, _resolve_case, run_case
+from simulator.runner import RunSession, _resolve_case, finite_json, run_case
 from simulator.snapshot import (
     SnapshotError,
     SnapshotStepUnreachable,
@@ -37,6 +37,12 @@ def _arguments() -> argparse.Namespace:
 
 
 def _write_artifacts(result: dict, trace: dict, out_dir: Path) -> None:
+    safe_result = finite_json(result)
+    safe_trace = finite_json(trace)
+    result.clear()
+    result.update(safe_result)
+    trace.clear()
+    trace.update(safe_trace)
     (out_dir / "trace.json").write_text(json.dumps(trace, indent=2) + "\n")
     result["traceRef"] = export_trace(trace, out_dir)
     (out_dir / "result.json").write_text(json.dumps(result, indent=2) + "\n")

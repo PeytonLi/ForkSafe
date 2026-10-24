@@ -23,15 +23,26 @@ export function EvidenceFeed({ workspace: w }: { workspace: InvestigationWorkspa
       empty="No findings published yet. Environments post findings here as they investigate."
       testId="evidence-feed"
       actions={
-        <label className={styles.filter}>
-          Found by
-          <select value={env} onChange={(e) => { setEnv(e.target.value); setLimit(PAGE); }}>
-            <option value="all">All environments</option>
+        w.environments.length <= 5 ? (
+          <div className={styles.filters} role="group" aria-label="Filter evidence by environment">
+            <button type="button" aria-pressed={env === "all"} className={env === "all" ? styles.filterActive : styles.filter} onClick={() => { setEnv("all"); setLimit(PAGE); }}>All</button>
             {w.environments.map((e) => (
-              <option key={e.id} value={e.id}>Env {e.index + 1}</option>
+              <button key={e.id} type="button" aria-pressed={env === e.id} className={env === e.id ? styles.filterActive : styles.filter} onClick={() => { setEnv(e.id); setLimit(PAGE); }}>
+                Env {e.index + 1}
+              </button>
             ))}
-          </select>
-        </label>
+          </div>
+        ) : (
+          <label className={styles.selectFilter}>
+            Found by
+            <select value={env} onChange={(e) => { setEnv(e.target.value); setLimit(PAGE); }}>
+              <option value="all">All environments</option>
+              {w.environments.map((e) => (
+                <option key={e.id} value={e.id}>Env {e.index + 1}</option>
+              ))}
+            </select>
+          </label>
+        )
       }
     >
       {(findings) => {
@@ -44,7 +55,6 @@ export function EvidenceFeed({ workspace: w }: { workspace: InvestigationWorkspa
                   <div className={styles.badges}>
                     <Badge tone="blue" title={`Environment ${f.environmentId}`}>Env {envIndex.get(f.environmentId) ?? "?"}</Badge>
                     <Badge tone="gray">{human(f.kind)}</Badge>
-                    <Badge tone="gray" title="Canonical record store">SpacetimeDB · {w.sessions.find((s) => s.id === f.sessionId)?.mode ?? "unknown"}</Badge>
                   </div>
                   <p className={styles.summary}>{f.summary}</p>
                   <ul className={styles.evidence}>
@@ -52,13 +62,17 @@ export function EvidenceFeed({ workspace: w }: { workspace: InvestigationWorkspa
                       <li key={i}>
                         {human(ev.kind)}
                         {ev.experimentId && <> · exp {shortId(ev.experimentId)}</>}
-                        {Object.keys(ev.locator).length > 0 && <> · <code>{JSON.stringify(ev.locator)}</code></>}
+                        {Object.keys(ev.locator).length > 0 && <> · <span className={styles.provenance}>{formatLocator(ev.locator)}</span></>}
                         {ev.excerpt && <pre className={styles.excerpt}>{ev.excerpt}</pre>}
                       </li>
                     ))}
                   </ul>
                   <span className={styles.time}>
                     {fmtTime(f.createdAtMs)} · finding {shortId(f.id)}
+                  </span>
+                  <span className={styles.sourceLine} title="Canonical record store">
+                    <span className={styles.sourceDot} aria-hidden="true" />
+                    SpacetimeDB · {w.sessions.find((s) => s.id === f.sessionId)?.mode ?? "unknown"}
                   </span>
                 </li>
               ))}
@@ -74,4 +88,27 @@ export function EvidenceFeed({ workspace: w }: { workspace: InvestigationWorkspa
       }}
     </Panel>
   );
+}
+
+function formatLocator(locator: Record<string, unknown>): string {
+  const labels: Record<string, string> = {
+    frameRange: "frames",
+    frameIndex: "frame",
+    lineRange: "lines",
+    lineStart: "line",
+    lineEnd: "line",
+    filePath: "file",
+  };
+  return Object.entries(locator).map(([key, value]) => {
+    const label = labels[key] ?? key.replace(/[A-Z]/g, (letter) => ` ${letter.toLowerCase()}`);
+    if (Array.isArray(value) && value.length === 2 && value.every((part) => typeof part === "number")) {
+      return `${label} ${value[0]}–${value[1]}`;
+    }
+    if (Array.isArray(value)) return `${label} ${value.map(String).join(", ")}`;
+    if (value && typeof value === "object") {
+      const parts = Object.entries(value as Record<string, unknown>).map(([nestedKey, nestedValue]) => `${nestedKey.replace(/[A-Z]/g, (letter) => ` ${letter.toLowerCase()}`)} ${String(nestedValue)}`);
+      return `${label}: ${parts.join(", ")}`;
+    }
+    return `${label} ${String(value)}`;
+  }).join(" · ");
 }

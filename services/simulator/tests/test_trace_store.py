@@ -75,7 +75,7 @@ def test_chunk_deduplication_across_exports(
     left = tmp_path / "left"
     right = tmp_path / "right"
     export_trace(real_trace, left, max_chunk_bytes=MULTI_CHUNK_LIMIT)
-    second_trace = {**real_trace, "wallTimeSec": real_trace["wallTimeSec"] + 1}
+    second_trace = {**real_trace, "testExtra": "changed"}
     export_trace(second_trace, right, max_chunk_bytes=MULTI_CHUNK_LIMIT)
     left_manifest = _manifest(left)
     right_manifest = _manifest(right)
