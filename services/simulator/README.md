@@ -16,6 +16,9 @@ PYTHONPATH=services .venv/bin/python -m simulator.cli \
 `run_to_end()`. A run can be checkpointed and resumed while preserving the
 physics integration state and controller state:
 
+Pass `--stream-dir PATH` to the legacy CLI to atomically write live frame chunks;
+`--stream-interval-sec` controls the default 0.5 s flush cadence.
+
 ```sh
 PYTHONPATH=services .venv/bin/python -m simulator.cli snapshot \
   --case original-divider-collision --at-step 1500 --out var/snapshot.json

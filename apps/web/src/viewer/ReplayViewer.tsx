@@ -211,12 +211,13 @@ interface Props {
   t: number;
   label: string;
   scene: Record<string, number>;
+  compact?: boolean;
   /** Original (failing) run drawn as a translucent ghost on the same clock. */
   ghost?: SimRunResult;
 }
 
 /** Renders sampled authoritative state; it never runs physics or scores. */
-export function ReplayViewer({ replay, t, label, scene, ghost }: Props) {
+export function ReplayViewer({ replay, t, label, scene, ghost, compact = false }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const s3Ref = useRef<Scene3D | null>(null);
@@ -249,6 +250,7 @@ export function ReplayViewer({ replay, t, label, scene, ghost }: Props) {
     return () => {
       ro.disconnect();
       s3.renderer.dispose();
+      s3.renderer.forceContextLoss();
       s3Ref.current = null;
     };
   }, [scene]);
@@ -284,13 +286,13 @@ export function ReplayViewer({ replay, t, label, scene, ghost }: Props) {
         <span data-testid="frame-readout">
           t={smp?.tSec.toFixed(2) ?? "0.00"} s · frame {smp ? smp.frameIndex + 1 : 0}/{replay.frames.length}
         </span>
-        {contact ? (
+        {!compact && contact ? (
           <span className={styles.contact}>
             Contact {contact.a}↔{contact.b} {(contact.depthM * 1000).toFixed(1)} mm
           </span>
-        ) : (
+        ) : !compact ? (
           <span className={styles.muted}>{smp?.attached ? "Cube grasped" : "No contact"}</span>
-        )}
+        ) : null}
       </figcaption>
     </figure>
   );

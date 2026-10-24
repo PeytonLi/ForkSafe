@@ -7,6 +7,7 @@ import {
   HumanReview,
   Investigation,
   InvestigationEnvironment,
+  SimFrame,
   SimRunResult,
 } from "@forksafe/contracts";
 import { z } from "zod";
@@ -23,6 +24,7 @@ import type {
   HandoffEvent,
   InvestigationListItem,
   InvestigationWorkspace,
+  LiveStreamSnapshot,
   PipelineHealth,
   ReviewInput,
 } from "./types";
@@ -53,6 +55,31 @@ export interface FixtureOptions {
   /** Delay between cancellation requested and confirmed. */
   cancelConfirmMs?: number;
   storage?: Pick<Storage, "getItem" | "setItem"> | null;
+  /** Replays recorded physics frames as an explicitly labeled demo stream. */
+  simulateStream?: boolean;
+}
+
+interface FixtureStreamSource {
+  investigationId: string;
+  experimentId: string;
+  replayArtifactId: string;
+  frames: SimFrame[];
+  originalStatus: ExperimentResult["status"];
+  originalReplayArtifactId?: string;
+  originalFinishedAtMs?: number;
+}
+
+interface FixtureStreamRun extends LiveStreamSnapshot {
+  investigationId: string;
+  experimentId: string;
+  frames: SimFrame[];
+  listeners: Set<(snapshot: LiveStreamSnapshot) => void>;
+  cursor: number;
+  timer?: ReturnType<typeof setTimeout>;
+  started: boolean;
+  originalStatus: ExperimentResult["status"];
+  originalReplayArtifactId?: string;
+  originalFinishedAtMs?: number;
 }
 
 /** Serves the recorded demo investigation from local JSON. Writes (reviews,
@@ -69,12 +96,17 @@ export class FixtureClient implements ForkSafeClient {
   private latency: number;
   private cancelConfirmMs: number;
   private storage: FixtureOptions["storage"];
+  private fixtureStreams = new Map<string, FixtureStreamSource>();
+  private liveRuns = new Map<string, FixtureStreamRun>();
+  private simulateStream: boolean;
 
   constructor(opts: FixtureOptions = {}) {
     this.data = FixtureFile.parse(raw);
     this.latency = opts.latencyMs ?? 150;
     this.cancelConfirmMs = opts.cancelConfirmMs ?? 1500;
     this.storage = opts.storage === undefined ? (typeof localStorage === "undefined" ? null : localStorage) : opts.storage;
+    this.simulateStream = opts.simulateStream ?? false;
+    if (this.simulateStream) this.prepareFixtureStreams();
     const stored = this.storage?.getItem(REVIEWS_KEY);
     if (stored) {
       const parsed = z.array(HumanReview).safeParse(JSON.parse(stored));
@@ -96,6 +128,111 @@ export class FixtureClient implements ForkSafeClient {
 
   private emit(id: string) {
     this.listeners.get(id)?.forEach((l) => l());
+  }
+
+  private prepareFixtureStreams() {
+    const investigation = this.data.investigations[0];
+    if (!investigation) return;
+    const baseline = this.data.experiments.find((e) => e.id === investigation.baselineExperimentId);
+    const baselineReplayId = baseline?.replayArtifactId;
+    const baselineReplay = baselineReplayId ? this.data.replays[baselineReplayId] : undefined;
+    if (!baseline || !baselineReplayId || !baselineReplay) return;
+    const experiments = new Map<string, ExperimentResult>();
+    experiments.set(baseline.id, baseline);
+    for (const environment of this.data.environments.filter((e) => e.investigationId === investigation.id)) {
+      const current = this.data.experiments
+        .filter((e) => e.environmentId === environment.id)
+        .sort((a, b) => b.startedAtMs - a.startedAtMs)[0];
+      if (current) experiments.set(current.id, current);
+    }
+    for (const experiment of experiments.values()) {
+      const replayArtifactId = experiment.replayArtifactId ?? baselineReplayId;
+      const replay = this.data.replays[replayArtifactId] ?? baselineReplay;
+      this.fixtureStreams.set(experiment.id, {
+        investigationId: investigation.id,
+        experimentId: experiment.id,
+        replayArtifactId,
+        frames: replay.frames,
+        originalStatus: experiment.status,
+        originalReplayArtifactId: experiment.replayArtifactId,
+        originalFinishedAtMs: experiment.finishedAtMs,
+      });
+      experiment.status = "running";
+      experiment.replayArtifactId = undefined;
+      experiment.finishedAtMs = undefined;
+    }
+  }
+
+  private notifyLive(run: FixtureStreamRun) {
+    const snapshot: LiveStreamSnapshot = {
+      mode: "fixture",
+      status: run.status,
+      ...(run.reason ? { reason: run.reason } : {}),
+      ...(run.replayArtifactId ? { replayArtifactId: run.replayArtifactId } : {}),
+      chunks: run.chunks,
+    };
+    run.listeners.forEach((listener) => listener(snapshot));
+  }
+
+  private startFixtureStream(source: FixtureStreamSource, listener: (snapshot: LiveStreamSnapshot) => void) {
+    let run = this.liveRuns.get(source.experimentId);
+    if (!run) {
+      run = {
+        mode: "fixture",
+        status: "waiting",
+        chunks: [],
+        investigationId: source.investigationId,
+        experimentId: source.experimentId,
+        frames: source.frames,
+        listeners: new Set(),
+        cursor: 0,
+        started: false,
+        originalStatus: source.originalStatus,
+        originalReplayArtifactId: source.originalReplayArtifactId,
+        originalFinishedAtMs: source.originalFinishedAtMs,
+      };
+      this.liveRuns.set(source.experimentId, run);
+    }
+    run.listeners.add(listener);
+    listener({
+      mode: "fixture",
+      status: run.status,
+      chunks: run.chunks,
+      ...(run.replayArtifactId ? { replayArtifactId: run.replayArtifactId } : {}),
+    });
+    if (run.started || run.status === "finished") return;
+    run.started = true;
+    run.timer = setTimeout(() => {
+      run!.status = "streaming";
+      this.notifyLive(run!);
+      const appendNext = () => {
+        const end = Math.min(run!.cursor + 5, run!.frames.length);
+        const frames = run!.frames.slice(run!.cursor, end);
+        if (frames.length) {
+          const seq = run!.chunks.length ? run!.chunks[run!.chunks.length - 1]!.seq + 1 : 0;
+          run!.chunks = [...run!.chunks, { seq, final: end === run!.frames.length, frames }].slice(-8);
+          run!.cursor = end;
+          this.notifyLive(run!);
+        }
+        if (run!.cursor >= run!.frames.length) {
+          run!.status = "finished";
+          run!.replayArtifactId = source.replayArtifactId;
+          this.notifyLive(run!);
+          run!.timer = setTimeout(() => {
+            const experiment = this.data.experiments.find((e) => e.id === run!.experimentId);
+            if (experiment) {
+              experiment.status = run!.originalStatus;
+              experiment.replayArtifactId = run!.originalReplayArtifactId;
+              experiment.finishedAtMs = run!.originalFinishedAtMs;
+            }
+            this.emit(run!.investigationId);
+          }, 100);
+          return;
+        }
+        run!.timer = setTimeout(appendNext, 500);
+      };
+      appendNext();
+    }, 1500);
   }
 
   private requireInvestigation(id: string): Investigation {
@@ -228,6 +365,20 @@ export class FixtureClient implements ForkSafeClient {
     set.add(onChange);
     this.listeners.set(investigationId, set);
     return () => set.delete(onChange);
+  }
+
+  watchLive(experimentId: string, onUpdate: (snapshot: LiveStreamSnapshot) => void): () => void {
+    if (!this.simulateStream) {
+      onUpdate({ mode: "fixture", status: "unavailable", reason: "fixture_no_physics", chunks: [] });
+      return () => {};
+    }
+    const source = this.fixtureStreams.get(experimentId);
+    if (!source) {
+      onUpdate({ mode: "fixture", status: "unavailable", reason: "fixture_no_physics", chunks: [] });
+      return () => {};
+    }
+    this.startFixtureStream(source, onUpdate);
+    return () => this.liveRuns.get(experimentId)?.listeners.delete(onUpdate);
   }
 
   getReadiness() {

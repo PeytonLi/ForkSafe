@@ -1,0 +1,10 @@
+.liveViewer { display: grid; min-width: 0; gap: 0.5rem; }
+.statusBar { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.status { margin: 0; padding: 0.65rem; border-radius: 10px; background: #f6f8f6; color: var(--muted); font-size: var(--text-sm); }
+.skip { min-height: 30px; padding: 0.25rem 0.55rem; color: var(--accent); font-size: var(--text-xs); }
+.canvasPlaceholder { width: 100%; min-width: 0; aspect-ratio: 1 / 0.62; border-radius: 13px; background: linear-gradient(145deg, #f0f7f5 0%, #f8f8f5 48%, #edf3f8 100%); }
+.buffering { width: fit-content; color: var(--muted); font-size: var(--text-xs); }
+@media (prefers-reduced-motion: no-preference) {
+  .statusBar :global(span) { animation: live-pulse 1.8s ease-in-out infinite; }
+}
+@keyframes live-pulse { 50% { opacity: 0.62; } }

@@ -12,6 +12,7 @@ export { ConvexForkSafeClient, CONVEX_FUNCTIONS } from "./convexClient";
 export function createClient(env: ImportMetaEnv = import.meta.env): ForkSafeClient {
   const url = env.VITE_CONVEX_URL;
   if (url && env.VITE_FORKSAFE_DATA !== "fixture") return new ConvexForkSafeClient(url);
-  return new FixtureClient();
+  const simulateStream = typeof location !== "undefined" && new URLSearchParams(location.search).has("fixtureStream");
+  return new FixtureClient({ simulateStream });
 }
 export * from "./ask";

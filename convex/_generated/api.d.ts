@@ -34,6 +34,7 @@ import type * as grants from "../grants.js";
 import type * as health from "../health.js";
 import type * as http from "../http.js";
 import type * as investigations from "../investigations.js";
+import type * as liveFrames from "../liveFrames.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_commandPolicy from "../lib/commandPolicy.js";
 import type * as lib_constants from "../lib/constants.js";
@@ -43,6 +44,7 @@ import type * as lib_experimentStatus from "../lib/experimentStatus.js";
 import type * as lib_handoff from "../lib/handoff.js";
 import type * as lib_jobOps from "../lib/jobOps.js";
 import type * as lib_leasing from "../lib/leasing.js";
+import type * as lib_liveRelay from "../lib/liveRelay.js";
 import type * as lib_reservations from "../lib/reservations.js";
 import type * as lib_runnerAuth from "../lib/runnerAuth.js";
 import type * as lib_runnerCredentials from "../lib/runnerCredentials.js";
@@ -70,6 +72,7 @@ import type * as web_askPolicy from "../web/askPolicy.js";
 import type * as web_elasticAgent from "../web/elasticAgent.js";
 import type * as web_health from "../web/health.js";
 import type * as web_timeline from "../web/timeline.js";
+import type * as web_live from "../web/live.js";
 import type * as workers from "../workers.js";
 import type * as workflows from "../workflows.js";
 
@@ -106,6 +109,7 @@ declare const fullApi: ApiFromModules<{
   health: typeof health;
   http: typeof http;
   investigations: typeof investigations;
+  liveFrames: typeof liveFrames;
   "lib/auth": typeof lib_auth;
   "lib/commandPolicy": typeof lib_commandPolicy;
   "lib/constants": typeof lib_constants;
@@ -115,6 +119,7 @@ declare const fullApi: ApiFromModules<{
   "lib/handoff": typeof lib_handoff;
   "lib/jobOps": typeof lib_jobOps;
   "lib/leasing": typeof lib_leasing;
+  "lib/liveRelay": typeof lib_liveRelay;
   "lib/reservations": typeof lib_reservations;
   "lib/runnerAuth": typeof lib_runnerAuth;
   "lib/runnerCredentials": typeof lib_runnerCredentials;
@@ -142,6 +147,7 @@ declare const fullApi: ApiFromModules<{
   "web/elasticAgent": typeof web_elasticAgent;
   "web/health": typeof web_health;
   "web/timeline": typeof web_timeline;
+  "web/live": typeof web_live;
   workers: typeof workers;
   workflows: typeof workflows;
 }>;
