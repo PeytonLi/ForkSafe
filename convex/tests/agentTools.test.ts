@@ -159,6 +159,15 @@ describe("agent tool persistence", () => {
       ...targetContext!, revisionId, rationale: "evidence-backed",
       basedOnFindings: [findingId],
     };
+    await expect(t.action(internal.agentTools.submitCandidate, args)).resolves.toMatchObject({
+      status: "rejected", reason: "finding_required",
+    });
+    await t.mutation(internal.evidence.insertFinding, {
+      findingId: crypto.randomUUID(), investigationId: targetContext!.investigationId, environmentId: targetContext!.environmentId,
+      attemptId: targetContext!.attemptId, epoch: targetContext!.epoch, grantId: targetContext!.grantId,
+      kind: "limit_violation", claim: "observation", summary: "Own measurement",
+      evidence: [{ kind: "metric", locator: { metric: "joint_limit" } }],
+    });
     await expect(t.action(internal.agentTools.submitCandidate, args)).resolves.toEqual({
       status: "rejected", reason: "finding_not_read",
     });
@@ -188,9 +197,14 @@ describe("agent tool persistence", () => {
     expect(uses).toHaveLength(1);
     expect(uses[0]).toMatchObject({ findingId, candidateId, crossEnvironment: true });
     const findingUseRequest = requests.find((request) => request.url.endsWith("/call/record_finding_use"));
+    expect(Object.keys(findingUseRequest?.body ?? {})).toEqual([
+      "grant", "id", "findingId", "experimentId", "candidateId",
+    ]);
     expect(findingUseRequest?.body).toMatchObject({
       grant: { grant_id: targetContext!.grantId, attempt_id: targetContext!.attemptId, epoch: targetContext!.epoch },
+      id: expect.any(String),
       findingId, candidateId: { some: candidateId },
+      experimentId: null,
     });
     await t.mutation(internal.agentTools.mirrorFindingUse, {
       appId: uses[0]!.appId, findingId, findingEnvironmentId: sourceContext!.environmentId,

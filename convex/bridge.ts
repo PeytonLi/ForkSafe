@@ -4,13 +4,13 @@ import { internalAction, internalMutation, internalQuery } from "./_generated/se
 import {
   SpacetimeReducerError,
   classifyReducerFailure,
-  decodeSqlRows,
   encodeReducerArgs,
   option,
   spacetimeConfig,
   sqlLiteral,
   type SpacetimeMode,
 } from "./lib/spacetime.js";
+import { decodeSqlResponse } from "./dispatchers/spacetime.js";
 
 /** Convex is the registered SpacetimeDB bridge. Every write to the shared
  *  evidence lane goes through these actions; grants are fenced by
@@ -85,6 +85,12 @@ async function obtainToken(ctx: ActionCtx, httpBase: string): Promise<{ token: s
   return parsed;
 }
 
+/** Until Maincloud is republished with rotate_bridge_identity, fall back to
+ *  the original register_bridge reducer. */
+export function reducerMissing(status: number, body: string): boolean {
+  return status === 404 || /no such (reducer|procedure)|reducer .*not found/i.test(body);
+}
+
 export class BridgeClient {
   readonly mode: SpacetimeMode;
   private readonly httpBase: string;
@@ -110,11 +116,13 @@ export class BridgeClient {
     const { token, identity } = await obtainToken(this.ctx, this.httpBase);
     this.token = token;
     this.identity = identity;
-    const result = await fetchJson(this.url("call/register_bridge"), {
+    const post = (reducer: string) => fetchJson(this.url(`call/${reducer}`), {
       method: "POST",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
       body: JSON.stringify({ secret }),
     });
+    let result = await post("rotate_bridge_identity");
+    if (reducerMissing(result.status, result.text)) result = await post("register_bridge");
     if (result.status !== 200) {
       const failure = classifyReducerFailure(result.status, result.text);
       await this.ctx.runMutation(internal.bridge.saveBridgeState, { lastError: failure.code, mode: this.mode });
@@ -153,7 +161,7 @@ export class BridgeClient {
       body: query,
     });
     if (result.status !== 200) throw classifyReducerFailure(result.status, result.text);
-    return decodeSqlRows(JSON.parse(result.text));
+    return decodeSqlResponse(JSON.parse(result.text) as unknown);
   }
 
   private post(reducer: string, body: string) {
@@ -393,10 +401,11 @@ export const recordFindingUse = internalAction({
       throw new ConvexError("finding_use_target_invalid");
     }
     const client = new BridgeClient(ctx);
-    return await client.call("record_finding_use", {
+    const reducerArgs = {
       grant: args.grant, id: args.id, findingId: args.findingId,
       experimentId: option(args.experimentId), candidateId: option(args.candidateId),
-    });
+    };
+    return await client.call("record_finding_use", reducerArgs);
   },
 });
 
@@ -470,5 +479,16 @@ export const countRows = internalAction({
     const revisions = await client.sql("SELECT * FROM controller_revision");
     counts.controller_revision = revisions.length;
     return { mode: client.mode, counts };
+  },
+});
+
+/** The single stored bridge identity token, shared with the outbox
+ *  dispatchers so they do not mint and register extra identities. */
+export const sharedBridgeToken = internalAction({
+  args: {},
+  handler: async (ctx): Promise<string | null> => {
+    const config = spacetimeConfig(process.env);
+    if (config.mode !== "live" && config.mode !== "local") return null;
+    return (await obtainToken(ctx, config.httpBase)).token;
   },
 });

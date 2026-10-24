@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { SpacetimeClient, SpacetimeRejected, decodeSqlResponse } from "./spacetime.js";
+import { SpacetimeClient, SpacetimeRejected, decodeSqlResponse, spacetimeEnvironment } from "./spacetime.js";
 import { SpacetimeConfigError } from "../lib/spacetime.js";
 
 const findingId = "11111111-1111-4111-8111-111111111111";
@@ -365,5 +365,77 @@ describe("SpacetimeDB HTTP bridge", () => {
     const headers = new Headers(calls.find((call) => call.url.endsWith("/sql"))?.init.headers);
     expect(headers.get("content-type")).toBe("text/plain");
     expect(headers.get("authorization")).toBe("Bearer wire-token");
+  });
+});
+
+describe("Maincloud positional SATS decoding", () => {
+  const option = (inner: Record<string, unknown>) => ({
+    Sum: { variants: [{ name: { some: "some" }, algebraic_type: inner }, { name: { some: "none" }, algebraic_type: { Product: { elements: [] } } }] },
+  });
+  const col = (name: string, algebraic_type: unknown) => ({ name: { some: name }, algebraic_type });
+  const caseType = {
+    Product: {
+      elements: [
+        col("case_id", { String: [] }),
+        col("status", { String: [] }),
+        col("experiment_id", option({ String: [] })),
+        col("completion_time_sec", option({ F64: [] })),
+        col("failure_kinds", { Array: { String: [] } }),
+      ],
+    },
+  };
+
+  it("decodes [tag, value] options, positional products and optional i64 as captured from Maincloud", () => {
+    const rows = decodeSqlResponse([{
+      schema: { elements: [
+        col("id", { String: [] }),
+        col("cases", { Array: caseType }),
+        col("median_completion_time_sec", option({ F64: [] })),
+        col("report_artifact_id", option({ String: [] })),
+        col("finished_at_ms", option({ I64: [] })),
+      ] },
+      rows: [[
+        "e1",
+        [["withheld-01", "passed", [0, "x1"], [0, 9.5], []], ["withheld-02", "failed", [1, []], [1, []], ["timeout"]]],
+        [0, 9.8],
+        [1, []],
+        [0, 1792851986965],
+      ]],
+    }]);
+    expect(rows).toEqual([{
+      id: "e1",
+      cases: [
+        { caseId: "withheld-01", status: "passed", experimentId: "x1", completionTimeSec: 9.5, failureKinds: [] },
+        { caseId: "withheld-02", status: "failed", experimentId: undefined, completionTimeSec: undefined, failureKinds: ["timeout"] },
+      ],
+      medianCompletionTimeSec: 9.8,
+      reportArtifactId: undefined,
+      finishedAtMs: 1792851986965,
+    }]);
+  });
+
+  it("treats a product whose arity does not match the schema as unavailable, not as data", () => {
+    expect(() => decodeSqlResponse([{
+      schema: { elements: [col("cases", { Array: caseType })] },
+      rows: [[[["only-two", "passed"]]]],
+    }])).toThrow("temporarily unavailable");
+  });
+
+  it("rejects an option tag outside the declared variants", () => {
+    expect(() => decodeSqlResponse([{
+      schema: { elements: [col("notes", option({ String: [] }))] },
+      rows: [[[7, "x"]]],
+    }])).toThrow("temporarily unavailable");
+  });
+});
+
+describe("spacetimeEnvironment", () => {
+  it("copies SpacetimeDB keys from a non-enumerable env like Convex's process.env", () => {
+    const values: Record<string, string> = { SPACETIMEDB_URI: "https://maincloud.spacetimedb.com", SPACETIMEDB_DATABASE: "forksafe", FORKSAFE_BRIDGE_SECRET: "s" };
+    const opaque = new Proxy({}, { get: (_target, key) => values[String(key)], ownKeys: () => [] }) as Record<string, string | undefined>;
+    expect({ ...opaque }).toEqual({});
+    const env = spacetimeEnvironment("bridge-token", opaque);
+    expect(env).toMatchObject({ SPACETIMEDB_URI: values.SPACETIMEDB_URI, SPACETIMEDB_DATABASE: "forksafe", SPACETIMEDB_BRIDGE_TOKEN: "bridge-token" });
+    expect(() => new SpacetimeClient(env)).not.toThrow();
   });
 });

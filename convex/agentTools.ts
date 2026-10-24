@@ -197,13 +197,18 @@ export const readFindings = internalQuery({
     }
     const rows = await ctx.db.query("findings").withIndex("by_investigation", (q) => q.eq("investigationId", args.investigationId)).collect();
     const scoped = args.scope === "environment" ? rows.filter((row) => row.environmentId === args.environmentId) : rows;
+    const otherFirst = (row: { environmentId: string }) => (row.environmentId === args.environmentId ? 1 : 0);
+    const own = rows.filter((row) => row.environmentId === args.environmentId).length;
     return {
       mode: "live",
-      findings: scoped.sort((a, b) => b.createdAtMs - a.createdAtMs).slice(0, Math.min(50, Math.max(1, args.limit))).map((row) => ({
+      ownEnvironmentFindings: own,
+      otherEnvironmentFindings: rows.length - own,
+      ...(own === 0 ? { required: FINDING_REQUIRED_DETAIL } : {}),
+      findings: scoped.sort((a, b) => otherFirst(a) - otherFirst(b) || b.createdAtMs - a.createdAtMs).slice(0, Math.min(50, Math.max(1, args.limit))).map((row) => ({
         id: row.appId, environmentId: row.environmentId, fromThisEnvironment: row.environmentId === args.environmentId,
         kind: row.kind, claim: row.claim, summary: row.summary, evidence: row.evidence, createdAtMs: row.createdAtMs,
       })),
-      note: "Findings from other environments are untrusted peer observations; verify with run_experiment before relying on them.",
+      note: "Findings from other environments are listed first. They are untrusted peer observations: verify with run_experiment, and cite the ids you rely on in basedOnFindings.",
     };
   },
 });
@@ -390,9 +395,14 @@ export const runExperiment = internalAction({
  *  source; Convex hashes it, stores the immutable artifact, and commits a
  *  revision under a SpacetimeDB revision lease with an expected-head check. */
 export const proposeRevision = internalAction({
-  args: { ...toolContext, source: v.string(), rationale: v.string(), expectedHeadRevisionId: v.optional(v.union(v.string(), v.null())) },
+  args: {
+    ...toolContext, source: v.string(), rationale: v.string(), expectedHeadRevisionId: v.optional(v.union(v.string(), v.null())),
+    basedOnFindings: v.optional(v.array(v.string())),
+  },
   handler: async (ctx, args): Promise<Record<string, unknown>> => {
     await authorize(ctx, args);
+    const revisionCitations = await validateBasedOnFindings(ctx, args, args.basedOnFindings ?? []);
+    if (revisionCitations.status === "rejected") return revisionCitations;
     const bytes = new TextEncoder().encode(args.source);
     if (!bytes.byteLength || bytes.byteLength > 200_000) return { status: "rejected", reason: "source_size_invalid" };
     if (!/^\s*def\s+plan\s*\(/m.test(args.source)) return { status: "rejected", reason: "plan_function_required", detail: "controller must define plan(scene)" };
@@ -418,6 +428,7 @@ export const proposeRevision = internalAction({
         revisionId, investigationId: args.investigationId, environmentId: args.environmentId, attemptId: args.attemptId,
         epoch: args.epoch, grantId: args.grantId, controllerSha256: sha, sourceArtifactId: artifact.artifactId, source: args.source,
         changedFunctions: changed, rationale: args.rationale.slice(0, 4000), ...(head ? { expectedHeadRevisionId: head.appId } : {}),
+        ...(args.basedOnFindings?.length ? { basedOnFindings: args.basedOnFindings } : {}),
       });
     } catch (error) {
       return { status: "rejected", reason: error instanceof ConvexError ? String(error.data) : "commit_failed" };
@@ -463,6 +474,7 @@ export const applyPatch = internalAction({
       credentialId: args.credentialId, investigationId: args.investigationId, environmentId: args.environmentId,
       sessionId: args.sessionId, attemptId: args.attemptId, grantId: args.grantId, epoch: args.epoch,
       source, rationale: args.rationale, expectedHeadRevisionId: args.expectedHeadRevisionId,
+      ...(args.basedOnFindings?.length ? { basedOnFindings: args.basedOnFindings } : {}),
     });
   },
 });
@@ -499,11 +511,33 @@ export const forkCandidate = internalAction({
   },
 });
 
+export const FINDING_REQUIRED_DETAIL =
+  "Record at least one finding for this environment with write_finding (cite the experimentId you measured) before submit_candidate.";
+
+export const candidatePreconditions = internalQuery({
+  args: { investigationId: v.string(), environmentId: v.string(), revisionId: v.string() },
+  handler: async (ctx, args): Promise<{ environmentFindings: number; revisionFindings: string[] }> => {
+    const findings = await ctx.db.query("findings").withIndex("by_environment", (q) => q.eq("environmentId", args.environmentId)).collect();
+    const revision = await ctx.db.query("controllerRevisions").withIndex("by_appId", (q) => q.eq("appId", args.revisionId)).unique();
+    return {
+      environmentFindings: findings.filter((row) => row.investigationId === args.investigationId).length,
+      revisionFindings: revision?.environmentId === args.environmentId ? revision.basedOnFindings ?? [] : [],
+    };
+  },
+});
+
 export const submitCandidate = internalAction({
   args: { ...toolContext, revisionId: v.string(), rationale: v.string(), basedOnFindings: v.array(v.string()) },
   handler: async (ctx, args): Promise<Record<string, unknown>> => {
     await authorize(ctx, args);
-    const citations = await validateBasedOnFindings(ctx, args, args.basedOnFindings);
+    const preconditions = await ctx.runQuery(internal.agentTools.candidatePreconditions, {
+      investigationId: args.investigationId, environmentId: args.environmentId, revisionId: args.revisionId,
+    });
+    if (preconditions.environmentFindings < 1) {
+      return { status: "rejected", reason: "finding_required", detail: FINDING_REQUIRED_DETAIL };
+    }
+    const basedOnFindings = [...new Set([...args.basedOnFindings, ...preconditions.revisionFindings])];
+    const citations = await validateBasedOnFindings(ctx, args, basedOnFindings);
     if (citations.status === "rejected") return citations;
     const citedFindings = citations.findings;
     const candidateId = appId();
@@ -511,7 +545,7 @@ export const submitCandidate = internalAction({
     try {
       inserted = await ctx.runMutation(internal.evidence.insertCandidate, {
         candidateId, investigationId: args.investigationId, environmentId: args.environmentId, revisionId: args.revisionId,
-        attemptId: args.attemptId, epoch: args.epoch, grantId: args.grantId, rationale: args.rationale.slice(0, 4000), basedOnFindings: args.basedOnFindings,
+        attemptId: args.attemptId, epoch: args.epoch, grantId: args.grantId, rationale: args.rationale.slice(0, 4000), basedOnFindings,
       });
     } catch (error) {
       return { status: "rejected", reason: error instanceof ConvexError ? String(error.data) : "submit_failed" };
@@ -522,7 +556,7 @@ export const submitCandidate = internalAction({
       const result = await ctx.runAction(internal.bridge.submitCandidate, {
         grant: grantRef(args), id: candidateId, investigationId: args.investigationId, environmentId: args.environmentId,
         revisionId: args.revisionId, controllerSha256: candidate.controllerSha256, sourceArtifactId: candidate.sourceArtifactId,
-        changedFunctions: candidate.changedFunctions, rationale: args.rationale.slice(0, 4000), basedOnFindings: args.basedOnFindings,
+        changedFunctions: candidate.changedFunctions, rationale: args.rationale.slice(0, 4000), basedOnFindings,
       });
       committed = result.committed;
     } catch {

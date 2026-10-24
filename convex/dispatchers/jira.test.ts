@@ -3,6 +3,7 @@ import { AtlassianHttpError, JiraClient } from "../../packages/integrations/atla
 import {
   classifyJiraFailure,
   deliverJiraPayload,
+  jiraIdempotencyKey,
   operationIdForIdempotencyKey,
 } from "./jira.js";
 import { SpacetimeRejected, SpacetimeUnavailable } from "./spacetime.js";
@@ -204,5 +205,68 @@ describe("Jira outbox dispatcher", () => {
 
     expect(jira.remoteLinks.size).toBe(1);
     expect([...jira.remoteLinks.keys()]).toEqual([`forksafe:confluence:${investigationId}:12345`]);
+  });
+});
+
+describe("Jira awaiting_review issue", () => {
+  it("opens the investigation issue before any review exists, with a stable key", async () => {
+    const jira = jiraFixture();
+    const deps = {
+      client: jira.client,
+      spacetime: {
+        getReview: async () => { throw new Error("must not read a review"); },
+        listCandidates: async () => [candidate],
+        listEvaluations: async () => [evaluation],
+        findingsCount: async () => 2,
+        listReviews: async () => [],
+      },
+      snapshot: async () => ({ investigation, environments: [{ state: "active" }] }),
+      projectKey: "FS",
+      siteUrl: "https://jira.example.invalid",
+      readyStatuses: ["In Progress"],
+    } as unknown as Parameters<typeof deliverJiraPayload>[1];
+    const payload = { kind: "awaiting_review", investigationId };
+    expect(jiraIdempotencyKey(payload)).toBe(`awaiting_review:${investigationId}:jira_sync`);
+    let result: unknown;
+    try { result = await deliverJiraPayload(payload, deps); } catch { result = await deliverJiraPayload(payload, deps); }
+    expect(result).toBeTruthy();
+    expect(jiraIdempotencyKey({ kind: "awaiting_review" })).toBeUndefined();
+  });
+});
+
+describe("Jira candidate verdicts", () => {
+  it("uses each candidate's latest public and withheld evaluation and exposes no withheld case detail", async () => {
+    const { candidateVerdicts } = await import("./jira.js");
+    const candidate = { id: "11111111-1111-4111-8111-111111111111", controllerSha256: "a".repeat(64) };
+    const evaluation = (suite: "public" | "withheld", status: "passed" | "failed", createdAtMs: number, passed: number) => ({
+      id: crypto.randomUUID(), candidateId: candidate.id, investigationId: "22222222-2222-4222-8222-222222222222",
+      evaluatorAttemptId: crypto.randomUUID(), suite, allRequiredPassed: status === "passed", status, createdAtMs,
+      cases: Array.from({ length: 3 }, (_, index) => ({ caseId: `${suite}-0${index}`, status: index < passed ? "passed" as const : "failed" as const, failureKinds: [] })),
+    });
+    const verdicts = candidateVerdicts([candidate], [
+      evaluation("public", "failed", 1, 1), evaluation("public", "passed", 2, 3), evaluation("withheld", "failed", 3, 2),
+    ] as never);
+    expect(verdicts).toEqual([{ candidateId: candidate.id, controllerSha256: "a".repeat(64), publicVerdict: "passed", publicPassed: 3, publicTotal: 3, withheldVerdict: "failed" }]);
+    expect(JSON.stringify(verdicts)).not.toContain("withheld-0");
+  });
+});
+
+describe("Jira failure diagnostics", () => {
+  it("logs zod issue paths without values and redacts long tokens", async () => {
+    const { failureDiagnostic } = await import("./jira.js");
+    const { z } = await import("zod");
+    const parsed = z.object({ review: z.object({ decision: z.string().regex(/^[a-z]+$/) }) }).safeParse({ review: { decision: "SECRET-VALUE" } });
+    expect(parsed.success).toBe(false);
+    const line = failureDiagnostic(parsed.success ? null : parsed.error);
+    expect(line).toBe("zod:review.decision");
+    expect(failureDiagnostic(new Error(`boom ${"a".repeat(40)}`))).toBe("Error:boom [redacted]");
+  });
+});
+
+describe("Jira investigation lookup reference", () => {
+  it("uses Convex's module:function path form (a dot path is rejected at runtime)", async () => {
+    const { getFunctionName } = await import("convex/server");
+    const { getInvestigationRef } = await import("./jira.js");
+    expect(getFunctionName(getInvestigationRef)).toBe("dispatchers/jira:getInvestigation");
   });
 });

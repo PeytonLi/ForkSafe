@@ -295,7 +295,10 @@ export function registerRunnerRoutes(router: HttpRouter): void {
               });
               break;
             case "propose_controller_revision":
-              result = await ctx.runAction(internal.agentTools.proposeRevision, { ...context, source: String(body.source ?? ""), rationale: String(body.rationale ?? "") });
+              result = await ctx.runAction(internal.agentTools.proposeRevision, {
+                ...context, source: String(body.source ?? ""), rationale: String(body.rationale ?? ""),
+                ...(Array.isArray(body.basedOnFindings) ? { basedOnFindings: body.basedOnFindings.filter((item): item is string => typeof item === "string") } : {}),
+              });
               break;
             case "submit_candidate":
               result = await ctx.runAction(internal.agentTools.submitCandidate, {

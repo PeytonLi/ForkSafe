@@ -122,6 +122,7 @@ export const commitRevision = internalMutation({
     revisionId: v.string(), investigationId: v.string(), environmentId: v.string(), attemptId: v.string(), epoch: v.number(),
     grantId: v.optional(v.string()), controllerSha256: v.string(), sourceArtifactId: v.string(), source: v.string(),
     changedFunctions: v.array(v.string()), rationale: v.optional(v.string()), expectedHeadRevisionId: v.optional(v.string()),
+    basedOnFindings: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
     assertUUID(args.revisionId, "revisionId");
@@ -143,7 +144,9 @@ export const commitRevision = internalMutation({
       appId: args.revisionId, investigationId: args.investigationId, environmentId: args.environmentId, seq,
       ...(head ? { parentRevisionId: head.appId } : {}), controllerSha256: args.controllerSha256,
       sourceArtifactId: args.sourceArtifactId, changedFunctions: args.changedFunctions,
-      ...(args.rationale ? { rationale: args.rationale } : {}), createdByAttemptId: args.attemptId, epoch: args.epoch,
+      ...(args.rationale ? { rationale: args.rationale } : {}),
+      ...(args.basedOnFindings?.length ? { basedOnFindings: [...new Set(args.basedOnFindings)] } : {}),
+      createdByAttemptId: args.attemptId, epoch: args.epoch,
       ...(args.grantId ? { grantId: args.grantId } : {}), spacetimeCommitted: false, createdAtMs: now,
     });
     return { duplicate: false, seq, headRevisionId: args.revisionId };

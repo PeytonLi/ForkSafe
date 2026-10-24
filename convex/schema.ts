@@ -441,6 +441,7 @@ export default defineSchema({
     sourceArtifactId: uuid,
     changedFunctions: v.array(v.string()),
     rationale: v.optional(v.string()),
+    basedOnFindings: v.optional(v.array(uuid)),
     createdByAttemptId: uuid,
     epoch: v.number(),
     grantId: v.optional(uuid),
