@@ -8,7 +8,7 @@ import { internal } from "./_generated/api.js";
 import { internalAction } from "./_generated/server.js";
 import { classifyExperiment } from "./lib/experimentStatus.js";
 import { signedCaseCommand } from "./lib/evaluatorBackend.js";
-import { LIVE_CHUNK_READER_PYTHON, parseChunkLines } from "./lib/liveRelay.js";
+import { isStreamFlagUnsupported, LIVE_CHUNK_READER_PYTHON, parseChunkLines } from "./lib/liveRelay.js";
 import withheldManifest from "../evaluation/withheld/manifest.json";
 import manifestsLock from "../evaluation/manifests.lock.json";
 
@@ -229,7 +229,7 @@ export const runCase = internalAction({
     const timeoutSec = Math.min(60, Math.max(1, args.timeoutSec ?? 30));
     const liveEnabled = args.simCase.suite !== "withheld";
     const streamDir = `${runDir}/stream`;
-    const command = [
+    const baseCommand = [
       "python3 -m simulator.cli",
       `--controller-dir ${runDir}/controller`,
       `--case-json ${runDir}/case.json`,
@@ -237,8 +237,8 @@ export const runCase = internalAction({
       `--out-dir ${runDir}/out`,
       `--experiment-id ${args.experimentId}`,
       `--timeout-sec ${timeoutSec}`,
-      ...(liveEnabled ? [`--stream-dir ${streamDir}`] : []),
     ].join(" ");
+    const command = liveEnabled ? `${baseCommand} --stream-dir ${streamDir}` : baseCommand;
     let run: { exitCode: number; output: string };
     let relayOpened = false;
     const safeFinishRelay = async (outcome: "finished" | "unavailable", reason?: string, replayArtifactId?: string) => {
@@ -338,7 +338,17 @@ export const runCase = internalAction({
       } catch (error) {
         run = { exitCode: -1, output: `exec_failed:${error instanceof Error ? error.message : "unknown"}` };
       }
-      if (relayActive) await drain();
+      if (run.exitCode !== 0 && isStreamFlagUnsupported(run.output)) {
+        relayActive = false;
+        await safeFinishRelay("unavailable", "bundle_without_streaming");
+        try {
+          run = await daytona.exec(ref, { ...executionOptions, command: baseCommand });
+        } catch (error) {
+          run = { exitCode: -1, output: `exec_failed:${error instanceof Error ? error.message : "unknown"}` };
+        }
+      } else if (relayActive) {
+        await drain();
+      }
     }
     const expectedSha = await sha256(encoder.encode(args.controllerSource));
     let resultBytes: Uint8Array | undefined;

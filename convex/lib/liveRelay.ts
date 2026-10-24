@@ -4,6 +4,10 @@ export type RelayChunk = {
   frames: Record<string, unknown>[];
 };
 
+export function isStreamFlagUnsupported(output: string): boolean {
+  return output.includes("unrecognized arguments") && output.includes("--stream-dir");
+}
+
 export const LIVE_CHUNK_READER_PYTHON = [
   "import json,pathlib,sys",
   "directory=pathlib.Path(sys.argv[1]); start=int(sys.argv[2]); used=0",

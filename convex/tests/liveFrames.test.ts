@@ -2,7 +2,7 @@ import { convexTest } from "convex-test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api, internal } from "../_generated/api.js";
 import schema from "../schema.js";
-import { LIVE_CHUNK_READER_PYTHON, parseChunkLines } from "../lib/liveRelay.js";
+import { isStreamFlagUnsupported, LIVE_CHUNK_READER_PYTHON, parseChunkLines } from "../lib/liveRelay.js";
 
 const modules = Object.fromEntries(
   Object.entries(import.meta.glob("../**/*.ts")).map(([path, load]) => [
@@ -101,5 +101,11 @@ describe("live frame relay", () => {
       JSON.stringify({ seq: 1, final: true, frames: [frame(0.1)] }).slice(0, -3),
     ].join("\n"));
     expect(parsed).toEqual([{ seq: 0, final: false, frames: [frame(0)] }]);
+  });
+
+  it("detects simulator bundles that do not support stream-dir", () => {
+    expect(isStreamFlagUnsupported("usage: simulator.cli [options]\nunrecognized arguments: --stream-dir /workspace/runs/x/stream")).toBe(true);
+    expect(isStreamFlagUnsupported("unrecognized arguments: --trace-dir /workspace/runs/x/trace")).toBe(false);
+    expect(isStreamFlagUnsupported("unknown option --stream-dir")).toBe(false);
   });
 });
