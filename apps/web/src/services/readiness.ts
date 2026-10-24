@@ -2,7 +2,7 @@ import { IntegrationReadiness } from "@forksafe/contracts";
 import { z } from "zod";
 import { ServiceError } from "./errors";
 
-const WebIntegrationReadiness = IntegrationReadiness.extend({ probed: z.boolean() });
+const WebIntegrationReadiness = IntegrationReadiness.extend({ probed: z.boolean().default(false) });
 const ReadinessResponse = z.object({ integrations: z.array(WebIntegrationReadiness) });
 
 /** Reads the server-side readiness report served at /api/readiness. */
