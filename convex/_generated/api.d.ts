@@ -23,7 +23,6 @@ import type * as dispatchers_elasticData from "../dispatchers/elasticData.js";
 import type * as dispatchers_jira from "../dispatchers/jira.js";
 import type * as dispatchers_spacetime from "../dispatchers/spacetime.js";
 import type * as evaluation from "../evaluation.js";
-import type * as evaluationReconcile from "../evaluationReconcile.js";
 import type * as evidence from "../evidence.js";
 import type * as execution from "../execution.js";
 import type * as forge from "../forge.js";
@@ -93,7 +92,6 @@ declare const fullApi: ApiFromModules<{
   "dispatchers/jira": typeof dispatchers_jira;
   "dispatchers/spacetime": typeof dispatchers_spacetime;
   evaluation: typeof evaluation;
-  evaluationReconcile: typeof evaluationReconcile;
   evidence: typeof evidence;
   execution: typeof execution;
   forge: typeof forge;
