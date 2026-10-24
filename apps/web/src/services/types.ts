@@ -200,7 +200,7 @@ export interface ForkSafeClient {
   cancelInvestigation(investigationId: string): Promise<void>;
   submitReview(input: ReviewInput): Promise<HumanReview>;
   requestCapture(draft: CaptureDraft): Promise<CaptureOutcome>;
-  findFailure(taskFamily: TaskFamily): Promise<FailureSearchOutcome>;
+  findFailure(taskFamily: TaskFamily, options?: { sceneOverrides?: Record<string, number>; seed?: number }): Promise<FailureSearchOutcome>;
   getLearning(investigationId: string): Promise<LearningView>;
   retryWithImprovedController(investigationId: string): Promise<CaptureOutcome>;
   getCurrentController(taskFamily?: string): Promise<CurrentController>;

@@ -1,6 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api.js";
 import { internalAction } from "./_generated/server.js";
+import { shouldStartAgents } from "./lib/captureGate.js";
 import { appId } from "./lib/validators.js";
 
 /** Records the baseline failure for a captured investigation by really
@@ -31,7 +32,7 @@ export async function ensureExecutionSandbox(ctx: any, investigationId: string, 
 
 export const run = internalAction({
   args: { investigationId: v.string() },
-  handler: async (ctx, args): Promise<{ recorded: boolean; experimentId?: string; status?: string; error?: string }> => {
+  handler: async (ctx, args): Promise<{ recorded: boolean; started?: boolean; experimentId?: string; status?: string; error?: string }> => {
     const investigation = await ctx.runQuery(internal.investigations.getByAppId, { investigationId: args.investigationId });
     if (!investigation) throw new ConvexError("investigation_not_found");
     if (investigation.captureStatus === "recorded") return { recorded: true, experimentId: investigation.baselineExperimentId };
@@ -77,6 +78,12 @@ export const run = internalAction({
       if (outcome.status === "invalid" || outcome.status === "engine_error") {
         await ctx.runMutation(internal.investigations.setCapture, { investigationId: args.investigationId, captureStatus: "failed", error: `baseline_${outcome.status}` });
         return { recorded: false, experimentId, status: outcome.status, error: outcome.logTail.slice(-300) };
+      }
+      if (!shouldStartAgents({ completed: outcome.completed, failureKinds: outcome.failureKinds })) {
+        await ctx.runMutation(internal.investigations.setCapture, {
+          investigationId: args.investigationId, captureStatus: "recorded", promote: false,
+        });
+        return { recorded: true, started: false, experimentId, status: outcome.status };
       }
       const capture = await ctx.runMutation(internal.investigations.setCapture, { investigationId: args.investigationId, captureStatus: "recorded" });
       if (capture.autoStart) await ctx.runMutation(internal.investigations.startInternal, { investigationId: args.investigationId });
