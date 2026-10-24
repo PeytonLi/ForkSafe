@@ -67,3 +67,32 @@ describe("health notes", () => {
     expect(healthNote({ ...base, mode: "blocked", probed: true })).toMatch(/didn't respond/);
   });
 });
+
+describe("learning loop fixture", () => {
+  it("records lineage and a replayed retry without adding an investigation", async () => {
+    const c = client();
+    const before = await c.getLearning(INV);
+    expect(before.retry).toMatchObject({ available: false, reason: "No fix has been approved for this task yet." });
+    const workspace = await c.getWorkspace(INV);
+    const candidate = workspace.candidates.find((row) => row.id.startsWith("b8409694"))!;
+    const evaluation = workspace.evaluations.find((row) => row.candidateId === candidate.id && row.suite === "withheld")!;
+    await c.submitReview({
+      investigationId: INV,
+      candidateId: candidate.id,
+      evaluationId: evaluation.id,
+      controllerSha256: candidate.controllerSha256,
+      decision: "approved",
+    });
+    const approved = await c.getLearning(INV);
+    expect(approved.lineage.map((row) => row.version)).toEqual([1, 2]);
+    expect(approved.retry.available).toBe(true);
+    const investigationCount = (await c.listInvestigations()).length;
+    const outcome = await c.retryWithImprovedController(INV);
+    expect(outcome.accepted).toBe(true);
+    expect((await c.listInvestigations()).length).toBe(investigationCount);
+    const retried = await c.getLearning(INV);
+    expect(retried.retry.latest).toMatchObject({ state: "completed", captureStatus: "recorded", recorded: true });
+    expect(retried.retry.latest?.before?.firstFailure?.tSec).toBe(4.1);
+    expect(retried.retry.latest?.after?.completionTimeSec).toBe(7.1);
+  });
+});

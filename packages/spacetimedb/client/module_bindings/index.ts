@@ -43,6 +43,7 @@ import OutboxEnqueueReducer from "./outbox_enqueue_reducer";
 import OutboxMarkDeliveredReducer from "./outbox_mark_delivered_reducer";
 import OutboxMarkFailedReducer from "./outbox_mark_failed_reducer";
 import RecordArtifactReducer from "./record_artifact_reducer";
+import RecordControllerPromotionReducer from "./record_controller_promotion_reducer";
 import RecordEvaluationReducer from "./record_evaluation_reducer";
 import RecordExperimentReducer from "./record_experiment_reducer";
 import RecordFindingReducer from "./record_finding_reducer";
@@ -54,6 +55,7 @@ import RegisterBridgeReducer from "./register_bridge_reducer";
 import ReleaseRevisionLeaseReducer from "./release_revision_lease_reducer";
 import RenewRevisionLeaseReducer from "./renew_revision_lease_reducer";
 import RevokeGrantReducer from "./revoke_grant_reducer";
+import RotateBridgeIdentityReducer from "./rotate_bridge_identity_reducer";
 import SubmitCandidateReducer from "./submit_candidate_reducer";
 import UnregisterBridgeReducer from "./unregister_bridge_reducer";
 
@@ -65,6 +67,7 @@ import AttemptHeartbeatRow from "./attempt_heartbeat_table";
 import BaselineRow from "./baseline_table";
 import BaselineRequirementRow from "./baseline_requirement_table";
 import CandidateRow from "./candidate_table";
+import ControllerPromotionRow from "./controller_promotion_table";
 import ControllerRevisionRow from "./controller_revision_table";
 import EvaluationRow from "./evaluation_table";
 import EvidenceRow from "./evidence_table";
@@ -146,6 +149,20 @@ const tablesSchema = __schema({
       { name: 'candidate_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, CandidateRow),
+  controllerPromotion: __table({
+    name: 'controller_promotion',
+    indexes: [
+      { accessor: 'id', name: 'controller_promotion_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'by_task_family', name: 'controller_promotion_task_family_idx_btree', algorithm: 'btree', columns: [
+        'taskFamily',
+      ] },
+    ],
+    constraints: [
+      { name: 'controller_promotion_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, ControllerPromotionRow),
   controllerRevision: __table({
     name: 'controller_revision',
     indexes: [
@@ -369,6 +386,7 @@ const reducersSchema = __reducers(
   __reducerSchema("outbox_mark_delivered", OutboxMarkDeliveredReducer),
   __reducerSchema("outbox_mark_failed", OutboxMarkFailedReducer),
   __reducerSchema("record_artifact", RecordArtifactReducer),
+  __reducerSchema("record_controller_promotion", RecordControllerPromotionReducer),
   __reducerSchema("record_evaluation", RecordEvaluationReducer),
   __reducerSchema("record_experiment", RecordExperimentReducer),
   __reducerSchema("record_finding", RecordFindingReducer),
@@ -380,6 +398,7 @@ const reducersSchema = __reducers(
   __reducerSchema("release_revision_lease", ReleaseRevisionLeaseReducer),
   __reducerSchema("renew_revision_lease", RenewRevisionLeaseReducer),
   __reducerSchema("revoke_grant", RevokeGrantReducer),
+  __reducerSchema("rotate_bridge_identity", RotateBridgeIdentityReducer),
   __reducerSchema("submit_candidate", SubmitCandidateReducer),
   __reducerSchema("unregister_bridge", UnregisterBridgeReducer),
 );

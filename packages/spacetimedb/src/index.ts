@@ -1541,6 +1541,41 @@ export const recordReview = databaseSchema.reducer(
   },
 );
 
+export const recordControllerPromotion = databaseSchema.reducer(
+  {
+    id: t.string(),
+    taskFamily: t.string(),
+    version: t.u32(),
+    controllerSha256: t.string(),
+    parentControllerSha256: t.string(),
+    investigationId: t.string(),
+    candidateId: t.string(),
+    reviewId: t.string(),
+  },
+  (ctx, input) => {
+    requireBridge(ctx);
+    validIds(input.id, input.investigationId, input.candidateId, input.reviewId);
+    const review = ctx.db.humanReview.id.find(input.reviewId);
+    if (!review || review.decision !== "approved") {
+      reject("approved_review_required", "Controller promotion requires an approved review");
+    }
+    if (review.controllerSha256 !== input.controllerSha256 || review.candidateId !== input.candidateId
+      || review.investigationId !== input.investigationId) {
+      reject("review_mismatch", "Promotion does not match the approved review");
+    }
+    if (ctx.db.controllerPromotion.id.find(input.id)) {
+      reject("duplicate_id", "Controller promotion id already exists");
+    }
+    if ([...ctx.db.controllerPromotion.by_task_family.filter(input.taskFamily)].some((row) => row.version === input.version)) {
+      reject("duplicate_version", "Controller promotion version already exists for this task family");
+    }
+    ctx.db.controllerPromotion.insert({
+      ...input,
+      createdAtMs: BigInt(nowMs(ctx)),
+    });
+  },
+);
+
 export const outboxEnqueue = databaseSchema.reducer(
   {
     grant: t.option(grantRef),

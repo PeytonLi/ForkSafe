@@ -9,6 +9,7 @@ import { EnvironmentGrid } from "./EnvironmentGrid";
 import { EvidenceFeed } from "./EvidenceFeed";
 import { AskPanel } from "./AskPanel";
 import { TimelinePanel } from "./TimelinePanel";
+import { LearningPanel } from "./LearningPanel";
 import { Badge, Panel } from "./Panel";
 import { human, stateTone } from "./tone";
 import styles from "./InvestigationView.module.css";
@@ -78,6 +79,7 @@ export function InvestigationView({ id, tab, focus, onTab }: { id: string; tab: 
               {active === "ask" && <AskPanel workspace={w} />}
               {active === "timeline" && <TimelinePanel workspace={w} focus={focus} />}
               {active === "compare" && <ComparePanel workspace={w} />}
+              {active === "learning" && <LearningPanel workspace={w} />}
             </div>
           </div>
         );

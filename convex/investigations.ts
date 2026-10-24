@@ -8,6 +8,7 @@ import { hasPrivateAccess, isPublicInvestigation, requireInvestigationRead, requ
 import { appId, assertUUID } from "./lib/validators.js";
 import { MoreInvestigationRequest } from "./forgeProtocolExt.js";
 import { finalizeCancelledJob } from "./lib/jobOps.js";
+import { currentControllerForFamily, DEFAULT_TASK_FAMILY, selectPriorHints } from "./learning.js";
 
 export const requestMoreFromForge = internalMutation({
   args: { request: v.any(), installationId: v.string(), requestedBy: v.string() },
@@ -144,6 +145,7 @@ async function startHandler(ctx: MutationCtx, args: { investigationId: string; e
     if (flag?.admissionPaused) throw new ConvexError("admission_paused");
     const now = Date.now();
     const jobIds: string[] = [];
+    const priorHints = await selectPriorHints(ctx, investigation);
     for (let index = 0; index < investigation.requestedEnvironments; index += 1) {
       const environmentId = appId();
       const jobId = appId();
@@ -163,6 +165,17 @@ async function startHandler(ctx: MutationCtx, args: { investigationId: string; e
         experimentsUsed: 0,
         candidatesUsed: 0,
       });
+      for (const [rank, finding] of priorHints.entries()) {
+        await ctx.db.insert("priorHintOffers", {
+          investigationId: investigation.appId,
+          environmentId,
+          findingId: finding.findingId,
+          sourceInvestigationId: finding.sourceInvestigationId,
+          rank,
+          summary: finding.summary,
+          offeredAtMs: now,
+        });
+      }
       await ctx.db.insert("jobs", {
         appId: jobId,
         kind: "factory_session",
@@ -171,7 +184,7 @@ async function startHandler(ctx: MutationCtx, args: { investigationId: string; e
         environmentId,
         epoch: 0,
         idempotencyKey: `${investigation.appId}:factory:${index}`,
-        payload: { environmentIndex: index },
+        payload: { environmentIndex: index, priorHints },
         attemptsUsed: 0,
         maxAttempts: 2,
         operationId,
@@ -506,6 +519,7 @@ export const workspace = query({
 export const capture = mutation({
   args: {
     title: v.string(), seed: v.number(), sceneOverrides: v.record(v.string(), v.number()), requestedEnvironments: v.number(),
+    taskFamily: v.optional(v.string()), controller: v.optional(v.union(v.literal("approved"), v.literal("baseline"))),
     autoStart: v.optional(v.boolean()), idempotencyKey: v.optional(v.string()), serviceToken: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<{ accepted: true; investigationId: string } | { accepted: false; mode: string; reason: string }> => {
@@ -522,6 +536,12 @@ export const capture = mutation({
     if (process.env.DAYTONA_MODE !== "cloud" || !process.env.DAYTONA_API_KEY) {
       return { accepted: false, mode: process.env.DAYTONA_MODE === "local" ? "local" : "blocked", reason: "capture needs a Daytona execution sandbox; DAYTONA_API_KEY is not configured" };
     }
+    const taskFamily = args.taskFamily ?? DEFAULT_TASK_FAMILY;
+    if (!["divider_pick_place", "push_through_gap"].includes(taskFamily)) {
+      return { accepted: false, mode: "live", reason: "taskFamily must be divider_pick_place or push_through_gap" };
+    }
+    const requestedChoice = args.controller ?? "approved";
+    const current = await currentControllerForFamily(ctx, taskFamily);
     const bundle = await ctx.db.query("bundles").withIndex("by_key", (q) => q.eq("key", "simulator")).unique();
     const baseline = await ctx.db.query("bundles").withIndex("by_key", (q) => q.eq("key", "baseline_controller")).unique();
     if (!bundle || !baseline) return { accepted: false, mode: "blocked", reason: "simulator bundle not published (run apps/runner publish-bundles)" };
@@ -531,13 +551,19 @@ export const capture = mutation({
     const now = Date.now();
     const investigationId = appId();
     const baselineExperimentId = appId();
+    const useApproved = requestedChoice === "approved" && current?.source === "approved";
     await ctx.db.insert("investigations", {
       appId: investigationId, title: args.title.trim().slice(0, 200), state: "capturing", cancelStatus: "none", cancelEpoch: 0, version: 1,
       requestedEnvironments: args.requestedEnvironments,
       baselineCase: { caseId: "original-divider-collision", suite: "original", seed: args.seed, sceneOverrides: args.sceneOverrides, description: "Captured baseline failure" },
       baselineExperimentId,
       budget: { wallTimeMs: 600_000, maxExperimentsPerEnv: 20, maxCandidatesPerEnv: 2, maxFinalCandidates: 3 },
-      idempotencyKey, captureStatus: "pending", autoStart: args.autoStart ?? true, createdAtMs: now, updatedAtMs: now,
+      idempotencyKey, captureStatus: "pending", autoStart: args.autoStart ?? true,
+      taskFamily,
+      controllerSha256: useApproved ? current!.controllerSha256 : baseline.sha256,
+      controllerVersion: useApproved ? current!.version : 1,
+      controllerChoice: useApproved ? "approved" : "baseline",
+      createdAtMs: now, updatedAtMs: now,
     });
     await ctx.scheduler.runAfter(0, internal.capture.run, { investigationId });
     return { accepted: true, investigationId };
@@ -558,7 +584,11 @@ export const setCapture = internalMutation({
     await ctx.db.patch(investigation._id, {
       captureStatus: args.captureStatus, updatedAtMs: now, version: investigation.version + 1,
       // A late/duplicate "recorded" must not pull an already-started investigation back to admitted.
-      ...(args.captureStatus === "recorded" && ["created", "capturing", "admitted"].includes(investigation.state) ? { state: "admitted" as const } : {}),
+      ...(args.captureStatus === "recorded" && investigation.retryOfInvestigationId
+        ? { state: "completed" as const, finishedAtMs: now }
+        : args.captureStatus === "recorded" && ["created", "capturing", "admitted"].includes(investigation.state)
+          ? { state: "admitted" as const }
+          : {}),
       ...(args.captureStatus === "failed" ? { state: "failed" as const, lastError: args.error ?? "capture_failed", finishedAtMs: now } : {}),
     });
     if (args.captureStatus === "failed") {

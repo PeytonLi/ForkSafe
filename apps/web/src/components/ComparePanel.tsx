@@ -156,17 +156,29 @@ function CandidateDetail({ w, cand }: { w: InvestigationWorkspace; cand: Control
   );
 }
 
-function SyncedReplays({ original, candidate, scene }: { original: SimRunResult; candidate: SimRunResult; scene: Record<string, number> }) {
+export function SyncedReplays({
+  original,
+  candidate,
+  scene,
+  labels = { before: "Original", after: "Repaired candidate" },
+  compact = false,
+}: {
+  original: SimRunResult;
+  candidate: SimRunResult;
+  scene: Record<string, number>;
+  labels?: { before: string; after: string };
+  compact?: boolean;
+}) {
   const clock = useReplayClock(Math.max(replayDuration(original.frames), replayDuration(candidate.frames)));
   const markers = [
-    ...(original.firstFailure ? [{ tSec: original.firstFailure.tSec, label: `original ${human(original.firstFailure.kind)}` }] : []),
-    ...(candidate.firstFailure ? [{ tSec: candidate.firstFailure.tSec, label: `candidate ${human(candidate.firstFailure.kind)}` }] : []),
+    ...(original.firstFailure ? [{ tSec: original.firstFailure.tSec, label: `${labels.before.toLowerCase()} ${human(original.firstFailure.kind)}` }] : []),
+    ...(candidate.firstFailure ? [{ tSec: candidate.firstFailure.tSec, label: `${labels.after.toLowerCase()} ${human(candidate.firstFailure.kind)}` }] : []),
   ];
   const outcome = (r: SimRunResult) =>
     r.completed ? `Completed in ${r.completionTimeSec?.toFixed(1) ?? "?"} s` : `Failed: ${r.failureKinds.map(words).join(", ") || "incomplete"}`;
   const [ghost, setGhost] = useState(true);
   return (
-    <div>
+    <div className={compact ? styles.compact : undefined}>
       <div className={styles.ghostBar}>
         <button type="button" className={ghost ? styles.ghostOn : styles.ghostOff} aria-pressed={ghost} onClick={() => setGhost((g) => !g)} data-testid="ghost-toggle">
           <span className={styles.switch} aria-hidden="true"><span /></span>
@@ -183,11 +195,11 @@ function SyncedReplays({ original, candidate, scene }: { original: SimRunResult;
       </div>
       <div className={styles.panes}>
         <div>
-          <ReplayViewer replay={original} t={clock.t} label="Original" scene={scene} />
+          <ReplayViewer replay={original} t={clock.t} label={labels.before} scene={scene} />
           <p className={styles.outcome}><Badge tone={original.completed ? "green" : "red"}>{outcome(original)}</Badge></p>
         </div>
         <div>
-          <ReplayViewer replay={candidate} t={clock.t} label="Repaired candidate" scene={scene} ghost={ghost ? original : undefined} />
+          <ReplayViewer replay={candidate} t={clock.t} label={labels.after} scene={scene} ghost={ghost ? original : undefined} />
           <p className={styles.outcome}><Badge tone={candidate.completed ? "green" : "red"}>{outcome(candidate)}</Badge></p>
         </div>
       </div>

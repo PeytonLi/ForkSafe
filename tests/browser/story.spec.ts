@@ -1,4 +1,8 @@
-import { expect, test, type Page } from "../../apps/web/e2e/playwright";
+import { expect, test, type Page, type TestInfo } from "../../apps/web/e2e/playwright";
+
+function learningScreenshotPath(info: TestInfo, name: string): string {
+  return process.env.CI ? info.outputPath(name) : `/home/ubuntu/lane-d/shots/${name}`;
+}
 
 async function expectNoHorizontalOverflow(page: Page) {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
@@ -289,6 +293,46 @@ test("why did this fail: cited fixture answer, withheld source, not-enough and o
   await page.getByTestId("ask-submit").click();
   await expect(page.getByTestId("ask-error")).toContainText("only be about this investigation");
   await expectNoHorizontalOverflow(page);
+});
+
+test("learning loop: approved lineage and fixture retry at desktop and mobile sizes", async ({ page }, info) => {
+  const mobile = info.project.name === "mobile";
+  const size = mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 };
+  await page.setViewportSize(size);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/");
+  await page.addStyleTag({ content: "html{scrollbar-width:none} *,*::before,*::after{animation-duration:0.01ms!important;transition-duration:0.01ms!important;scroll-behavior:auto!important}" });
+  if (mobile) await page.getByLabel("Switch investigation").selectOption(PANDA);
+  else await page.getByRole("button", { name: /Panda clips divider/ }).click();
+
+  await openSection(page, mobile, "learning", "What we learned");
+  const learning = page.getByTestId("learning-panel");
+  await expect(learning.getByTestId("controller-lineage")).toContainText("Baseline v1");
+  await expect(learning.getByTestId("retry-unavailable")).toContainText("No fix has been approved");
+  await expectNoHorizontalOverflow(page);
+  await page.screenshot({ path: learningScreenshotPath(info, `learning-before-approval-${info.project.name}.png`) });
+
+  await openSection(page, mobile, "compare", "Compare & review");
+  const subtabs = page.getByTestId("compare-subtabs");
+  await subtabs.getByRole("tab", { name: "Review" }).click();
+  const review = page.getByTestId("review-panel");
+  await review.getByLabel("Approve for engineering review").check();
+  await review.getByTestId("submit-review").click();
+  await expect(review.getByTestId("review-history")).toContainText("Approved");
+
+  await openSection(page, mobile, "learning", "What we learned");
+  await expect(learning.getByTestId("controller-lineage")).toContainText("Fix approved in Panda clips");
+  await expect(learning.getByTestId("controller-lineage")).toContainText("v2");
+  await expect(learning.getByTestId("retry-improved")).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+  await page.screenshot({ path: learningScreenshotPath(info, `learning-after-approval-${info.project.name}.png`) });
+
+  await learning.getByTestId("retry-improved").click();
+  await expect(learning.getByText("Recorded fixture, not a live rerun")).toBeVisible();
+  await expect(learning.getByTestId("retry-outcome")).toContainText("Before: hit the divider at 4.1 s. After: placed the cube in 7.1 s.");
+  await expect(learning.getByTestId("replay-viewer")).toHaveCount(2);
+  await expectNoHorizontalOverflow(page);
+  await page.screenshot({ path: learningScreenshotPath(info, `learning-after-retry-${info.project.name}.png`) });
 });
 
 test("compare: original run as a time-synced ghost with legend and toggle", async ({ page }, info) => {

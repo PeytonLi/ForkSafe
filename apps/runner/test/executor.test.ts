@@ -9,7 +9,7 @@ import {
   PeriodicExportingMetricReader,
 } from "@opentelemetry/sdk-metrics";
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
-import { ActivityLog, FixtureFactoryAdapter, SessionManager, UsageLedger } from "@forksafe/agents";
+import { ActivityLog, FixtureFactoryAdapter, SessionManager, UsageLedger, type AdapterSession, type AdapterSessionOptions } from "@forksafe/agents";
 import { Job } from "@forksafe/contracts";
 import { initTelemetry } from "@forksafe/telemetry";
 import { RunnerTelemetry } from "../src/telemetry.js";
@@ -26,6 +26,23 @@ class PreservingSpanExporter extends InMemorySpanExporter {
 }
 
 const dirs: string[] = [];
+
+class PromptCapturingAdapter extends FixtureFactoryAdapter {
+  readonly prompts: string[] = [];
+
+  override async createSession(options: AdapterSessionOptions): Promise<AdapterSession> {
+    const session = await super.createSession(options);
+    const prompts = this.prompts;
+    return {
+      ...session,
+      async *stream(prompt, streamOptions) {
+        prompts.push(prompt);
+        yield* session.stream(prompt, streamOptions);
+      },
+    };
+  }
+}
+
 async function setup(
   adapter = new FixtureFactoryAdapter(),
   onTurnComplete?: ConstructorParameters<typeof SessionManager>[0]["onTurnComplete"],
@@ -47,6 +64,37 @@ afterEach(async () => {
 });
 
 describe("RunnerExecutor", () => {
+  it("includes prior hints in the first repair turn", async () => {
+    const adapter = new PromptCapturingAdapter();
+    const { manager } = await setup(adapter);
+    const lease = sampleLease();
+    lease.job.payload = {
+      repair: {
+        investigationTitle: "Panda clips divider",
+        environmentIndex: 0,
+        baselineCase: { caseId: "case", suite: "original", seed: 1, sceneOverrides: {} },
+        failureSummary: "Collision",
+        findingsDigest: "No current findings.",
+        budgets: {},
+        priorHints: [
+          { findingId: "finding-one", sourceInvestigationId: "investigation-one", summary: "First prior hint." },
+          { findingId: "finding-two", sourceInvestigationId: "investigation-two", summary: "Second prior hint." },
+        ],
+      },
+    };
+    const source = {
+      heartbeat: vi.fn(async () => ({ ok: true as const, leasedUntilMs: Date.now() + 30_000, epoch: 0 })),
+      complete: vi.fn(async () => ({ accepted: true })),
+    };
+    const executor = new RunnerExecutor({ sessions: manager, source: source as never, log: new ActivityLog(), maxTurns: 1 });
+
+    await executor.execute(lease);
+
+    expect(adapter.prompts[0]).toContain("Prior hints from earlier investigations");
+    expect(adapter.prompts[0]).toContain("finding-one");
+    expect(adapter.prompts[0]).toContain("finding-two");
+  });
+
   it("keeps runner telemetry disabled when no endpoint is configured", async () => {
     const exporter = new InMemorySpanExporter();
     const telemetry = initTelemetry({
