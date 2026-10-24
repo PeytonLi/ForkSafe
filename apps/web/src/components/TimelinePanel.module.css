@@ -1,7 +1,7 @@
 .chartWrap { display: grid; min-width: 0; gap: 0.6rem; }
 .note { margin: 0 0 0.6rem; color: var(--muted); font-size: var(--text-xs); }
-.legend { display: flex; flex-wrap: wrap; gap: 0.3rem 0.9rem; margin: 0; padding: 0; list-style: none; color: var(--muted); font-size: 11px; }
-.legend li { display: inline-flex; align-items: center; gap: 0.35rem; }
+.legend { display: grid; grid-template-columns: repeat(3, max-content); justify-content: space-between; gap: 0.3rem 0.9rem; margin: 0; padding: 0; list-style: none; color: var(--muted); font-size: 11px; }
+.legend li { display: inline-flex; align-items: center; gap: 0.35rem; white-space: nowrap; }
 .legendSwatch { display: inline-block; width: 9px; height: 9px; border-radius: 50%; }
 .axis { display: grid; grid-template-columns: 6.5rem minmax(0, 1fr); color: var(--muted); font-size: 10px; }
 .ticks { position: relative; height: 1rem; margin-right: 1.2rem; }

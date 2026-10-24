@@ -73,14 +73,21 @@ export function HealthPage() {
   return (
     <section className={styles.page} aria-labelledby="health-h" data-testid="health-page">
       <header className={styles.head}>
-        <div>
-          <span className={styles.eyebrow}>System health</span>
-          <h1 id="health-h">How everything is running</h1>
+        <div className={styles.headContent}>
+          <div className={styles.titleRow}>
+            <h1 id="health-h">How everything is running</h1>
+            <button
+              type="button"
+              className={styles.refresh}
+              onClick={() => { readiness.reload(); pipeline.reload(); }}
+              disabled={readiness.status === "loading"}
+              data-testid="health-refresh"
+            >
+              {readiness.status === "loading" ? "Checking…" : "Check again"}
+            </button>
+          </div>
           <p>{client.source.kind === "fixture" ? "This app is showing recorded examples, so nothing here is a live result." : "Each service ForkSafe depends on, and what it means for your investigations."}</p>
         </div>
-        <button type="button" onClick={() => { readiness.reload(); pipeline.reload(); }} disabled={readiness.status === "loading"} data-testid="health-refresh">
-          {readiness.status === "loading" ? "Checking…" : "Check again"}
-        </button>
       </header>
 
       <div className={styles.layout}>
@@ -122,13 +129,13 @@ function ServiceCard({ r }: { r: WebIntegrationReadiness }) {
   );
   if (narrow && !open) {
     return (
-      <li className={styles.card} data-testid={`health-${r.name}`} data-group={group}>
+      <li className={styles.card} data-testid={`health-${r.name}`} data-group={group} data-expanded="false">
         <button type="button" className={styles.cardToggle} aria-expanded={false} onClick={() => setOpen(true)}>{head}</button>
       </li>
     );
   }
   return (
-    <li className={styles.card} data-testid={`health-${r.name}`} data-group={group}>
+    <li className={styles.card} data-testid={`health-${r.name}`} data-group={group} data-expanded={narrow ? "true" : undefined}>
       {narrow ? <button type="button" className={styles.cardToggle} aria-expanded onClick={() => setOpen(false)}>{head}</button> : <div className={styles.cardHead}>{head}</div>}
       <p className={styles.note}>{healthNote(r)}</p>
       <div className={styles.cardFoot}>
