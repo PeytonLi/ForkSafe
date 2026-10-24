@@ -31,6 +31,8 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm -r --if-present test
       - run: pnpm test:integration
+      - name: Ops script tests (nightly smoke and release check)
+        run: node --test 'scripts/tests/*.test.mjs'
       - name: Build the fixture web app
         run: env -u VITE_CONVEX_URL pnpm --filter @forksafe/web build
       - name: Install Chromium and system dependencies

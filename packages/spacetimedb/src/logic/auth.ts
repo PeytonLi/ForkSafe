@@ -52,3 +52,19 @@ export function checkScope(
   }
   return { ok: true };
 }
+
+export interface BridgeIdentityLike {
+  identityHex: string;
+  role: string;
+}
+
+export function planBridgeRotation(
+  rows: readonly BridgeIdentityLike[],
+  senderHex: string,
+): { revokeHex: string[] } {
+  return {
+    revokeHex: rows
+      .filter((row) => row.role === "convex" && row.identityHex !== senderHex)
+      .map((row) => row.identityHex),
+  };
+}

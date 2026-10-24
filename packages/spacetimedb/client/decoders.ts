@@ -10,6 +10,7 @@ import {
   RevisionLease,
 } from "@forksafe/contracts";
 import { deriveCandidateStatus } from "../src/logic/candidates.js";
+import { buildTombstoneIndex, partitionCandidates, partitionFindings } from "../src/logic/tombstones.js";
 
 export interface GrantRow {
   id: string;
@@ -139,6 +140,14 @@ export interface ExperimentRow {
   controllerSha256: string;
   startedAtMs: bigint;
   finishedAtMs?: bigint;
+}
+
+export interface TombstoneRow {
+  key: string;
+  targetKind: string;
+  targetId: string;
+  reason: string;
+  createdAtMs: bigint;
 }
 
 const asNumber = (value: bigint): number => Number(value);
@@ -335,4 +344,36 @@ export function decodeArtifact(row: {
       ? {}
       : { producedByAttemptId: row.producedByAttemptId }),
   });
+}
+
+export function decodeLiveFindings(
+  findingRows: FindingRow[],
+  evidenceRows: EvidenceRow[],
+  tombstoneRows: TombstoneRow[],
+) {
+  const partition = partitionFindings(
+    findingRows,
+    evidenceRows,
+    buildTombstoneIndex(tombstoneRows),
+  );
+  return {
+    live: partition.live.map(({ evidence, ...row }) => decodeFinding(row, evidence)),
+    revoked: partition.revoked,
+  };
+}
+
+export function decodeLiveCandidates(
+  candidateRows: CandidateRow[],
+  evaluations: EvaluationRow[],
+  reviews: ReviewRow[],
+  tombstoneRows: TombstoneRow[],
+) {
+  const partition = partitionCandidates(
+    candidateRows,
+    buildTombstoneIndex(tombstoneRows),
+  );
+  return {
+    live: partition.live.map((row) => decodeCandidate(row, evaluations, reviews, false)),
+    revoked: partition.revoked,
+  };
 }
