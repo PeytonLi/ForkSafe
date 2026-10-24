@@ -11,11 +11,40 @@ export type SpacetimeConfig = {
   bridgeSecretPresent: boolean;
 };
 
+export class SpacetimeConfigError extends Error {
+  readonly code = "invalid_spacetimedb_uri";
+
+  constructor() {
+    super("invalid_spacetimedb_uri");
+    this.name = "SpacetimeConfigError";
+  }
+}
+
+export function spacetimeHttpBase(uri: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(uri.trim());
+  } catch {
+    throw new SpacetimeConfigError();
+  }
+  const protocol = ({
+    "http:": "http:",
+    "https:": "https:",
+    "ws:": "http:",
+    "wss:": "https:",
+  } as Record<string, string>)[parsed.protocol];
+  if (!protocol || !parsed.host || parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new SpacetimeConfigError();
+  }
+  const path = parsed.pathname.replace(/\/+$/, "");
+  return `${protocol}//${parsed.host}${path}`;
+}
+
 export function spacetimeConfig(env: Record<string, string | undefined> = process.env): SpacetimeConfig {
   const modeValue = env.SPACETIMEDB_MODE ?? "cloud";
   const uri = env.SPACETIMEDB_URI ?? (modeValue === "local" ? "ws://127.0.0.1:3000" : "wss://maincloud.spacetimedb.com");
   const database = env.SPACETIMEDB_DATABASE ?? "forksafe";
-  const httpBase = uri.replace(/^wss:\/\//, "https://").replace(/^ws:\/\//, "http://").replace(/\/+$/, "");
+  const httpBase = uri.trim() ? spacetimeHttpBase(uri) : "";
   const bridgeSecretPresent = Boolean(env.FORKSAFE_BRIDGE_SECRET);
   let mode: SpacetimeMode;
   if (modeValue === "fixture") mode = "fixture";

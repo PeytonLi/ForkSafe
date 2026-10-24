@@ -5,6 +5,7 @@ import {
   HumanReview,
   ExperimentResult,
 } from "@forksafe/contracts";
+import { spacetimeHttpBase } from "../lib/spacetime.js";
 
 type Environment = Record<string, string | undefined>;
 type Row = Record<string, unknown>;
@@ -41,9 +42,11 @@ export class SpacetimeClient {
     private readonly env: Environment = runtimeEnvironment(),
     private readonly fetchImpl: typeof fetch = globalThis.fetch,
   ) {
-    this.uri = (env.SPACETIMEDB_URI ?? "").replace(/\/+$/, "");
+    const configuredUri = env.SPACETIMEDB_URI ?? "";
     this.database = env.SPACETIMEDB_DATABASE ?? "";
-    if (!this.uri || !this.database) throw new SpacetimeUnavailable();
+    if (!configuredUri.trim()) throw new SpacetimeUnavailable();
+    this.uri = spacetimeHttpBase(configuredUri);
+    if (!this.database) throw new SpacetimeUnavailable();
   }
 
   async sql(query: string): Promise<Row[]> {

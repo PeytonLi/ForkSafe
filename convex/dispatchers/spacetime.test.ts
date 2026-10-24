@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { SpacetimeClient, SpacetimeRejected, decodeSqlResponse } from "./spacetime.js";
+import { SpacetimeConfigError } from "../lib/spacetime.js";
 
 const findingId = "11111111-1111-4111-8111-111111111111";
 const investigationId = "22222222-2222-4222-8222-222222222222";
@@ -40,6 +41,41 @@ const capturedReducerResponses = {
   recordTombstone: { status: 200, body: "" },
   missingOutboxEntry: { status: 530, body: "outbox_missing: Outbox entry does not exist" },
 };
+
+describe("SpacetimeDB HTTP base", () => {
+  it.each([
+    { uri: "wss://spacetime.example.invalid", httpBase: "https://spacetime.example.invalid" },
+    { uri: "ws://spacetime.example.invalid", httpBase: "http://spacetime.example.invalid" },
+    { uri: "https://spacetime.example.invalid", httpBase: "https://spacetime.example.invalid" },
+    { uri: "http://spacetime.example.invalid", httpBase: "http://spacetime.example.invalid" },
+    { uri: "https://spacetime.example.invalid/base///", httpBase: "https://spacetime.example.invalid/base" },
+  ])("uses the normalized base for $uri", async ({ uri: configuredUri, httpBase }) => {
+    const database = `normalization-test-${crypto.randomUUID()}`;
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json([]));
+    const client = new SpacetimeClient({
+      SPACETIMEDB_URI: configuredUri,
+      SPACETIMEDB_DATABASE: database,
+      SPACETIMEDB_BRIDGE_TOKEN: "wire-token",
+      FORKSAFE_BRIDGE_SECRET: "wire-secret",
+    }, fetcher);
+
+    await expect(client.sql("SELECT 1")).resolves.toEqual([]);
+    expect(fetcher.mock.calls.map(([input]) => String(input))).toEqual([
+      `${httpBase}/v1/database/${database}/call/register_bridge`,
+      `${httpBase}/v1/database/${database}/sql`,
+    ]);
+  });
+
+  it("rejects unsupported schemes as a typed configuration error", () => {
+    const fetcher = vi.fn<typeof fetch>();
+
+    expect(() => new SpacetimeClient({
+      SPACETIMEDB_URI: "ftp://spacetime.example.invalid",
+      SPACETIMEDB_DATABASE: "invalid-scheme-test",
+    }, fetcher)).toThrow(SpacetimeConfigError);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+});
 
 describe("SpacetimeDB HTTP bridge", () => {
   it("decodes SATS JSON options and i64 values into row objects", () => {
