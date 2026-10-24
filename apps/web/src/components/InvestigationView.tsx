@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useState } from "react";
 import { useBrowserAccess } from "../services/browserAccess";
-import { fmtTime, shortId, useClient, useLoad } from "../hooks";
+import { fmtTime, shortId, useClient, useCompact, useLoad } from "../hooks";
+import { activeSection, sectionLabel } from "../sections";
 import { errorCode } from "../services";
 import { CapturePanel } from "./CapturePanel";
 import { ComparePanel } from "./ComparePanel";
@@ -12,14 +13,6 @@ import { Badge, Panel } from "./Panel";
 import { human, stateTone } from "./tone";
 import styles from "./InvestigationView.module.css";
 
-const TABS = [
-  ["capture", "Baseline capture"],
-  ["environments", "Environments"],
-  ["evidence", "Evidence"],
-  ["ask", "Ask why"],
-  ["timeline", "Timeline"],
-  ["compare", "Compare & review"],
-] as const;
 const RUNNING = ["capturing", "admitted", "searching", "evaluating"];
 
 export function InvestigationView({ id, tab, focus, onTab }: { id: string; tab: string; focus?: string; onTab: (t: string, focus?: string) => void }) {
@@ -28,23 +21,8 @@ export function InvestigationView({ id, tab, focus, onTab }: { id: string; tab: 
   const ws = useLoad((c) => c.getWorkspace(id), [id], id);
   const [cancelErr, setCancelErr] = useState<string | null>(null);
   const [cancelBusy, setCancelBusy] = useState(false);
-  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
-  const active = TABS.some(([k]) => k === tab) ? tab : "capture";
-
-  useEffect(() => {
-    if (window.matchMedia("(max-width: 560px)").matches) return;
-    const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
-    tabRefs.current[TABS.findIndex(([key]) => key === active)]?.scrollIntoView({ behavior, block: "nearest", inline: "start" });
-  }, [active]);
-
-  const onTabKey = (e: KeyboardEvent, i: number) => {
-    const n = e.key === "ArrowRight" ? i + 1 : e.key === "ArrowLeft" ? i - 1 : e.key === "Home" ? 0 : e.key === "End" ? TABS.length - 1 : null;
-    if (n === null) return;
-    e.preventDefault();
-    const j = (n + TABS.length) % TABS.length;
-    tabRefs.current[j]?.focus();
-    onTab(TABS[j]![0]);
-  };
+  const compact = useCompact();
+  const active = activeSection(tab);
 
   const cancel = async () => {
     if (!access.canWrite) { access.showSignIn(); return; }
@@ -86,34 +64,14 @@ export function InvestigationView({ id, tab, focus, onTab }: { id: string; tab: 
               )}
             </div>
             {cancelErr && <p role="alert" className={styles.err}>Cancel failed: {cancelErr}</p>}
-            <label className={styles.mobileTabSelect}>
-              <span className="visually-hidden">Investigation sections</span>
-              <select value={active} onChange={(e) => onTab(e.target.value)} aria-label="Investigation sections">
-                {TABS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-              </select>
-            </label>
-            <div role="tablist" aria-label="Investigation sections" className={styles.tabs}>
-              {TABS.map(([k, label], i) => (
-                <button
-                  key={k}
-                  ref={(el) => {
-                    tabRefs.current[i] = el;
-                  }}
-                  role="tab"
-                  type="button"
-                  id={`tab-${k}`}
-                  aria-selected={active === k}
-                  aria-controls={`tabpanel-${k}`}
-                  tabIndex={active === k ? 0 : -1}
-                  className={active === k ? styles.tabActive : styles.tab}
-                  onClick={() => onTab(k)}
-                  onKeyDown={(e) => onTabKey(e, i)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            <div role="tabpanel" id={`tabpanel-${active}`} aria-labelledby={`tab-${active}`} className={styles.tabPanel}>
+            <div
+              key={active}
+              role="tabpanel"
+              id={`tabpanel-${active}`}
+              aria-labelledby={compact ? undefined : `tab-${active}`}
+              aria-label={compact ? sectionLabel(active) : undefined}
+              className={`${styles.tabPanel} page-enter`}
+            >
               {active === "capture" && <CapturePanel workspace={w} />}
               {active === "environments" && <EnvironmentGrid workspace={w} />}
               {active === "evidence" && <EvidenceFeed workspace={w} focus={focus} />}

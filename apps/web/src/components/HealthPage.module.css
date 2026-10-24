@@ -1,3 +1,4 @@
+.filters { justify-self: start; }
 .page { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr); gap: 1rem; }
 .head { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr); gap: 0.5rem; }
 .headContent { min-width: 0; }
@@ -7,10 +8,6 @@
 .head p { max-width: 44rem; margin: 0.35rem 0 0; color: var(--muted); font-size: var(--text-sm); }
 .layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(15rem, 18rem); gap: 1rem; align-items: start; }
 .services { display: grid; min-width: 0; gap: 0.75rem; }
-.filters { display: inline-flex; justify-self: start; max-width: 100%; gap: 0.15rem; padding: 0.2rem; border-radius: 11px; background: #f1f3f0; overflow-x: auto; scrollbar-width: none; }
-.filter, .filterActive { min-height: 32px; padding: 0.25rem 0.65rem; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: var(--text-xs); white-space: nowrap; }
-.filter:hover:not(:disabled), .filterActive:hover:not(:disabled) { transform: none; box-shadow: none; }
-.filterActive { color: var(--ink); background: #fff; box-shadow: 0 1px 4px rgba(36, 51, 54, 0.08); }
 .count { margin-left: 0.2rem; color: var(--muted); font-weight: 500; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 15.5rem), 1fr)); gap: 0.6rem; margin: 0; padding: 0; list-style: none; }
 .card, .pipeline { min-width: 0; padding: 0.85rem 0.9rem; border: 1px solid rgba(221, 226, 222, 0.76); border-radius: var(--radius-md); background: var(--panel); box-shadow: var(--shadow-card); }
