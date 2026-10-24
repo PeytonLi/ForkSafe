@@ -56,6 +56,8 @@ async function trustedExec(trusted: TrustedSandbox, command: string, timeoutSec:
 
 async function putSmallFile(_daytona: unknown, ref: VendorRef, remotePath: string, bytes: Uint8Array): Promise<void> {
   if (bytes.byteLength > 96_000) throw new ConvexError("file_too_large_for_inline_transfer");
+  // The inline writer takes the payload as argv; an empty payload drops the argument and fails remotely.
+  if (bytes.byteLength === 0) throw new ConvexError("file_transfer_empty");
   const encoded = Buffer.from(bytes).toString("base64");
   if (!SAFE_REMOTE_PATH.test(remotePath) || !SAFE_BASE64.test(encoded)) throw new ConvexError("file_transfer_input_rejected");
   const trusted = await trustedSandbox(ref);
@@ -382,7 +384,7 @@ export const runSignedCase = internalAction({
     const runDir = `${RUN_ROOT}/eval-${args.attemptId}/${args.caseId}`;
     await putSmallFile(daytona, ref, `${runDir}/controller/task_controller.py`, new TextEncoder().encode(args.controllerSource));
     if (args.suite === "withheld") await putSmallFile(daytona, ref, `${runDir}/withheld-manifest.json`, await withheldManifestBytes());
-    await putSmallFile(daytona, ref, `${runDir}/work/.keep`, new Uint8Array());
+    await putSmallFile(daytona, ref, `${runDir}/work/.keep`, new Uint8Array([10]));
     const command = signedCaseCommand({ ...args, runDir });
     let run: { exitCode: number; output: string };
     try {
