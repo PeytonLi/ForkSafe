@@ -126,7 +126,7 @@ async function resolvePayload(
       return { kind, record: {} as RecordValue, key, sourceKind: kind, sourceId: id };
     }
     const record = await getByKind(spacetime, kind, id);
-    if (!record) throw new Error("canonical_record_missing");
+    if (!record) throw new SpacetimeRejected("canonical_record_missing");
     return { kind, record, key, sourceKind: kind, sourceId: id };
   }
 

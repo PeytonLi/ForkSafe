@@ -285,13 +285,13 @@ export function decodeSqlResponse(value: unknown): Row[] {
         if (columns.length !== row.length) throw new SpacetimeUnavailable();
         output.push(Object.fromEntries(columns.map((column, index) => [
           column.name,
-          decodeSats(row[index], isI64(column.type)),
+          decodeTyped(row[index], column.type),
         ])));
       } else if (row && typeof row === "object") {
-        const columnTypes = new Map(columns.map((column) => [column.name, isI64(column.type)]));
+        const columnTypes = new Map(columns.map((column) => [column.name, column.type]));
         output.push(Object.fromEntries(Object.entries(row).map(([key, item]) => {
           const name = camelCase(key);
-          return [name, decodeSats(item, columnTypes.get(name))];
+          return [name, decodeTyped(item, columnTypes.get(name))];
         })));
       } else {
         throw new SpacetimeUnavailable();
@@ -299,6 +299,69 @@ export function decodeSqlResponse(value: unknown): Row[] {
     }
   }
   return output;
+}
+
+type AlgebraicElement = { name?: unknown; algebraic_type?: unknown };
+
+/** Decodes one SATS JSON value using the column's algebraic type. Maincloud's
+ *  SQL endpoint encodes options as `[0, value]` / `[1, []]` and product values
+ *  positionally, so the schema is required to recover field names. */
+export function decodeTyped(value: unknown, type: unknown): unknown {
+  if (!type || typeof type !== "object") return decodeSats(value);
+  const node = type as Record<string, unknown>;
+  if ("Sum" in node) return decodeSum(value, node.Sum as { variants?: AlgebraicElement[] });
+  if ("Product" in node) return decodeProduct(value, node.Product as { elements?: AlgebraicElement[] });
+  if ("Array" in node) {
+    if (!Array.isArray(value)) throw new SpacetimeUnavailable();
+    return value.map((item) => decodeTyped(item, node.Array));
+  }
+  if ("I64" in node || "U64" in node || "I128" in node || "U128" in node) return decodeSats(value, true);
+  return decodeSats(value);
+}
+
+function decodeSum(value: unknown, sum: { variants?: AlgebraicElement[] }): unknown {
+  const variants = sum.variants ?? [];
+  const names = variants.map((variant) => decodeSats(variant.name));
+  const isOption = names.length === 2 && names[0] === "some" && names[1] === "none";
+  let tag: number;
+  let payload: unknown;
+  if (Array.isArray(value) && value.length === 2 && typeof value[0] === "number") {
+    [tag, payload] = value as [number, unknown];
+  } else if (value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 1) {
+    const [key, item] = Object.entries(value)[0]!;
+    tag = names.indexOf(key);
+    if (tag < 0 && /^\d+$/.test(key)) tag = Number(key);
+    payload = item;
+  } else if (isOption && (value === null || value === undefined)) {
+    return undefined;
+  } else {
+    throw new SpacetimeUnavailable();
+  }
+  const variant = variants[tag];
+  if (!variant) throw new SpacetimeUnavailable();
+  if (isOption) return tag === 0 ? decodeTyped(payload, variant.algebraic_type) : undefined;
+  const name = names[tag];
+  const decoded = decodeTyped(payload, variant.algebraic_type);
+  const unit = decoded === undefined || (Array.isArray(decoded) && decoded.length === 0)
+    || (decoded && typeof decoded === "object" && Object.keys(decoded).length === 0);
+  return unit ? name : { [String(name)]: decoded };
+}
+
+function decodeProduct(value: unknown, product: { elements?: AlgebraicElement[] }): unknown {
+  const elements = product.elements ?? [];
+  if (Array.isArray(value)) {
+    if (value.length !== elements.length) throw new SpacetimeUnavailable();
+    return Object.fromEntries(elements.map((element, index) => [
+      camelCase(decodeSats(element.name) ?? String(index)),
+      decodeTyped(value[index], element.algebraic_type),
+    ]));
+  }
+  if (!value || typeof value !== "object") throw new SpacetimeUnavailable();
+  const types = new Map(elements.map((element) => [camelCase(decodeSats(element.name)), element.algebraic_type]));
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => {
+    const name = camelCase(key);
+    return [name, decodeTyped(item, types.get(name))];
+  }));
 }
 
 function decodeSats(value: unknown, i64 = false): unknown {
