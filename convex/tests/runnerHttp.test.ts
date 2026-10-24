@@ -193,13 +193,128 @@ describe("signed runner HTTP routes", () => {
     expect(heartbeat.status).toBe(200);
     expect(await heartbeat.json()).toMatchObject({ ok: true });
 
-    const complete = await signedPost(t, fixture, "/runner/complete", {
+    const completion = {
       operationId: crypto.randomUUID(), jobId: fixture.jobId,
       attemptId: fixture.attemptId, grantId: fixture.grantId, epoch: fixture.epoch,
       outcome: "succeeded", result: {}, sessions: [],
       finishedAtMs: Date.now(),
-    });
+    };
+    const complete = await signedPost(t, fixture, "/runner/complete", completion);
     expect(complete.status).toBe(200);
-    expect(await complete.json()).toMatchObject({ accepted: true });
+    const firstResponse = await complete.json();
+    expect(firstResponse).toMatchObject({ accepted: true });
+    await t.mutation(internal.runnerControl.revokeCredentials, {
+      investigationId: fixture.investigationId, reason: "replay test",
+    });
+    const replay = await signedPost(t, fixture, "/runner/complete", completion);
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toEqual(firstResponse);
+
+    const changedBody = await signedPost(t, fixture, "/runner/complete", { ...completion, result: { changed: true } });
+    expect(changedBody.status).toBe(401);
+    const otherOperation = await signedPost(t, fixture, "/runner/complete", { ...completion, operationId: crypto.randomUUID() });
+    expect(otherOperation.status).toBe(401);
+    const rawBody = JSON.stringify(completion);
+    const badSignature = await t.fetch("/runner/complete", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-forksafe-runner": fixture.credentialId,
+        "x-forksafe-timestamp": String(Date.now()),
+        "x-forksafe-signature": "0".repeat(64),
+      },
+      body: rawBody,
+    });
+    expect(badSignature.status).toBe(401);
+  });
+
+  it("enforces global model-turn reservations and accepts owned usage after revocation", async () => {
+    const t = createTest();
+    const fixture = await activeRunner(t);
+    const reservationArgs = (turnIndex: number) => ({
+      attemptId: fixture.attemptId, grantId: fixture.grantId, epoch: fixture.epoch,
+      sessionId: fixture.sessionId, turnKey: `${fixture.attemptId}:${fixture.sessionId}:${turnIndex}`,
+    });
+    const granted = [];
+    for (let turnIndex = 0; turnIndex < 4; turnIndex += 1) {
+      const response = await signedPost(t, fixture, "/runner/model_turn/reserve", reservationArgs(turnIndex));
+      expect(response.status).toBe(200);
+      granted.push(await response.json());
+    }
+    expect(granted.map((row: any) => row.granted)).toEqual([true, true, true, true]);
+    expect(await (await signedPost(t, fixture, "/runner/model_turn/reserve", reservationArgs(0))).json())
+      .toMatchObject({ granted: true, reservationId: granted[0].reservationId });
+    const blocked = await signedPost(t, fixture, "/runner/model_turn/reserve", reservationArgs(4));
+    expect(await blocked.json()).toMatchObject({
+      granted: false, retryAfterMs: 2_000, reason: "global_capacity_exhausted",
+    });
+
+    await t.run(async (ctx: any) => {
+      const reservation = await ctx.db.query("reservations")
+        .withIndex("by_turn_key", (q: any) => q.eq("turnKey", reservationArgs(0).turnKey)).unique();
+      await ctx.db.patch(reservation._id, { leasedUntilMs: Date.now() - 1 });
+    });
+    const freed = await signedPost(t, fixture, "/runner/model_turn/reserve", reservationArgs(4));
+    expect(await freed.json()).toMatchObject({ granted: true });
+
+    const heartbeat = await signedPost(t, fixture, "/runner/heartbeat", {
+      attemptId: fixture.attemptId, grantId: fixture.grantId, epoch: fixture.epoch,
+    });
+    const heartbeatResult = await heartbeat.json();
+    const activeReservations = await t.run(async (ctx: any) =>
+      await ctx.db.query("reservations").withIndex("by_kind_status", (q: any) =>
+        q.eq("kind", "model_turn").eq("status", "active")).collect(),
+    );
+    expect(activeReservations.filter((row: any) => row.holder.attemptId === fixture.attemptId)
+      .every((row: any) => row.leasedUntilMs === heartbeatResult.leasedUntilMs)).toBe(true);
+
+    const release = await signedPost(t, fixture, "/runner/model_turn/release", reservationArgs(1));
+    expect(await release.json()).toEqual({ released: true });
+    await t.mutation(internal.runnerControl.revokeCredentials, {
+      investigationId: fixture.investigationId, reason: "usage grace test",
+    });
+    const usage = await signedPost(t, fixture, "/runner/usage", {
+      attemptId: fixture.attemptId, sessionId: fixture.sessionId,
+      tokenUsage: { ...tokenUsage, inputTokens: 7, outputTokens: 3 },
+      unknownTurns: 0, partialTurns: 1,
+    });
+    expect(usage.status).toBe(200);
+    expect(await usage.json()).toEqual({ recorded: true });
+    const saved = await t.run(async (ctx: any) =>
+      await ctx.db.query("sessions").withIndex("by_appId", (q: any) => q.eq("appId", fixture.sessionId)).unique(),
+    );
+    expect(saved.tokenUsage).toMatchObject({ inputTokens: 7, outputTokens: 3 });
+    expect(saved.usagePartialTurns).toBe(1);
+  });
+
+  it("returns stale_epoch 409s for heartbeat, tools, model-turn reserve, and completion", async () => {
+    const t = createTest();
+    const fixture = await activeRunner(t);
+    await t.run(async (ctx: any) => {
+      const job = await ctx.db.query("jobs").withIndex("by_appId", (q: any) => q.eq("appId", fixture.jobId)).unique();
+      await ctx.db.patch(job._id, { epoch: fixture.epoch + 1 });
+    });
+    const requests = [
+      ["/runner/heartbeat", {
+        attemptId: fixture.attemptId, grantId: fixture.grantId, epoch: fixture.epoch,
+      }],
+      ["/runner/tools/read_findings", {
+        ...toolContext(fixture), scope: "investigation", limit: 20,
+      }],
+      ["/runner/model_turn/reserve", {
+        attemptId: fixture.attemptId, grantId: fixture.grantId, epoch: fixture.epoch,
+        sessionId: fixture.sessionId, turnKey: `${fixture.attemptId}:${fixture.sessionId}:0`,
+      }],
+      ["/runner/complete", {
+        operationId: crypto.randomUUID(), jobId: fixture.jobId, attemptId: fixture.attemptId,
+        grantId: fixture.grantId, epoch: fixture.epoch, outcome: "succeeded", result: {}, sessions: [],
+        finishedAtMs: Date.now(),
+      }],
+    ] as const;
+    for (const [path, body] of requests) {
+      const response = await signedPost(t, fixture, path, body);
+      expect(response.status, path).toBe(409);
+      expect(await response.json(), path).toEqual({ error: "stale_epoch" });
+    }
   });
 });

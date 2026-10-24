@@ -6,6 +6,61 @@ import { readLimits } from "./lib/constants.js";
 import { decideReserve, countsTowardCapacity } from "./lib/reservations.js";
 import { appId, assertUUID } from "./lib/validators.js";
 
+async function admitOp(ctx: any, op: any, activeCount: number) {
+  const now = Date.now();
+  await ctx.db.insert("reservations", {
+    appId: op.reservationId,
+    kind: "sandbox",
+    status: "active",
+    investigationId: op.investigationId,
+    holder: {
+      ...(op.jobId ? { jobId: op.jobId } : {}),
+      ...(op.attemptId ? { attemptId: op.attemptId } : {}),
+      sandboxOpId: op.appId,
+    },
+    ...(op.environmentId ? { environmentId: op.environmentId } : {}),
+    operationId: op.appId,
+    createdAtMs: now,
+  });
+  await ctx.db.patch(op._id, {
+    status: "requested",
+    reservedSandboxCount: activeCount,
+    updatedAtMs: now,
+  });
+  if (op.environmentId) {
+    const environment = await ctx.db.query("environments")
+      .withIndex("by_appId", (q: any) => q.eq("appId", op.environmentId))
+      .unique();
+    if (environment?.queuedReason === "sandbox_capacity_exhausted") {
+      await ctx.db.patch(environment._id, { queuedReason: undefined, queuedAtMs: undefined });
+    }
+  }
+  if (op.provider === "local" || process.env.DAYTONA_MODE === "local") {
+    const provisionJobId = appId();
+    await ctx.db.insert("jobs", {
+      appId: provisionJobId,
+      kind: "provision_sandbox",
+      state: "reserved",
+      investigationId: op.investigationId,
+      ...(op.environmentId ? { environmentId: op.environmentId } : {}),
+      epoch: 0,
+      idempotencyKey: `${op.appId}:provision`,
+      payload: { sandboxOpId: op.appId },
+      attemptsUsed: 0,
+      maxAttempts: 2,
+      operationId: appId(),
+      admittedCancelEpoch: 0,
+      dependsOn: [],
+      createdAtMs: now,
+      updatedAtMs: now,
+    });
+    await ctx.db.patch(op._id, { jobId: provisionJobId });
+    return { sandboxOpId: op.appId, localWorkerRequired: true, jobId: provisionJobId };
+  }
+  await ctx.scheduler.runAfter(0, internal.daytonaPool.enqueueProvision, { sandboxOpId: op.appId });
+  return { sandboxOpId: op.appId, localWorkerRequired: false };
+}
+
 export const requestSandbox = internalMutation({
   args: {
     purpose: v.union(v.literal("runner"), v.literal("execution"), v.literal("evaluator"), v.literal("bridge")),
@@ -29,25 +84,9 @@ export const requestSandbox = internalMutation({
       .withIndex("by_kind_status", (q) => q.eq("kind", "sandbox").eq("status", "retained_ambiguous"))
       .collect();
     const limits = readLimits();
-    const reservation = decideReserve("sandbox", active.length + ambiguous.length, limits.maxActiveSandboxes);
-    if (!reservation.ok) throw new ConvexError(reservation.reason);
     const operationId = appId();
     const reservationId = appId();
     const now = Date.now();
-    await ctx.db.insert("reservations", {
-      appId: reservationId,
-      kind: "sandbox",
-      status: "active",
-      investigationId: args.investigationId,
-      holder: {
-        ...(args.jobId ? { jobId: args.jobId } : {}),
-        ...(args.attemptId ? { attemptId: args.attemptId } : {}),
-        sandboxOpId: operationId,
-      },
-      environmentId: args.environmentId,
-      operationId,
-      createdAtMs: now,
-    });
     const sandboxOpDbId = await ctx.db.insert("sandboxOps", {
       appId: operationId,
       purpose: args.purpose,
@@ -59,36 +98,114 @@ export const requestSandbox = internalMutation({
       resources: args.resources,
       provider: args.provider,
       reservedSandboxCount: active.length + ambiguous.length,
-      status: "requested",
+      status: "queued",
       reservationId,
       attempts: 0,
       createdAtMs: now,
       updatedAtMs: now,
     });
-    if (args.provider === "local" || process.env.DAYTONA_MODE === "local") {
-      const provisionJobId = appId();
-      await ctx.db.insert("jobs", {
-        appId: provisionJobId,
-        kind: "provision_sandbox",
-        state: "reserved",
-        investigationId: args.investigationId,
-        ...(args.environmentId ? { environmentId: args.environmentId } : {}),
-        epoch: 0,
-        idempotencyKey: `${operationId}:provision`,
-        payload: { sandboxOpId: operationId },
-        attemptsUsed: 0,
-        maxAttempts: 2,
-        operationId: appId(),
-        admittedCancelEpoch: 0,
-        dependsOn: [],
-        createdAtMs: now,
-        updatedAtMs: now,
-      });
-      await ctx.db.patch(sandboxOpDbId, { jobId: provisionJobId });
-      return { sandboxOpId: operationId, localWorkerRequired: true, jobId: provisionJobId };
+    const currentCount = active.length + ambiguous.length;
+    if (decideReserve("sandbox", currentCount, limits.maxActiveSandboxes).ok) {
+      const op = await ctx.db.get(sandboxOpDbId);
+      return await admitOp(ctx, op, currentCount);
     }
-    await ctx.scheduler.runAfter(0, internal.daytonaPool.enqueueProvision, { sandboxOpId: operationId });
-    return { sandboxOpId: operationId, localWorkerRequired: false };
+    if (args.environmentId) {
+      const environment = await ctx.db.query("environments")
+        .withIndex("by_appId", (q) => q.eq("appId", args.environmentId!))
+        .unique();
+      if (environment) {
+        await ctx.db.patch(environment._id, {
+          queuedReason: "sandbox_capacity_exhausted",
+          queuedAtMs: now,
+        });
+      }
+    }
+    return { sandboxOpId: operationId, queued: true, localWorkerRequired: false };
+  },
+});
+
+export const admitQueued = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const active = await ctx.db.query("reservations")
+      .withIndex("by_kind_status", (q) => q.eq("kind", "sandbox").eq("status", "active"))
+      .collect();
+    const ambiguous = await ctx.db.query("reservations")
+      .withIndex("by_kind_status", (q) => q.eq("kind", "sandbox").eq("status", "retained_ambiguous"))
+      .collect();
+    let activeCount = active.length + ambiguous.length;
+    const limits = readLimits();
+    const queued = (await ctx.db.query("sandboxOps")
+      .withIndex("by_status", (q) => q.eq("status", "queued"))
+      .collect()).sort((a, b) => a.createdAtMs - b.createdAtMs);
+    let admitted = 0;
+    let terminated = 0;
+    for (const op of queued) {
+      const investigation = await ctx.db.query("investigations")
+        .withIndex("by_appId", (q) => q.eq("appId", op.investigationId))
+        .unique();
+      if (!investigation || investigation.cancelStatus !== "none"
+        || ["completed", "cancelled", "failed"].includes(investigation.state)) {
+        await ctx.db.patch(op._id, {
+          status: "terminated",
+          lastError: "investigation_closed",
+          terminatedAtMs: Date.now(),
+          updatedAtMs: Date.now(),
+        });
+        if (op.environmentId) {
+          const environment = await ctx.db.query("environments")
+            .withIndex("by_appId", (q) => q.eq("appId", op.environmentId!))
+            .unique();
+          if (environment?.queuedReason === "sandbox_capacity_exhausted") {
+            await ctx.db.patch(environment._id, { queuedReason: undefined, queuedAtMs: undefined });
+          }
+        }
+        terminated += 1;
+        continue;
+      }
+      if (!decideReserve("sandbox", activeCount, limits.maxActiveSandboxes).ok) continue;
+      await admitOp(ctx, op, activeCount);
+      activeCount += 1;
+      admitted += 1;
+    }
+    return { admitted, terminated };
+  },
+});
+
+export const terminateInvestigationOps = internalMutation({
+  args: { investigationId: v.string(), reason: v.string() },
+  handler: async (ctx, args) => {
+    const ops = await ctx.db.query("sandboxOps")
+      .withIndex("by_investigation", (q) => q.eq("investigationId", args.investigationId))
+      .collect();
+    let scheduled = 0;
+    let terminated = 0;
+    for (const op of ops) {
+      if (["terminated", "terminating"].includes(op.status)) continue;
+      if (op.status === "queued") {
+        const now = Date.now();
+        await ctx.db.patch(op._id, {
+          status: "terminated",
+          lastError: args.reason.slice(0, 100),
+          terminatedAtMs: now,
+          updatedAtMs: now,
+        });
+        const reservation = await ctx.db.query("reservations")
+          .withIndex("by_operation", (q) => q.eq("operationId", op.appId))
+          .unique();
+        if (reservation && countsTowardCapacity(reservation.status)) {
+          await ctx.db.patch(reservation._id, {
+            status: "released", releasedAtMs: now, releaseReason: args.reason.slice(0, 100),
+          });
+        }
+        terminated += 1;
+      } else {
+        await ctx.scheduler.runAfter(0, internal.sandboxActions.terminate, { sandboxOpId: op.appId });
+        scheduled += 1;
+      }
+    }
+    if (terminated) await ctx.scheduler.runAfter(0, internal.sandboxes.admitQueued, {});
+    return { scheduled, terminated };
   },
 });
 
@@ -104,7 +221,7 @@ export const updateSandboxOp = internalMutation({
     sandboxOpId: v.string(),
     status: v.union(
       v.literal("requested"), v.literal("creating"), v.literal("ready"), v.literal("ambiguous_create"),
-      v.literal("terminating"), v.literal("ambiguous_terminate"), v.literal("terminated"), v.literal("error"),
+      v.literal("queued"), v.literal("terminating"), v.literal("ambiguous_terminate"), v.literal("terminated"), v.literal("error"),
     ),
     sandbox: v.optional(v.object({ provider: v.string(), id: v.string() })),
     lastError: v.optional(v.string()),
@@ -135,6 +252,7 @@ export const updateSandboxOp = internalMutation({
           releasedAtMs: now,
           releaseReason: "sandbox_terminated",
         });
+        await ctx.scheduler.runAfter(0, internal.sandboxes.admitQueued, {});
       } else if (reservation && ["ambiguous_create", "ambiguous_terminate"].includes(args.status)) {
         await ctx.db.patch(reservation._id, { status: "retained_ambiguous" });
       }

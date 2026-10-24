@@ -5,10 +5,11 @@ import { internalMutation, internalAction } from "./_generated/server.js";
 import { decideExpiry } from "./lib/leasing.js";
 import { reconcileHandoff } from "./lib/handoff.js";
 import { assertUUID } from "./lib/validators.js";
+import { finalizeCancelledJob, markAttemptUsageUnknown, releaseAttemptModelTurns } from "./lib/jobOps.js";
 
 // A sandbox op that never produced a sandbox (create failed or was ambiguous and the sweep could not
 // find anything to destroy) must not block cancellation from finalizing.
-const SETTLED_SANDBOX_STATES = new Set(["terminated", "error", "ambiguous_create"]);
+const SETTLED_SANDBOX_STATES = new Set(["queued", "terminated", "error", "ambiguous_create"]);
 
 export const tick = internalMutation({
   args: { now: v.optional(v.number()), scheduleNext: v.optional(v.boolean()) },
@@ -26,32 +27,15 @@ export const tick = internalMutation({
         .unique();
       if (!attempt) continue;
       if (job.cancelRequestedAtMs !== undefined && now >= job.cancelRequestedAtMs + 30_000) {
-        await ctx.db.patch(attempt._id, { state: "expired", endedAtMs: now });
-        await ctx.db.patch(job._id, { state: "cancelled", updatedAtMs: now });
-        const reservations = await ctx.db.query("reservations")
-          .withIndex("by_operation", (q) => q.eq("operationId", job.operationId))
-          .collect();
-        for (const reservation of reservations) {
-          if (reservation.kind !== "sandbox" && reservation.status === "active") {
-            await ctx.db.patch(reservation._id, {
-              status: "released", releasedAtMs: now, releaseReason: "cancelled",
-            });
-          }
-        }
-        const sandboxOps = await ctx.db.query("sandboxOps")
-          .withIndex("by_investigation", (q) => q.eq("investigationId", job.investigationId))
-          .take(100);
-        for (const op of sandboxOps) {
-          if (op.status !== "terminated") {
-            await ctx.scheduler.runAfter(0, internal.sandboxActions.terminate, { sandboxOpId: op.appId });
-          }
-        }
+        await finalizeCancelledJob(ctx, job, now);
         expired += 1;
         continue;
       }
       const decision = decideExpiry(job, attempt, now);
       if (!decision.ok) continue;
       await ctx.db.patch(attempt._id, { state: decision.attemptState, endedAtMs: now });
+      await releaseAttemptModelTurns(ctx, attempt.appId, now, "attempt_expired");
+      await markAttemptUsageUnknown(ctx, attempt.appId, job.environmentId, now);
       await ctx.db.patch(job._id, {
         state: decision.jobState,
         ...(decision.pendingRevocation ? { pendingRevocation: decision.pendingRevocation } : {}),
@@ -149,6 +133,7 @@ export const tick = internalMutation({
       .withIndex("by_cancel_status", (q) => q.eq("cancelStatus", "cancel_requested"))
       .take(100);
     let finalizedCancellations = 0;
+    let terminationScheduled = 0;
     for (const investigation of cancelling) {
       const investigationJobs = await ctx.db.query("jobs")
         .withIndex("by_investigation", (q) => q.eq("investigationId", investigation.appId))
@@ -156,6 +141,32 @@ export const tick = internalMutation({
       const operations = await ctx.db.query("sandboxOps")
         .withIndex("by_investigation", (q) => q.eq("investigationId", investigation.appId))
         .take(100);
+      for (const job of investigationJobs) {
+        if (["succeeded", "failed", "cancelled"].includes(job.state)) continue;
+        const requestedAt = job.cancelRequestedAtMs ?? now;
+        if (job.cancelRequestedAtMs === undefined) {
+          await ctx.db.patch(job._id, { cancelRequestedAtMs: now, updatedAtMs: now });
+        }
+        const attempt = job.activeAttemptId
+          ? await ctx.db.query("attempts").withIndex("by_appId", (q) => q.eq("appId", job.activeAttemptId!)).unique()
+          : null;
+        const hasLiveLease = Boolean(attempt && ["leased", "heartbeating", "completing"].includes(attempt.state)
+          && attempt.leasedUntilMs > now && ["grant_pending", "granted", "running", "artifacts_pending"].includes(job.state));
+        if (!hasLiveLease || now >= requestedAt + 30_000) {
+          await finalizeCancelledJob(ctx, job, now);
+          job.state = "cancelled";
+        }
+      }
+      for (const operation of operations) {
+        if (operation.status === "queued") {
+          await ctx.db.patch(operation._id, {
+            status: "terminated", lastError: "cancelled", terminatedAtMs: now, updatedAtMs: now,
+          });
+        } else if (!["terminated", "terminating"].includes(operation.status) && terminationScheduled < 20) {
+          await ctx.scheduler.runAfter(0, internal.sandboxActions.terminate, { sandboxOpId: operation.appId });
+          terminationScheduled += 1;
+        }
+      }
       if (investigationJobs.every((job) => ["succeeded", "failed", "cancelled"].includes(job.state)) &&
           operations.every((operation) => SETTLED_SANDBOX_STATES.has(operation.status) || (operation.status === "ambiguous_terminate" && !operation.sandbox))) {
         await ctx.db.patch(investigation._id, {
@@ -164,6 +175,7 @@ export const tick = internalMutation({
         finalizedCancellations += 1;
       }
     }
+    await ctx.scheduler.runAfter(0, internal.sandboxes.admitQueued, {});
     if (args.scheduleNext) await ctx.scheduler.runAfter(5_000, internal.reconcile.tick, { scheduleNext: true });
     return { expired, acknowledged, expiredModelTurns, finalizedCancellations, revocationsScheduled, checkedAtMs: now };
   },

@@ -144,6 +144,9 @@ export async function run(ctx) {
   ]));
   const totalTokens = latestSnapshot.sessions.reduce((sum, session) => sum + tokenCount(session), 0);
   ctx.tokens = totalTokens;
+  ctx.unknownUsageTurns = latestSnapshot.sessions.reduce(
+    (sum, session) => sum + (Number(session.usageUnknownTurns) || 0), 0,
+  );
   const sessionsEvidence = latestSnapshot.environments.map((environment) => {
     const sessions = sessionsByEnvironment.get(environment.appId) ?? [];
     const vendorIds = new Set(sessions.map((session) => session.factorySession?.id).filter(Boolean));
@@ -217,6 +220,7 @@ export async function run(ctx) {
       turns: session.turns ?? 0,
       state: session.state,
       tokenUsage: session.tokenUsage,
+      unknownUsageTurns: session.usageUnknownTurns ?? 0,
       tokens: tokenCount(session),
       passed: (session.turns ?? 0) < 1
         || ((session.turns ?? 0) <= 1 && ["budget_exhausted", "idle", "closed"].includes(session.state)),
@@ -225,7 +229,7 @@ export async function run(ctx) {
       "S5",
       "each session uses at most one turn and closes in an allowed state",
       sessionBudgets.every((item) => item.passed),
-      { sessions: sessionBudgets, totalTokens },
+      { sessions: sessionBudgets, totalTokens, unknownUsageTurns: ctx.unknownUsageTurns },
     );
   } else {
     ctx.checks.notReached("S5", "session turn and token budgets are bounded", "no runner ever started", { sessions: latestSnapshot.sessions, totalTokens });

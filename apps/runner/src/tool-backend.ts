@@ -8,6 +8,7 @@ import {
 } from "@forksafe/contracts";
 import type { ForkSafeToolBackend, ToolCallContext } from "@forksafe/agents";
 import { assertFence } from "./fencing.js";
+import { FencedError } from "./job-source.js";
 import type { Lease } from "./protocol.js";
 
 type BackendInput = Parameters<ForkSafeToolBackend["run_experiment"]>[0];
@@ -61,6 +62,7 @@ export class HttpToolBackend implements ForkSafeToolBackend {
       if (response.status >= 500 && attempt < 2) continue;
       let detail = "";
       try { detail = String((JSON.parse(text) as { error?: string }).error ?? ""); } catch { detail = ""; }
+      if (response.status === 409 && detail === "stale_epoch") throw new FencedError();
       throw new Error(`Runner tool ${name} failed: HTTP ${response.status}${detail ? ` (${detail})` : ""}`);
     }
     throw new Error(`Runner tool ${name} exhausted retries`);

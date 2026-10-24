@@ -23,6 +23,8 @@ export const pipeline = query({
     const credentials = await ctx.db.query("runnerCredentials").order("desc").take(SCAN);
     const runners = credentials.filter((c) => !c.revokedAtMs && c.expiresAtMs > now).length;
     const failedEvaluations = await ctx.db.query("evaluations").withIndex("by_commitStatus", (q) => q.eq("commitStatus", "commit_failed")).take(SCAN);
+    const sessions = await ctx.db.query("sessions").order("desc").take(SCAN);
+    const unknownUsageTurns = sessions.reduce((total, session) => total + (session.usageUnknownTurns ?? 0), 0);
     const oldest = pending.reduce<number | undefined>((min, row) => (min === undefined || row.createdAtMs < min ? row.createdAtMs : min), undefined);
     return {
       mode: isLocalDeployment() ? ("local" as const) : ("live" as const),
@@ -30,6 +32,7 @@ export const pipeline = query({
       activeSandboxes,
       sandboxCap: readLimits().maxActiveSandboxes,
       runners,
+      unknownUsageTurns,
       outboxBacklog: pending.length,
       outboxDead: dead.length,
       deadRows: { total: failedEvaluations.length + dead.length, evaluations: failedEvaluations.length, outbox: dead.length },

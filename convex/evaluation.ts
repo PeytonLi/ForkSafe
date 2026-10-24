@@ -73,9 +73,17 @@ export const closeEnvironments = internalMutation({
     const ops = await ctx.db.query("sandboxOps").withIndex("by_investigation", (q) => q.eq("investigationId", args.investigationId)).collect();
     for (const op of ops) {
       if ((op.purpose === "runner" || op.purpose === "execution") && !["terminated", "terminating"].includes(op.status)) {
-        await ctx.scheduler.runAfter(0, internal.sandboxActions.terminate, { sandboxOpId: op.appId });
+        if (op.status === "queued") {
+          await ctx.db.patch(op._id, {
+            status: "terminated", lastError: "search_complete",
+            terminatedAtMs: Date.now(), updatedAtMs: Date.now(),
+          });
+        } else {
+          await ctx.scheduler.runAfter(0, internal.sandboxActions.terminate, { sandboxOpId: op.appId });
+        }
       }
     }
+    await ctx.scheduler.runAfter(0, internal.sandboxes.admitQueued, {});
     await ctx.scheduler.runAfter(0, internal.runnerControl.revokeCredentials, { investigationId: args.investigationId, reason: "search_complete" });
     const environments = await ctx.db.query("environments").withIndex("by_investigation", (q) => q.eq("investigationId", args.investigationId)).collect();
     const now = Date.now();

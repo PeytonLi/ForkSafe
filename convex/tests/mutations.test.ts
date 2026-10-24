@@ -136,7 +136,7 @@ describe("Convex lifecycle mutations", () => {
     expect((await t.query(api.investigations.get, { investigationId: id, serviceToken: token }))?.cancelStatus).toBe("cancelled");
   });
 
-  it("enforces the sandbox reservation cap including retained ambiguous operations", async () => {
+  it("queues sandbox operations when retained ambiguous operations exhaust capacity", async () => {
     vi.stubEnv("DAYTONA_MAX_ACTIVE_SANDBOXES", "1");
     const t = createTest();
     await t.mutation(internal.sandboxes.requestSandbox, {
@@ -147,9 +147,13 @@ describe("Convex lifecycle mutations", () => {
     await t.mutation(internal.sandboxes.updateSandboxOp, {
       sandboxOpId: operation.appId, status: "ambiguous_create",
     });
-    await expect(t.mutation(internal.sandboxes.requestSandbox, {
+    const queued = await t.mutation(internal.sandboxes.requestSandbox, {
       purpose: "execution", investigationId, snapshot: "forksafe-exec-v1",
       resources: { cpu: 2, memoryGiB: 4, diskGiB: 10 }, provider: "daytona",
-    })).rejects.toThrow("capacity_exhausted");
+    });
+    expect(queued).toMatchObject({ queued: true, localWorkerRequired: false });
+    const reservations = await t.run((ctx) => ctx.db.query("reservations").collect());
+    expect(reservations).toHaveLength(1);
+    expect((await t.query(internal.sandboxes.getSandboxOp, { sandboxOpId: queued.sandboxOpId }))?.status).toBe("queued");
   });
 });

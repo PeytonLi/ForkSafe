@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { ActivityLog, buildRepairPrompt, SessionCapError, type RepairPromptParams, type SessionManager, type TurnOutcome } from "@forksafe/agents";
 import { assertFence, StaleLeaseError } from "./fencing.js";
+import { FencedError } from "./job-source.js";
 import { LeaseKeeper } from "./heartbeat.js";
 import type { JobSource } from "./job-source.js";
 import type { CompletionRequest, CompletionResponse, Lease } from "./protocol.js";
@@ -111,6 +112,10 @@ export class RunnerExecutor {
     } catch (error) {
       if (keeper.signal.aborted) {
         await this.options.sessions.interrupt(sessionId).catch(() => undefined);
+        await this.options.source.usage?.({
+          attemptId: lease.attempt.id, epoch: lease.attempt.epoch,
+          session: this.options.sessions.toAgentSession(sessionId),
+        }).catch(() => undefined);
         await this.log(lease, "lease abandoned", { reason: String(keeper.signal.reason ?? "aborted") }, sessionId);
         return null;
       }
@@ -168,6 +173,10 @@ export class RunnerExecutor {
         if (!response.accepted) await this.log(lease, "completion rejected", { reason: response.reason ?? "unknown" }, sessionId);
         return response;
       } catch (error) {
+        if (error instanceof FencedError) {
+          await this.log(lease, "stale result dropped", { reason: "stale_epoch" }, sessionId);
+          return null;
+        }
         if (attempt === backoffs.length) throw error;
         await sleep(backoffs[attempt]!);
       }

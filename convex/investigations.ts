@@ -7,6 +7,7 @@ import { countsTowardCapacity } from "./lib/reservations.js";
 import { hasPrivateAccess, isPublicInvestigation, requireInvestigationRead, requireWriteIdentity } from "./lib/webAccess.js";
 import { appId, assertUUID } from "./lib/validators.js";
 import { MoreInvestigationRequest } from "./forgeProtocolExt.js";
+import { finalizeCancelledJob } from "./lib/jobOps.js";
 
 export const requestMoreFromForge = internalMutation({
   args: { request: v.any(), installationId: v.string(), requestedBy: v.string() },
@@ -326,26 +327,31 @@ export const cancel = mutation({
       .collect();
     for (const job of jobs) {
       if (["succeeded", "failed", "cancelled"].includes(job.state)) continue;
-      if (!job.activeAttemptId) {
-        await ctx.db.patch(job._id, { state: "cancelled", cancelRequestedAtMs: now, updatedAtMs: now });
-        const reservations = await ctx.db.query("reservations")
-          .withIndex("by_operation", (q) => q.eq("operationId", job.operationId))
-          .collect();
-        for (const reservation of reservations) {
-          if (countsTowardCapacity(reservation.status) && reservation.kind !== "sandbox") {
-            await ctx.db.patch(reservation._id, { status: "released", releasedAtMs: now, releaseReason: "cancelled" });
-          }
-        }
-      } else {
+      const attempt = job.activeAttemptId
+        ? await ctx.db.query("attempts").withIndex("by_appId", (q) => q.eq("appId", job.activeAttemptId!)).unique()
+        : null;
+      const hasLiveLease = Boolean(attempt && ["leased", "heartbeating", "completing"].includes(attempt.state)
+        && attempt.leasedUntilMs > now && ["grant_pending", "granted", "running", "artifacts_pending"].includes(job.state));
+      if (!hasLiveLease) await finalizeCancelledJob(ctx, job, now);
+      else if (job.cancelRequestedAtMs === undefined) {
         await ctx.db.patch(job._id, { cancelRequestedAtMs: now, updatedAtMs: now });
       }
     }
     const sandboxOps = await ctx.db.query("sandboxOps")
       .withIndex("by_investigation", (q) => q.eq("investigationId", investigation.appId))
       .collect();
+    let scheduledTermination = 0;
     for (const op of sandboxOps) {
-      if (op.status !== "terminated") await ctx.scheduler.runAfter(0, internal.sandboxActions.terminate, { sandboxOpId: op.appId });
+      if (op.status === "queued") {
+        await ctx.db.patch(op._id, {
+          status: "terminated", lastError: "cancelled", terminatedAtMs: now, updatedAtMs: now,
+        });
+      } else if (!["terminated", "terminating"].includes(op.status) && scheduledTermination < 20) {
+        await ctx.scheduler.runAfter(0, internal.sandboxActions.terminate, { sandboxOpId: op.appId });
+        scheduledTermination += 1;
+      }
     }
+    if (sandboxOps.some((op) => op.status === "queued")) await ctx.scheduler.runAfter(0, internal.sandboxes.admitQueued, {});
     await ctx.scheduler.runAfter(0, internal.runnerControl.revokeCredentials, { investigationId: investigation.appId, reason: "cancelled" });
     const grants = await ctx.db.query("grants").withIndex("by_pending_revoke", (q) => q.eq("spacetimeRevoked", false)).take(200);
     for (const grant of grants) {
@@ -377,6 +383,9 @@ export const afterEnvironmentJobSettled = internalMutation({
     await ctx.scheduler.runAfter(0, internal.evaluation.closeEnvironments, { investigationId: investigation.appId });
     if (!candidates.length) {
       await ctx.db.patch(investigation._id, { state: "failed", lastError: "no_candidates_submitted", version: investigation.version + 1, updatedAtMs: now, finishedAtMs: now });
+      await ctx.scheduler.runAfter(0, internal.sandboxes.terminateInvestigationOps, {
+        investigationId: investigation.appId, reason: "no_candidates_submitted",
+      });
       return { action: "failed_no_candidates" };
     }
     await ctx.db.patch(investigation._id, { state: "evaluating", version: investigation.version + 1, updatedAtMs: now });
@@ -528,6 +537,11 @@ export const setCapture = internalMutation({
       ...(args.captureStatus === "recorded" && ["created", "capturing", "admitted"].includes(investigation.state) ? { state: "admitted" as const } : {}),
       ...(args.captureStatus === "failed" ? { state: "failed" as const, lastError: args.error ?? "capture_failed", finishedAtMs: now } : {}),
     });
+    if (args.captureStatus === "failed") {
+      await ctx.scheduler.runAfter(0, internal.sandboxes.terminateInvestigationOps, {
+        investigationId: investigation.appId, reason: "capture_failed",
+      });
+    }
     return { version: investigation.version + 1, autoStart: investigation.autoStart ?? false };
   },
 });
