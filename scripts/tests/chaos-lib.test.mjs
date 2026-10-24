@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { evaluateBlipRetryRows } from "../chaos/lib/blipRetries.mjs";
 import { checks } from "../chaos/lib/check.mjs";
 import { redactSecrets } from "../chaos/lib/convex.mjs";
 import { selectCleanupInvestigations } from "../chaos/lib/cleanup.mjs";
@@ -121,4 +122,25 @@ test("cleanup selection includes only nonterminal chaos investigations", () => {
     { appId: "other", title: "manual run", state: "searching" },
   ]);
   assert.deepEqual(selected.map((item) => item.appId), ["keep"]);
+});
+
+test("bounded blip retries accept dead-lettered and recent rows", () => {
+  const nowMs = 1_000_000;
+  const result = evaluateBlipRetryRows([
+    { key: "chaos:blip:recent", attempts: 2, status: "pending", lastError: "spacetime_unavailable", createdAtMs: nowMs - 1_000 },
+    { key: "chaos:blip:max", attempts: 8, status: "dead", lastError: "spacetime_unavailable", createdAtMs: nowMs - 25 * 60_000 - 1 },
+  ], nowMs);
+  assert.equal(result.passed, true);
+  assert.deepEqual(result.violations, []);
+});
+
+test("bounded blip retries reject over-limit, non-dead, and aged retry rows", () => {
+  const nowMs = 1_000_000;
+  const result = evaluateBlipRetryRows([
+    { key: "chaos:blip:over", attempts: 9, status: "dead", createdAtMs: nowMs },
+    { key: "chaos:blip:max-pending", attempts: 8, status: "pending", createdAtMs: nowMs },
+    { key: "chaos:blip:aged", attempts: 7, status: "pending", createdAtMs: nowMs - 25 * 60_000 - 1 },
+  ], nowMs);
+  assert.equal(result.passed, false);
+  assert.equal(result.violations.length, 3);
 });

@@ -7,6 +7,25 @@ import { captureInvestigation, preflight } from "../lib/scenario.mjs";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function tokenCount(session) {
+  const usage = session.tokenUsage ?? {};
+  return ["inputTokens", "outputTokens", "cacheReadTokens", "cacheCreationTokens"]
+    .reduce((sum, key) => sum + (Number(usage[key]) || 0), 0);
+}
+
+function recordSessionEvidence(ctx, state) {
+  const sessions = state.sessions.map((session) => ({
+    sessionId: session.appId,
+    factorySessionId: session.factorySession?.provider === "factory" ? session.factorySession.id : null,
+    state: session.state,
+    turns: session.turns ?? 0,
+    tokenUsage: session.tokenUsage ?? {},
+    tokens: tokenCount(session),
+  }));
+  ctx.tokens = sessions.reduce((sum, session) => sum + session.tokens, 0);
+  ctx.evidence.sessions = sessions;
+}
+
 export async function run(ctx) {
   if (!(await preflight(ctx, 2))) return;
   const captured = await captureInvestigation(ctx, 1, 10 * 60_000);
@@ -28,6 +47,7 @@ export async function run(ctx) {
     return null;
   }, { timeoutMs: 10 * 60_000, intervalMs: 3_000 });
   if (!experimentState) {
+    recordSessionEvidence(ctx, await snapshot(ctx.investigationId));
     for (const id of ["C1", "C2", "C3", "C4", "C5"]) {
       ctx.checks.notReached(id, "cancellation fences and cleans all live work", "no agent-run experiment reached the investigation");
     }
@@ -161,9 +181,5 @@ export async function run(ctx) {
       runnerCredentials: finalState.runnerCredentials.map(({ appId, revokedAtMs, expiresAtMs }) => ({ appId, revokedAtMs, expiresAtMs })),
     },
   );
-  ctx.tokens = finalState.sessions.reduce((sum, session) => {
-    const usage = session.tokenUsage ?? {};
-    return sum + ["inputTokens", "outputTokens", "cacheReadTokens", "cacheCreationTokens"]
-      .reduce((count, key) => count + (Number(usage[key]) || 0), 0);
-  }, 0);
+  recordSessionEvidence(ctx, finalState);
 }

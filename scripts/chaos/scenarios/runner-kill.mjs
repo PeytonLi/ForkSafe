@@ -10,10 +10,34 @@ function jobForEnvironment(state, environmentId) {
   return state.jobs.find((job) => job.kind === "factory_session" && job.environmentId === environmentId);
 }
 
+function tokenCount(session) {
+  const usage = session.tokenUsage ?? {};
+  return ["inputTokens", "outputTokens", "cacheReadTokens", "cacheCreationTokens"]
+    .reduce((sum, key) => sum + (Number(usage[key]) || 0), 0);
+}
+
+async function recordSessionEvidence(ctx, state) {
+  if (!state && !ctx.investigationId) return;
+  const snapshotState = state ?? await snapshot(ctx.investigationId);
+  const sessions = snapshotState.sessions.map((session) => ({
+    sessionId: session.appId,
+    factorySessionId: session.factorySession?.provider === "factory" ? session.factorySession.id : null,
+    state: session.state,
+    turns: session.turns ?? 0,
+    tokenUsage: session.tokenUsage ?? {},
+    tokens: tokenCount(session),
+  }));
+  ctx.tokens = sessions.reduce((sum, session) => sum + session.tokens, 0);
+  ctx.evidence.sessions = sessions;
+}
+
 export async function run(ctx) {
   if (!(await preflight(ctx, 2))) return;
   const captured = await captureInvestigation(ctx, 1, 8 * 60_000);
-  if (!captured) return;
+  if (!captured) {
+    await recordSessionEvidence(ctx);
+    return;
+  }
   const environment = captured.environments[0];
   const credential = captured.credentials[0];
   ctx.ids.environmentId = environment.appId;
@@ -37,7 +61,10 @@ export async function run(ctx) {
     Boolean(runningTurn),
     runningTurn ? { jobId: runningTurn.job.appId, state: runningTurn.job.state, activeTurns: runningTurn.acquired } : { runner: runner1.workerId },
   );
-  if (!runningTurn) return;
+  if (!runningTurn) {
+    await recordSessionEvidence(ctx);
+    return;
+  }
 
   const attempt1Id = runningTurn.job.activeAttemptId;
   const attempt1BeforeKill = runningTurn.state.attempts.find((attempt) => attempt.appId === attempt1Id);
@@ -75,7 +102,10 @@ export async function run(ctx) {
       leaseRemainingAtKillMs,
     },
   );
-  if (!expired) return;
+  if (!expired) {
+    await recordSessionEvidence(ctx);
+    return;
+  }
 
   const reservedState = await waitFor(async () => {
     const state = await snapshot(ctx.investigationId);
@@ -92,7 +122,10 @@ export async function run(ctx) {
       && reservedState.job.attemptsUsed === 1),
     { job: reservedState?.job ?? null, pendingRevocation: pendingRevocation ?? null },
   );
-  if (!reservedState) return;
+  if (!reservedState) {
+    await recordSessionEvidence(ctx);
+    return;
+  }
 
   const runner2 = startRunner({
     envId: environment.appId,
@@ -116,7 +149,10 @@ export async function run(ctx) {
       && attempt2Ready.job.activeAttemptId === attempt2Ready.attempt2.appId),
     attempt2Ready ? { job: attempt2Ready.job, attempt2: attempt2Ready.attempt2 } : { jobId: runningTurn.job.appId },
   );
-  if (!attempt2Ready) return;
+  if (!attempt2Ready) {
+    await recordSessionEvidence(ctx);
+    return;
+  }
   ctx.ids.attempt2Id = attempt2Ready.attempt2.appId;
   const stateBeforeReplay = await snapshot(ctx.investigationId);
   const attempt1Session = stateBeforeReplay.sessions.find((session) => session.attemptId === attempt1Id);
@@ -189,14 +225,10 @@ export async function run(ctx) {
     if (job && ["succeeded", "failed", "cancelled"].includes(job.state)) return { state, job };
     return null;
   }, { timeoutMs: 8 * 60_000, intervalMs: 2_000 });
-  const attempts = terminal?.state.attempts.filter((attempt) => attempt.jobId === runningTurn.job.appId) ?? [];
-  const job = terminal?.job ?? (await snapshot(ctx.investigationId)).jobs.find((item) => item.appId === runningTurn.job.appId);
-  const tokens = terminal?.state.sessions.reduce((sum, session) => {
-    const usage = session.tokenUsage ?? {};
-    return sum + ["inputTokens", "outputTokens", "cacheReadTokens", "cacheCreationTokens"]
-      .reduce((count, key) => count + (Number(usage[key]) || 0), 0);
-  }, 0) ?? 0;
-  ctx.tokens = tokens;
+  const finalState = terminal?.state ?? await snapshot(ctx.investigationId);
+  const attempts = finalState.attempts.filter((attempt) => attempt.jobId === runningTurn.job.appId);
+  const job = terminal?.job ?? finalState.jobs.find((item) => item.appId === runningTurn.job.appId);
+  await recordSessionEvidence(ctx, finalState);
   ctx.checks.check(
     "K6",
     "runner kill causes exactly one infrastructure retry",

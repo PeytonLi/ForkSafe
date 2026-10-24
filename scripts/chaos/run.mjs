@@ -99,6 +99,7 @@ async function executeScenario(name, runId, options) {
     runId,
     startedAtMs,
     finishedAtMs,
+    deployedCommit: process.env.CHAOS_DEPLOYED_COMMIT ?? null,
     wallTimeMs: finishedAtMs - startedAtMs,
     passed,
     tokens: ctx.tokens,

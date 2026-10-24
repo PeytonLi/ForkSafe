@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { evaluateBlipRetryRows } from "../lib/blipRetries.mjs";
 import { envGet, inlineQuery, runFn } from "../lib/convex.mjs";
 import { preflight } from "../lib/scenario.mjs";
 
@@ -9,7 +10,7 @@ export async function run(ctx) {
   ctx.checks.notReached(
     "B0",
     "SpacetimeDB connectivity is not isolated per runner",
-    "the runner never talks to SpacetimeDB; Convex owns the bridge and deployment-wide SPACETIMEDB_URI cannot be changed for one lane",
+    "BridgeClient 408/429/5xx retries cannot be triggered here: the runner never talks to SpacetimeDB, and exercising them would require redirecting the deployment-wide SPACETIMEDB_URI shared by every lane",
   );
 
   const operationId = randomUUID();
@@ -107,5 +108,27 @@ export async function run(ctx) {
     "back-to-back SpacetimeDB ingest ticks do not insert duplicates",
     secondTick?.inserted === 0,
     { firstTick, secondTick },
+  );
+
+  const retryRowsResult = await inlineQuery(`
+    const rows = await ctx.db.query("outbox").collect();
+    return {
+      rows: rows
+        .filter(row => typeof row.idempotencyKey === "string" && row.idempotencyKey.startsWith("chaos:blip:"))
+        .map(row => ({
+          key: row.idempotencyKey,
+          attempts: row.attempts,
+          status: row.status,
+          lastError: row.lastError ?? null,
+          createdAtMs: row.createdAtMs,
+        })),
+    };
+  `);
+  const retryReport = evaluateBlipRetryRows(retryRowsResult.rows ?? [], Date.now());
+  ctx.checks.check(
+    "B5",
+    "SpacetimeDB outbox retries are bounded and aged rows are dead-lettered",
+    retryReport.passed,
+    retryReport,
   );
 }

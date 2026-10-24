@@ -42,14 +42,15 @@ Captures one environment, waits for it to become active with a valid credential,
 
 ### `spacetime-blip` — no Factory spend
 
-Records **B0** as not reached because the runner does not connect to SpacetimeDB directly: Convex owns the bridge and the deployment-wide `SPACETIMEDB_URI` cannot be isolated for one lane. It then probes the outbox path that is testable without changing deployment configuration.
+Records **B0** as not reached because the runner does not connect to SpacetimeDB directly: Convex owns the bridge, and BridgeClient's transient 408/429/5xx retries cannot be triggered without redirecting the deployment-wide `SPACETIMEDB_URI` shared by every lane. It then probes the outbox path that is testable without changing deployment configuration.
 
 - **B1** records retry attempts, statuses, errors, retry timestamps, and checks increasing backoff while the outbox item remains pending/dead.
 - **B2** repeats the same ingest and checks duplicate receipt identity and one row.
 - **B3** scans the full outbox for duplicate idempotency keys.
 - **B4** runs two consecutive ingest ticks and checks that the second inserts zero rows.
+- **B5** checks that `chaos:blip:` rows have at most eight attempts, eight-attempt rows are dead, and rows older than 25 minutes are dead at eight attempts; it records each row's key, attempts, status, error, and creation time.
 
-Because not-reached checks are non-passing, B0 is reported as a finding and may make the command exit nonzero even when B1–B4 pass.
+Because not-reached checks are non-passing, B0 is reported as a finding and may make the command exit nonzero even when B1–B5 pass.
 
 ### `scale10` — Factory spend; do not run until scheduled
 
