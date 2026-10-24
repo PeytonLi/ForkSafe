@@ -19,13 +19,33 @@ import {
 import { LEASE_TTL_MS } from "./heartbeat.js";
 
 export interface JobSource {
+  start?(input: { attemptId: string; epoch: number }): Promise<unknown>;
+  session?(input: { attemptId: string; epoch: number; session: unknown }): Promise<unknown>;
+  checkpoint?(input: { attemptId: string; epoch: number; checkpoint: Record<string, unknown> }): Promise<unknown>;
   claim(request: z.infer<typeof ClaimRequest>): Promise<Lease | null>;
   heartbeat(heartbeat: Heartbeat): Promise<z.infer<typeof HeartbeatResponse>>;
   complete(completion: z.infer<typeof CompletionRequest>): Promise<z.infer<typeof CompletionResponse>>;
 }
 
 export class HttpJobSource implements JobSource {
-  constructor(private readonly baseUrl: string, private readonly secret: string, private readonly fetcher: typeof fetch = fetch) {}
+  constructor(
+    private readonly baseUrl: string,
+    private readonly secret: string,
+    private readonly fetcher: typeof fetch = fetch,
+    private readonly credentialId?: string,
+  ) {}
+
+  start(input: { attemptId: string; epoch: number }): Promise<unknown> {
+    return this.post("start", input, z.unknown());
+  }
+
+  session(input: { attemptId: string; epoch: number; session: unknown }): Promise<unknown> {
+    return this.post("session", input, z.unknown());
+  }
+
+  checkpoint(input: { attemptId: string; epoch: number; checkpoint: Record<string, unknown> }): Promise<unknown> {
+    return this.post("checkpoint", input, z.unknown());
+  }
 
   claim(request: z.infer<typeof ClaimRequest>): Promise<Lease | null> {
     return this.post("claim", request, ClaimResponse).then((response) => response.lease);
@@ -49,6 +69,7 @@ export class HttpJobSource implements JobSource {
         "content-type": "application/json",
         "x-forksafe-signature": signature,
         "x-forksafe-timestamp": timestamp,
+        ...(this.credentialId ? { "x-forksafe-runner": this.credentialId } : {}),
       },
       body: rawBody,
     });
@@ -155,7 +176,7 @@ export class FileJobSource implements JobSource {
     const response = { accepted: true };
     record.attempt.state = completion.outcome === "succeeded" ? "succeeded" : "failed";
     record.attempt.endedAtMs = completion.finishedAtMs;
-    job.state = completion.outcome;
+    job.state = completion.outcome === "succeeded" ? "succeeded" : "failed";
     job.activeAttemptId = undefined;
     job.updatedAtMs = completion.finishedAtMs;
     await this.writeJob(job);

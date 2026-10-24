@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
@@ -19,9 +19,16 @@ export class HttpToolBackend implements ForkSafeToolBackend {
     private readonly lease: Lease,
     private readonly fetcher: typeof fetch = fetch,
     private readonly clock: () => number = Date.now,
+    private readonly credentialId?: string,
   ) {}
 
+  inspect_failure(input: Parameters<ForkSafeToolBackend["inspect_failure"]>[0], ctx: ToolCallContext) { return this.post("inspect_failure", input, ctx); }
+  read_source(input: Parameters<ForkSafeToolBackend["read_source"]>[0], ctx: ToolCallContext) { return this.post("read_source", input, ctx); }
+  apply_patch(input: Parameters<ForkSafeToolBackend["apply_patch"]>[0], ctx: ToolCallContext) { return this.post("apply_patch", input, ctx); }
+  fork_candidate(input: Parameters<ForkSafeToolBackend["fork_candidate"]>[0], ctx: ToolCallContext) { return this.post("fork_candidate", input, ctx); }
+  request_subtask(input: Parameters<ForkSafeToolBackend["request_subtask"]>[0], ctx: ToolCallContext) { return this.post("request_subtask", input, ctx); }
   run_experiment(input: BackendInput, ctx: ToolCallContext) { return this.post("run_experiment", input, ctx); }
+  propose_controller_revision(input: Parameters<ForkSafeToolBackend["propose_controller_revision"]>[0], ctx: ToolCallContext) { return this.post("propose_controller_revision", input, ctx); }
   submit_candidate(input: Parameters<ForkSafeToolBackend["submit_candidate"]>[0], ctx: ToolCallContext) { return this.post("submit_candidate", input, ctx); }
   read_findings(input: Parameters<ForkSafeToolBackend["read_findings"]>[0], ctx: ToolCallContext) { return this.post("read_findings", input, ctx); }
   write_finding(input: Parameters<ForkSafeToolBackend["write_finding"]>[0], ctx: ToolCallContext) { return this.post("write_finding", input, ctx); }
@@ -30,24 +37,54 @@ export class HttpToolBackend implements ForkSafeToolBackend {
   private async post(name: string, input: unknown, ctx: ToolCallContext): Promise<unknown> {
     assertFence(this.lease, this.clock());
     if (!input || typeof input !== "object" || Array.isArray(input)) throw new TypeError("ForkSafe tool input must be an object");
-    const rawBody = JSON.stringify({ ...ctx, ...(input as Record<string, unknown>) });
+    const callId = ctx.callId ?? randomUUID();
+    const rawBody = JSON.stringify({ ...ctx, callId, ...(input as Record<string, unknown>) });
     const timestamp = String(this.clock());
     const signature = createHmac("sha256", this.secret).update(`${timestamp}.${rawBody}`).digest("hex");
-    const response = await this.fetcher(`${this.baseUrl.replace(/\/$/, "")}/runner/tools/${name}`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-forksafe-signature": signature, "x-forksafe-timestamp": timestamp },
-      body: rawBody,
-    });
-    if (!response.ok) throw new Error(`Runner tool ${name} failed: HTTP ${response.status}`);
-    return response.json();
+    for (let attempt = 0; attempt <= 2; attempt += 1) {
+      let response: Response;
+      try {
+        response = await this.fetcher(`${this.baseUrl.replace(/\/$/, "")}/runner/tools/${name}`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json", "x-forksafe-signature": signature, "x-forksafe-timestamp": timestamp,
+            ...(this.credentialId ? { "x-forksafe-runner": this.credentialId } : {}),
+          },
+          body: rawBody,
+        });
+      } catch (error) {
+        if (attempt < 2) continue;
+        throw error;
+      }
+      const text = await response.text();
+      if (response.ok) return JSON.parse(text) as unknown;
+      if (response.status >= 500 && attempt < 2) continue;
+      let detail = "";
+      try { detail = String((JSON.parse(text) as { error?: string }).error ?? ""); } catch { detail = ""; }
+      throw new Error(`Runner tool ${name} failed: HTTP ${response.status}${detail ? ` (${detail})` : ""}`);
+    }
+    throw new Error(`Runner tool ${name} exhausted retries`);
+  }
+
+  async completeSubtask(ctx: ToolCallContext, result: unknown): Promise<void> {
+    await this.post("request_subtask", { subtaskResult: result }, ctx);
   }
 }
 
 export class LocalToolBackend implements ForkSafeToolBackend {
   constructor(private readonly dir: string, private readonly clock: () => number = Date.now) {}
 
+  async inspect_failure() { return { mode: "local", status: "blocked", reason: "control_plane_required" }; }
+  async read_source() { return { mode: "local", status: "blocked", reason: "control_plane_required" }; }
+  async apply_patch() { return { mode: "local", status: "blocked", reason: "control_plane_required" }; }
+  async fork_candidate() { return { mode: "local", status: "blocked", reason: "control_plane_required" }; }
+  async request_subtask() { return { mode: "local", status: "blocked", reason: "runner_orchestration_required" }; }
   async run_experiment(_input: BackendInput) {
     return { status: "blocked", reason: "no execution adapter configured (RUNNER_CONTROL_URL unset)" };
+  }
+
+  async propose_controller_revision() {
+    return { status: "blocked", reason: "no_control_plane", detail: "revisions require the Convex control plane" };
   }
 
   async submit_candidate() {

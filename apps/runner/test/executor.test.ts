@@ -10,12 +10,16 @@ import { RunnerExecutor } from "../src/executor.js";
 import { sampleLease } from "./helpers.js";
 
 const dirs: string[] = [];
-async function setup(adapter = new FixtureFactoryAdapter()) {
+async function setup(
+  adapter = new FixtureFactoryAdapter(),
+  onTurnComplete?: ConstructorParameters<typeof SessionManager>[0]["onTurnComplete"],
+  onSessionReady?: ConstructorParameters<typeof SessionManager>[0]["onSessionReady"],
+) {
   const dir = await mkdtemp(join(tmpdir(), "forksafe-executor-"));
   dirs.push(dir);
   const manager = new SessionManager({
     adapter, ledger: new UsageLedger(), workspaceRoot: join(dir, "workspaces"),
-    toolBackend: new LocalToolBackend(join(dir, "local")), log: new ActivityLog(),
+    toolBackend: new LocalToolBackend(join(dir, "local")), log: new ActivityLog(), onTurnComplete, onSessionReady,
   });
   return { dir, manager };
 }
@@ -25,6 +29,46 @@ afterEach(async () => {
 });
 
 describe("RunnerExecutor", () => {
+  it("registers the session with the job source before the first turn", async () => {
+    const order: string[] = [];
+    const adapter = new FixtureFactoryAdapter({ gate: async () => { order.push("runTurn"); } });
+    Object.defineProperty(adapter, "mode", { value: "live" });
+    const source = {
+      session: vi.fn(async ({ session }: {
+        attemptId: string; epoch: number; session: { state: string };
+      }) => {
+        if (session.state === "created") order.push("session");
+        return { ok: true };
+      }),
+      heartbeat: vi.fn(async () => ({ ok: true as const, leasedUntilMs: Date.now() + 30_000, epoch: 0 })),
+      complete: vi.fn(async () => ({ accepted: true })),
+    };
+    const { manager } = await setup(adapter, undefined, async ({ attemptId, epoch, session }) => {
+      expect(session.state).toBe("created");
+      expect(session.mode).toBe("live");
+      expect(session.factorySession).toMatchObject({ provider: "factory", id: "fixture-session-0001" });
+      return source.session({ attemptId, epoch, session });
+    });
+    const executor = new RunnerExecutor({ sessions: manager, source: source as never, log: new ActivityLog(), maxTurns: 1 });
+    await executor.execute(sampleLease());
+    expect(order).toEqual(["session", "runTurn"]);
+  });
+
+  it("fails the lease as infrastructure failure when session registration is rejected", async () => {
+    const { manager } = await setup(new FixtureFactoryAdapter(), undefined, async () => { throw new Error("HTTP 409"); });
+    const completions: { outcome: string; result: Record<string, unknown> }[] = [];
+    const source = {
+      heartbeat: vi.fn(async () => ({ ok: true as const, leasedUntilMs: Date.now() + 30_000, epoch: 0 })),
+      complete: vi.fn(async (completion: { outcome: string; result: Record<string, unknown> }) => {
+        completions.push(completion);
+        return { accepted: true };
+      }),
+    };
+    const executor = new RunnerExecutor({ sessions: manager, source: source as never, log: new ActivityLog() });
+    await executor.execute(sampleLease());
+    expect(completions[0]).toMatchObject({ outcome: "infra_failed" });
+    expect(completions[0]?.result.error).toContain("session registration failed");
+  });
   it("completes fixture work with usage and local vendor reference", async () => {
     const { dir, manager } = await setup();
     const jobsDir = join(dir, "jobs", "jobs");
@@ -176,5 +220,86 @@ describe("RunnerExecutor", () => {
     expect(operationIds[0]).toMatch(/^[\da-f-]{36}$/);
     expect(operationIds[1]).toBe(operationIds[0]);
     expect(delays).toEqual([250]);
+  });
+
+  it("resumes only from the primary checkpoint and continues the shared four-turn budget", async () => {
+    const checkpoints: any[] = [];
+    let turns = 0;
+    const adapter = new FixtureFactoryAdapter({ gate: async () => {
+      turns += 1;
+      if (turns === 2) throw new Error("temporary infrastructure failure");
+    } });
+    Object.defineProperty(adapter, "mode", { value: "live" });
+    const { manager } = await setup(adapter, async (checkpoint) => { checkpoints.push(checkpoint); });
+    const createSpy = vi.spyOn(adapter, "createSession");
+    const resumeSpy = vi.spyOn(adapter, "resumeSession");
+    const lease = sampleLease();
+    const completions: any[] = [];
+    const source = {
+      heartbeat: vi.fn(async () => ({ ok: true as const, leasedUntilMs: Date.now() + 30_000, epoch: 0 })),
+      complete: vi.fn(async (completion: any) => { completions.push(completion); return { accepted: true }; }),
+    };
+    const executor = new RunnerExecutor({ sessions: manager, source: source as never, log: new ActivityLog() });
+    await expect(executor.execute(lease)).resolves.toMatchObject({ accepted: true });
+    expect(completions[0]).toMatchObject({ outcome: "infra_failed" });
+    expect(checkpoints).toHaveLength(1);
+    expect(checkpoints[0]).toMatchObject({ role: "primary", turnIndex: 0 });
+
+    const resumed = structuredClone(lease);
+    resumed.attempt.id = crypto.randomUUID();
+    resumed.attempt.jobId = resumed.job.id;
+    resumed.grant.attemptId = resumed.attempt.id;
+    resumed.job.payload.resume = checkpoints[0];
+    const turnSpy = vi.spyOn(manager, "runTurn");
+    await expect(executor.execute(resumed)).resolves.toMatchObject({ accepted: true });
+    expect(resumeSpy).toHaveBeenCalledWith(checkpoints[0].vendorSessionId, expect.any(Object));
+    expect(createSpy).toHaveBeenCalledOnce();
+    expect(turnSpy.mock.calls[1]?.[1]).toContain("about two turns total");
+    expect(turnSpy.mock.calls[1]?.[1]).toContain("submit_candidate");
+    expect(checkpoints.map((checkpoint) => checkpoint.turnIndex)).toEqual([0, 1, 2, 3]);
+  });
+
+  it("replaces a missing checkpoint vendor session while preserving lineage", async () => {
+    const checkpoints: any[] = [];
+    const adapter = new FixtureFactoryAdapter();
+    const { manager } = await setup(adapter, async (checkpoint) => { checkpoints.push(checkpoint); });
+    const lease = sampleLease();
+    const completions: any[] = [];
+    const source = {
+      heartbeat: vi.fn(async () => ({ ok: true as const, leasedUntilMs: Date.now() + 30_000, epoch: 0 })),
+      complete: vi.fn(async (completion: any) => { completions.push(completion); return { accepted: true }; }),
+    };
+    const executor = new RunnerExecutor({ sessions: manager, source: source as never, log: new ActivityLog(), maxTurns: 1 });
+    await executor.execute(lease);
+    await manager.closeAll();
+    (adapter as unknown as { sessions: Set<string> }).sessions.clear();
+    const resumed = structuredClone(lease);
+    resumed.attempt.id = crypto.randomUUID();
+    resumed.grant.attemptId = resumed.attempt.id;
+    resumed.job.payload.resume = checkpoints[0];
+    await executor.execute(resumed);
+    const replacementSessionId = completions[1]?.sessions[0]?.id;
+    expect(manager.replacesSessionId(replacementSessionId)).toBe(checkpoints[0].sessionId);
+  });
+  it("reports a non-cap session-open failure as infra_failed instead of letting the lease expire", async () => {
+    const lease = sampleLease();
+    const completions: { outcome: string; result: Record<string, unknown> }[] = [];
+    const source = {
+      heartbeat: vi.fn(async () => ({ ok: true as const, leasedUntilMs: Date.now() + 30_000, epoch: 0 })),
+      complete: vi.fn(async (completion: { outcome: string; result: Record<string, unknown> }) => {
+        completions.push(completion);
+        return { accepted: true };
+      }),
+    };
+    const sessions = {
+      idleSessionFor: () => undefined,
+      createSession: async () => { throw new Error("Failed to start Droid: executable not found (droid)"); },
+    };
+    const executor = new RunnerExecutor({ sessions: sessions as never, source: source as never, log: new ActivityLog() });
+    await expect(executor.execute(lease)).resolves.toMatchObject({ accepted: true });
+    expect(completions).toHaveLength(1);
+    expect(completions[0]).toMatchObject({ outcome: "infra_failed" });
+    expect(String(completions[0]!.result.error)).toMatch(/^session_open_failed:Failed to start Droid/);
+    expect(source.heartbeat).not.toHaveBeenCalled();
   });
 });

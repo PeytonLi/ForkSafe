@@ -3,6 +3,7 @@ import { InvestigationView } from "./components/InvestigationView";
 import { ReadinessStrip } from "./components/ReadinessStrip";
 import { useClient, useHashRoute } from "./hooks";
 import styles from "./App.module.css";
+import { AuthControls } from "./components/AuthControls";
 
 export function App() {
   const [route, go] = useHashRoute();
@@ -22,6 +23,7 @@ export function App() {
           </a>
           <span className={styles.tag}>Robot failure investigations</span>
           <ReadinessStrip clientSource={client.source} />
+          <AuthControls />
         </div>
       </header>
       <div className={styles.body}>

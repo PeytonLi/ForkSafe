@@ -11,6 +11,12 @@ describe("service and UI authorization", () => {
   });
   it("allows anonymous UI only when explicitly enabled", () => {
     expect(() => requireUiAccess(undefined, {})).toThrow("unauthorized");
-    expect(() => requireUiAccess(undefined, { FORKSAFE_DEV_ANONYMOUS_UI: "true" })).not.toThrow();
+    for (const CONVEX_CLOUD_URL of [undefined, "invalid", "https://hosted.convex.cloud", "http://localhost.evil.example"]) {
+      expect(() => requireUiAccess(undefined, { FORKSAFE_DEV_ANONYMOUS_UI: "true", CONVEX_CLOUD_URL })).toThrow("unauthorized");
+    }
+    for (const CONVEX_CLOUD_URL of ["http://localhost:3210", "http://127.0.0.1:3210"]) {
+      expect(() => requireUiAccess(undefined, { FORKSAFE_DEV_ANONYMOUS_UI: "true", CONVEX_CLOUD_URL })).not.toThrow();
+    }
+    expect(() => requireUiAccess("right", { INTEGRATION_SHARED_SECRET: "right" })).not.toThrow();
   });
 });

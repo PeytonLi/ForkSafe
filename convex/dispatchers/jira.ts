@@ -10,7 +10,7 @@ import { makeFunctionReference } from "convex/server";
 import { ZodError } from "zod";
 import { internal } from "../_generated/api.js";
 import { internalAction, internalMutation, internalQuery } from "../_generated/server.js";
-import { SpacetimeClient, SpacetimeRejected } from "./spacetime.js";
+import { SpacetimeClient, SpacetimeRejected, SpacetimeUnavailable } from "./spacetime.js";
 
 type JiraMode = "live" | "blocked" | "not_implemented";
 type DispatchResult = { delivered: boolean; mode: JiraMode; reason?: string };
@@ -34,6 +34,7 @@ export async function operationIdForIdempotencyKey(key: string): Promise<string>
 
 export function classifyJiraFailure(error: unknown): { permanent: boolean; code: string } {
   if (error instanceof SpacetimeRejected) return { permanent: true, code: `spacetime_${safeCode(error.code)}` };
+  if (error instanceof SpacetimeUnavailable) return { permanent: false, code: "spacetime_unavailable" };
   if (error instanceof ZodError) return { permanent: true, code: "jira_invalid_payload" };
   if (error instanceof TypeError) return { permanent: true, code: "jira_invalid_payload" };
   if (error instanceof AtlassianHttpError) {

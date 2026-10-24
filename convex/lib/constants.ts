@@ -6,6 +6,11 @@ export const HARD_STOP_DEADLINE_MS = 30_000;
 export const MODEL_TURN_MAX_MS = 600_000;
 export const ARTIFACT_CHUNK_MAX_BYTES = 8 * 1024 * 1024;
 export const LOG_TAIL_MAX_BYTES = 65_536;
+/** SpacetimeDB grants outlive single heartbeats; Convex revokes them explicitly. */
+export const GRANT_TTL_MS = 20 * 60_000;
+export const RUNNER_CREDENTIAL_TTL_MS = 60 * 60_000;
+export const MAX_FINALISTS = 3;
+export const MAX_TURNS_PER_ENVIRONMENT = 6;
 
 function positiveInteger(value: string | undefined, fallback: number): number {
   if (value === undefined || !/^\d+$/.test(value)) return fallback;

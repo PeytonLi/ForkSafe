@@ -5,6 +5,7 @@ import {
   HumanReview,
   ExperimentResult,
 } from "@forksafe/contracts";
+import { spacetimeHttpBase } from "../lib/spacetime.js";
 
 type Environment = Record<string, string | undefined>;
 type Row = Record<string, unknown>;
@@ -29,6 +30,7 @@ export class SpacetimeRejected extends Error {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TOMBSTONE_KINDS = new Set(["finding", "candidate", "evidence", "artifact"]);
+const NON_TOMBSTONE_KINDS = new Set(["experiment_result", "evaluation"]);
 const bridgeTokens = new Map<string, string>();
 const bridgeRegistrations = new Map<string, Promise<void>>();
 
@@ -40,9 +42,11 @@ export class SpacetimeClient {
     private readonly env: Environment = runtimeEnvironment(),
     private readonly fetchImpl: typeof fetch = globalThis.fetch,
   ) {
-    this.uri = (env.SPACETIMEDB_URI ?? "").replace(/\/+$/, "");
+    const configuredUri = env.SPACETIMEDB_URI ?? "";
     this.database = env.SPACETIMEDB_DATABASE ?? "";
-    if (!this.uri || !this.database) throw new SpacetimeUnavailable();
+    if (!configuredUri.trim()) throw new SpacetimeUnavailable();
+    this.uri = spacetimeHttpBase(configuredUri);
+    if (!this.database) throw new SpacetimeUnavailable();
   }
 
   async sql(query: string): Promise<Row[]> {
@@ -163,6 +167,10 @@ export class SpacetimeClient {
   }
 
   async isTombstoned(targetKind: string, targetId: string): Promise<boolean> {
+    if (NON_TOMBSTONE_KINDS.has(targetKind)) {
+      safeUuid(targetId);
+      return false;
+    }
     if (!TOMBSTONE_KINDS.has(targetKind)) throw new SpacetimeRejected("invalid_tombstone");
     const id = safeUuid(targetId);
     const rows = await this.sql(`SELECT * FROM tombstone WHERE key = '${targetKind}:${id}'`);
@@ -319,7 +327,7 @@ function isI64(type: unknown): boolean {
 function camelCase(value: string): string;
 function camelCase(value: unknown): unknown;
 function camelCase(value: unknown): unknown {
-  return typeof value === "string" ? value.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase()) : value;
+  return typeof value === "string" ? value.replace(/_([a-z0-9])/g, (_, character: string) => character.toUpperCase()) : value;
 }
 
 function mapExperiment(row: Row): Record<string, unknown> {
