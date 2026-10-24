@@ -18,7 +18,8 @@
     "benchmark": "node scripts/benchmark.mjs",
     "daytona:prepare": "node scripts/daytona-prepare.mjs",
     "smoke:hosted": "node scripts/smoke-hosted.mjs",
-    "cleanup:sandboxes": "node scripts/cleanup-sandboxes.mjs"
+    "cleanup:sandboxes": "node scripts/cleanup-sandboxes.mjs",
+    "release:check": "node scripts/release-check.mjs"
   },
   "devDependencies": {
     "typescript": "~5.9.3",
