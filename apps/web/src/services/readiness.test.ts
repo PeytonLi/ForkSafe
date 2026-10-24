@@ -9,11 +9,17 @@ function respond(body: unknown, status = 200) {
 }
 
 describe("readiness response compatibility", () => {
-  it("accepts local server reports without claiming a verified probe", async () => {
-    const integrations = (await buildReadiness({}, async () => ({ ok: true, status: 200 }), 1))
-      .map(({ probed: _probed, ...item }) => item);
+  it("keeps the local server's probe flags: only HTTP-probed services claim a verified probe", async () => {
+    const integrations = await buildReadiness({}, async () => ({ ok: true, status: 200 }), 1);
     respond({ integrations });
-    expect(await fetchReadiness()).toEqual(integrations.map((item) => ({ ...item, probed: false })));
+    const parsed = await fetchReadiness();
+    expect(parsed).toEqual(integrations);
+    expect(parsed.filter((item) => item.probed).map((item) => item.name).sort()).toEqual(["evaluator", "simulator", "spacetimedb"]);
+  });
+
+  it("defaults a missing probe flag to unverified", async () => {
+    respond({ integrations: [{ name: "convex", mode: "live", checkedAtMs: 1 }] });
+    expect(await fetchReadiness()).toEqual([{ name: "convex", mode: "live", checkedAtMs: 1, probed: false }]);
   });
 
   it("preserves explicit hosted probe results", async () => {

@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { InfluenceGraph } from "./InfluenceGraph";
 import { fmtTime, shortId, useLoad } from "../hooks";
 import type { InvestigationWorkspace } from "../services";
 import { Badge, Panel } from "./Panel";
@@ -8,11 +9,27 @@ import styles from "./EvidenceFeed.module.css";
 const PAGE = 5;
 
 /** Shared findings (SpacetimeDB evidence) with provenance per environment. */
-export function EvidenceFeed({ workspace: w }: { workspace: InvestigationWorkspace }) {
+export function EvidenceFeed({ workspace: w, focus }: { workspace: InvestigationWorkspace; focus?: string }) {
   const id = w.investigation.id;
   const state = useLoad((c) => c.listFindings(id), [id], id);
   const [env, setEnv] = useState<string>("all");
   const [limit, setLimit] = useState(PAGE);
+  const [view, setView] = useState<"list" | "influence">("list");
+  const focusIndex = focus && state.data ? state.data.findIndex((f) => f.id === focus) : -1;
+  useEffect(() => {
+    if (focusIndex < 0) return;
+    setView("list");
+    setEnv("all");
+    setLimit((l) => Math.max(l, focusIndex + 1));
+  }, [focusIndex]);
+  useEffect(() => {
+    if (focusIndex < 0 || view !== "list") return;
+    const el = document.getElementById(`finding-${focus}`);
+    if (!el) return;
+    const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+    el.scrollIntoView({ behavior, block: "center" });
+    el.focus({ preventScroll: true });
+  }, [focus, focusIndex, view, limit, env]);
   const envIndex = new Map(w.environments.map((e) => [e.id, e.index + 1]));
   return (
     <Panel
@@ -23,7 +40,12 @@ export function EvidenceFeed({ workspace: w }: { workspace: InvestigationWorkspa
       empty="No findings published yet. Environments post findings here as they investigate."
       testId="evidence-feed"
       actions={
-        w.environments.length <= 5 ? (
+        <div className={styles.actions}>
+        <div className={styles.filters} role="group" aria-label="Evidence view">
+          <button type="button" aria-pressed={view === "list"} className={view === "list" ? styles.filterActive : styles.filter} onClick={() => setView("list")}>List</button>
+          <button type="button" aria-pressed={view === "influence"} className={view === "influence" ? styles.filterActive : styles.filter} onClick={() => setView("influence")} data-testid="influence-toggle">How fixes used it</button>
+        </div>
+        {view === "list" && (w.environments.length <= 5 ? (
           <div className={styles.filters} role="group" aria-label="Filter evidence by environment">
             <button type="button" aria-pressed={env === "all"} className={env === "all" ? styles.filterActive : styles.filter} onClick={() => { setEnv("all"); setLimit(PAGE); }}>All</button>
             {w.environments.map((e) => (
@@ -42,16 +64,18 @@ export function EvidenceFeed({ workspace: w }: { workspace: InvestigationWorkspa
               ))}
             </select>
           </label>
-        )
+        ))}
+        </div>
       }
     >
       {(findings) => {
+        if (view === "influence") return <InfluenceGraph w={w} findings={findings} />;
         const filtered = env === "all" ? findings : findings.filter((f) => f.environmentId === env);
         return (
           <>
             <ul className={styles.list}>
               {filtered.slice(0, limit).map((f) => (
-                <li key={f.id} className={styles.item} data-testid="finding">
+                <li key={f.id} id={`finding-${f.id}`} tabIndex={-1} className={`${styles.item} ${f.id === focus ? styles.focused : ""}`} data-testid="finding" data-finding-id={f.id}>
                   <div className={styles.badges}>
                     <Badge tone="blue" title={`Environment ${f.environmentId}`}>Env {envIndex.get(f.environmentId) ?? "?"}</Badge>
                     <Badge tone="gray">{human(f.kind)}</Badge>

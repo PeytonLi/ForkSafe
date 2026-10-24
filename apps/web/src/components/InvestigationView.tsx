@@ -6,6 +6,8 @@ import { CapturePanel } from "./CapturePanel";
 import { ComparePanel } from "./ComparePanel";
 import { EnvironmentGrid } from "./EnvironmentGrid";
 import { EvidenceFeed } from "./EvidenceFeed";
+import { AskPanel } from "./AskPanel";
+import { TimelinePanel } from "./TimelinePanel";
 import { Badge, Panel } from "./Panel";
 import { human, stateTone } from "./tone";
 import styles from "./InvestigationView.module.css";
@@ -14,11 +16,13 @@ const TABS = [
   ["capture", "Baseline capture"],
   ["environments", "Environments"],
   ["evidence", "Evidence"],
+  ["ask", "Ask why"],
+  ["timeline", "Timeline"],
   ["compare", "Compare & review"],
 ] as const;
 const RUNNING = ["capturing", "admitted", "searching", "evaluating"];
 
-export function InvestigationView({ id, tab, onTab }: { id: string; tab: string; onTab: (t: string) => void }) {
+export function InvestigationView({ id, tab, focus, onTab }: { id: string; tab: string; focus?: string; onTab: (t: string, focus?: string) => void }) {
   const client = useClient();
   const access = useBrowserAccess();
   const ws = useLoad((c) => c.getWorkspace(id), [id], id);
@@ -112,7 +116,9 @@ export function InvestigationView({ id, tab, onTab }: { id: string; tab: string;
             <div role="tabpanel" id={`tabpanel-${active}`} aria-labelledby={`tab-${active}`} className={styles.tabPanel}>
               {active === "capture" && <CapturePanel workspace={w} />}
               {active === "environments" && <EnvironmentGrid workspace={w} />}
-              {active === "evidence" && <EvidenceFeed workspace={w} />}
+              {active === "evidence" && <EvidenceFeed workspace={w} focus={focus} />}
+              {active === "ask" && <AskPanel workspace={w} />}
+              {active === "timeline" && <TimelinePanel workspace={w} focus={focus} />}
               {active === "compare" && <ComparePanel workspace={w} />}
             </div>
           </div>

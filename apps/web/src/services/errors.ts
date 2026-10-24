@@ -3,7 +3,9 @@ export type ServiceErrorCode =
   | "not_found"
   | "unavailable"
   | "invalid_data"
-  | "conflict";
+  | "conflict"
+  | "invalid_input"
+  | "out_of_scope";
 
 export class ServiceError extends Error {
   constructor(

@@ -13,13 +13,17 @@ import { z } from "zod";
 import raw from "../fixtures/demo.json";
 import { ServiceError } from "./errors";
 import { fetchReadiness } from "./readiness";
+import { fixtureAnswer, scopedQuestion } from "./ask";
 import type {
   CancellationState,
   CaptureDraft,
   CaptureOutcome,
+  EvidenceAnswer,
   ForkSafeClient,
+  HandoffEvent,
   InvestigationListItem,
   InvestigationWorkspace,
+  PipelineHealth,
   ReviewInput,
 } from "./types";
 
@@ -228,5 +232,62 @@ export class FixtureClient implements ForkSafeClient {
 
   getReadiness() {
     return fetchReadiness();
+  }
+
+  /** Counts derived from the recorded environments; the fixture has no outbox. */
+  getPipelineHealth(): Promise<PipelineHealth> {
+    return this.wait(() => {
+      const open = this.data.environments.filter((e) => e.state === "active" || e.state === "provisioning" || e.state === "paused");
+      const runnerEnvs = new Set(this.data.sessions.filter((s) => s.state === "streaming" || s.state === "idle" || s.state === "created").map((s) => s.environmentId));
+      return {
+        mode: "fixture" as const,
+        checkedAtMs: this.data.recordedAtMs,
+        activeSandboxes: open.filter((e) => e.daytonaSandbox).length,
+        sandboxCap: 5,
+        runners: runnerEnvs.size,
+        outboxBacklog: 0,
+        outboxDead: 0,
+      };
+    });
+  }
+
+  askEvidence(investigationId: string, question: string): Promise<EvidenceAnswer> {
+    return new Promise((resolve, reject) =>
+      setTimeout(() => {
+        try {
+          this.requireInvestigation(investigationId);
+          const own = <T extends { investigationId: string; id: string }>(xs: T[]) => xs.filter((x) => x.investigationId === investigationId).map((x) => x.id);
+          const known = [...own(this.data.environments), ...own(this.data.findings), ...own(this.data.experiments), ...own(this.data.candidates), ...own(this.data.sessions)];
+          const q = scopedQuestion(question, investigationId, known);
+          resolve(fixtureAnswer(this.data.findings.filter((f) => f.investigationId === investigationId), q));
+        } catch (e) {
+          reject(e);
+        }
+      }, this.latency * 4),
+    );
+  }
+
+  /** Handoff steps reconstructed from recorded experiment start/finish times. */
+  listHandoffs(investigationId: string): Promise<HandoffEvent[]> {
+    return this.wait(() => {
+      this.requireInvestigation(investigationId);
+      return this.data.experiments
+        .filter((x) => x.investigationId === investigationId && x.environmentId)
+        .flatMap((x) => {
+          const base = { jobId: x.attemptId, jobKind: "run_experiment", environmentId: x.environmentId, stale: false };
+          const started: HandoffEvent[] = [
+            { ...base, stage: "admission_reserved", atMs: x.startedAtMs },
+            { ...base, stage: "grant_installed", atMs: x.startedAtMs + 1000 },
+            { ...base, stage: "work_started", atMs: x.startedAtMs + 2000 },
+          ];
+          if (!x.finishedAtMs) return started;
+          return [
+            ...started,
+            { ...base, stage: "artifacts_persisted" as const, atMs: x.finishedAtMs },
+            { ...base, stage: "evidence_committed" as const, atMs: x.finishedAtMs + 1000 },
+            { ...base, stage: "completion_acknowledged" as const, atMs: x.finishedAtMs + 2000 },
+          ];
+        });
+    });
   }
 }
