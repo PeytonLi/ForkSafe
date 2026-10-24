@@ -9,7 +9,7 @@ const modules = (import.meta as ImportMeta & { glob(pattern: string): Record<str
 const token = "agent-tools-test-token";
 type RunnerToolContext = {
   credentialId: string; investigationId: string; environmentId: string;
-  attemptId: string; grantId: string; epoch: number;
+  sessionId: string; attemptId: string; grantId: string; epoch: number;
 };
 
 function createTest() {
@@ -46,9 +46,16 @@ async function runnerContexts(t: any, count = 1) {
       credentialId: credential.credentialId, attemptId: lease.attemptId, epoch: lease.epoch,
       grantId: grant.grantId, bridgeMode: "fixture",
     });
+    const sessionId = crypto.randomUUID();
+    await t.mutation(internal.runnerControl.upsertSession, {
+      credentialId: credential.credentialId, attemptId: lease.attemptId, epoch: lease.epoch,
+      session: { id: sessionId, state: "streaming", mode: "fixture", tokenUsage: {
+        inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, usageKnown: true,
+      }, createdAtMs: Date.now() },
+    });
     contexts.push({
       credentialId: credential.credentialId, investigationId: created.investigationId,
-      environmentId: environment.appId, attemptId: lease.attemptId, grantId: grant.grantId, epoch: lease.epoch,
+      environmentId: environment.appId, sessionId, attemptId: lease.attemptId, grantId: grant.grantId, epoch: lease.epoch,
     });
   }
   return contexts;
@@ -118,15 +125,15 @@ describe("agent tool persistence", () => {
       "evaluation/withheld/manifest.json",
       "evaluation/reference_controller/task_controller.py",
     ]) {
-      await expect(t.query(internal.agentTools.readSource, { ...context, sessionId: crypto.randomUUID(), path }))
+      await expect(t.query(internal.agentTools.readSource, { ...context, path }))
         .resolves.toMatchObject({ status: "rejected", reason: "path_not_allowed" });
     }
     await expect(t.action(internal.agentTools.applyPatch, {
-      ...context, sessionId: crypto.randomUUID(), diff: "", expectedHeadRevisionId: crypto.randomUUID(),
+      ...context, diff: "", expectedHeadRevisionId: crypto.randomUUID(),
       rationale: "stale head", basedOnFindings: [],
     })).resolves.toEqual({ status: "rejected", reason: "stale_head" });
     await expect(t.query(internal.agentTools.readSource, {
-      ...context, epoch: context.epoch + 1, sessionId: crypto.randomUUID(), path: "task_controller.py",
+      ...context, epoch: context.epoch + 1, path: "task_controller.py",
     })).rejects.toThrow();
   });
 
@@ -149,7 +156,7 @@ describe("agent tool persistence", () => {
       changedFunctions: ["plan"],
     });
     const args = {
-      ...targetContext!, sessionId: crypto.randomUUID(), revisionId, rationale: "evidence-backed",
+      ...targetContext!, revisionId, rationale: "evidence-backed",
       basedOnFindings: [findingId],
     };
     await expect(t.action(internal.agentTools.submitCandidate, args)).resolves.toEqual({

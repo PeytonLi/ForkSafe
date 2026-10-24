@@ -104,7 +104,7 @@ export const mirrorFindingUse = internalMutation({
 async function authorize(ctx: any, args: ToolCtx): Promise<any> {
   return await ctx.runQuery(internal.runnerControl.authorizeTool, {
     credentialId: args.credentialId, attemptId: args.attemptId, grantId: args.grantId, epoch: args.epoch,
-    investigationId: args.investigationId, environmentId: args.environmentId,
+    investigationId: args.investigationId, environmentId: args.environmentId, sessionId: args.sessionId,
   });
 }
 

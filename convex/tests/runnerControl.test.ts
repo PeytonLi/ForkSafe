@@ -112,7 +112,10 @@ describe("runner control plane", () => {
     expect(stale.ok).toBe(false);
     const staleComplete = await t.mutation(internal.runnerControl.complete, { credentialId: credential.credentialId, operationId: crypto.randomUUID(), attemptId: lease.attemptId, grantId, epoch: lease.epoch, outcome: "succeeded", result: {}, sessions: [], finishedAtMs: Date.now() });
     expect(staleComplete.accepted).toBe(false);
-    await expect(t.query(internal.runnerControl.authorizeTool, { credentialId: credential.credentialId, attemptId: lease.attemptId, grantId, epoch: lease.epoch, investigationId, environmentId })).rejects.toThrow();
+    await expect(t.query(internal.runnerControl.authorizeTool, {
+      credentialId: credential.credentialId, attemptId: lease.attemptId, grantId,
+      epoch: lease.epoch, investigationId, environmentId, sessionId: crypto.randomUUID(),
+    })).rejects.toThrow();
     await t.mutation(internal.grants.markRevoked, { grantId, spacetimeRevoked: true, reason: "lease_expired" });
     const retry = await t.mutation(internal.runnerControl.claim, { credentialId: credential.credentialId, workerId: "w1" });
     expect(retry!.claimed.epoch).toBe(lease.epoch + 1);
@@ -122,7 +125,14 @@ describe("runner control plane", () => {
     const t = createTest();
     const { investigationId, environmentId, credential } = await startedInvestigation(t);
     const { lease, grantId } = await claimWithGrant(t, credential.credentialId, investigationId, environmentId);
-    const ctxArgs = { credentialId: credential.credentialId, attemptId: lease.attemptId, grantId, epoch: lease.epoch, investigationId, environmentId };
+    const sessionId = crypto.randomUUID();
+    await t.mutation(internal.runnerControl.upsertSession, {
+      credentialId: credential.credentialId, attemptId: lease.attemptId, epoch: lease.epoch,
+      session: { id: sessionId, state: "streaming", mode: "fixture", tokenUsage: {
+        inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, usageKnown: true,
+      }, createdAtMs: Date.now() },
+    });
+    const ctxArgs = { credentialId: credential.credentialId, attemptId: lease.attemptId, grantId, epoch: lease.epoch, investigationId, environmentId, sessionId };
     await expect(t.query(internal.runnerControl.authorizeTool, ctxArgs)).resolves.toBeTruthy();
     await t.mutation(api.investigations.cancel, { investigationId, serviceToken: token });
     await expect(t.query(internal.runnerControl.authorizeTool, ctxArgs)).rejects.toThrow(/cancel|fenced|unauthorized|grant_revoked/);

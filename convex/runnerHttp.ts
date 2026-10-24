@@ -12,15 +12,31 @@ import { verifyRunnerSignature } from "./lib/runnerAuth.js";
 
 const MAX_BODY_BYTES = 512 * 1024;
 const TOOL_NAMES = ["inspect_failure", "read_source", "apply_patch", "fork_candidate", "request_subtask", "run_experiment", "propose_controller_revision", "submit_candidate", "read_findings", "write_finding", "request_evidence"] as const;
+const INVALID_ARGUMENT_MESSAGE = "Request does not match the expected runner contract.";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
 }
 
 function errorCode(error: unknown): string {
+  if (isArgumentValidationError(error)) return "invalid_request";
   if (error instanceof ConvexError) return typeof error.data === "string" ? error.data : "error";
   if (error instanceof Error && error.message === "unauthorized") return "unauthorized";
   return "internal_error";
+}
+
+function isArgumentValidationError(error: unknown): boolean {
+  return error instanceof Error
+    && (error.name === "ArgumentValidationError"
+      || error.message.startsWith("ArgumentValidationError:")
+      || error.message.startsWith("Validator error:"));
+}
+
+function errorResponse(error: unknown, fallbackStatus: number): Response {
+  if (isArgumentValidationError(error)) {
+    return json({ error: "invalid_request", message: INVALID_ARGUMENT_MESSAGE }, 400);
+  }
+  return json({ error: errorCode(error) }, fallbackStatus);
 }
 
 async function authenticate(ctx: any, request: Request): Promise<{ ok: true; credential: any; body: any } | { ok: false; response: Response }> {
@@ -107,7 +123,7 @@ export function registerRunnerRoutes(router: HttpRouter): void {
         });
       } catch (error) {
         const code = errorCode(error);
-        return json({ error: code }, code === "unauthorized" ? 401 : 409);
+        return errorResponse(error, code === "unauthorized" ? 401 : 409);
       }
     }),
   });
@@ -123,6 +139,7 @@ export function registerRunnerRoutes(router: HttpRouter): void {
       try {
         return json(await ctx.runMutation(internal.runnerControl.heartbeat, { credentialId: auth.credential.appId, attemptId, grantId, epoch }));
       } catch (error) {
+        if (isArgumentValidationError(error)) return errorResponse(error, 400);
         const code = errorCode(error);
         return json({ ok: false, reason: code === "unauthorized" ? "revoked" : "unknown_attempt" }, code === "unauthorized" ? 401 : 200);
       }
@@ -140,7 +157,7 @@ export function registerRunnerRoutes(router: HttpRouter): void {
       try {
         return json(await ctx.runMutation(internal.runnerControl.recordStage, { credentialId: auth.credential.appId, attemptId, epoch, stage: "work_started", detail: { workerId: auth.credential.workerId } }));
       } catch (error) {
-        return json({ error: errorCode(error) }, 409);
+        return errorResponse(error, 409);
       }
     }),
   });
@@ -156,7 +173,7 @@ export function registerRunnerRoutes(router: HttpRouter): void {
       try {
         return json(await ctx.runMutation(internal.runnerControl.upsertSession, { credentialId: auth.credential.appId, attemptId, epoch, session }));
       } catch (error) {
-        return json({ error: errorCode(error) }, 409);
+        return errorResponse(error, 409);
       }
     }),
   });
@@ -177,7 +194,7 @@ export function registerRunnerRoutes(router: HttpRouter): void {
           credentialId: auth.credential.appId, attemptId, epoch, checkpoint,
         }));
       } catch (error) {
-        return json({ error: errorCode(error) }, 409);
+        return errorResponse(error, 409);
       }
     }),
   });
@@ -199,8 +216,9 @@ export function registerRunnerRoutes(router: HttpRouter): void {
         });
         return json(result);
       } catch (error) {
+        if (isArgumentValidationError(error)) return errorResponse(error, 400);
         const code = errorCode(error);
-        console.log("runner/complete rejected", code, error instanceof Error ? error.message.slice(0, 300) : "");
+        console.log("runner/complete rejected", code);
         return json({ accepted: false, reason: code }, 409);
       }
     }),
@@ -222,9 +240,9 @@ export function registerRunnerRoutes(router: HttpRouter): void {
         };
         const callId = typeof body.callId === "string" ? body.callId : undefined;
         try {
+          await ctx.runQuery(internal.runnerControl.authorizeTool, context);
           if (name === "request_subtask" && body.subtaskResult !== undefined) {
             if (!callId) return json({ error: "call_id_required" }, 400);
-            await ctx.runQuery(internal.runnerControl.authorizeTool, context);
             await ctx.runMutation(internal.agentTools.finishToolCall, { callId, result: body.subtaskResult });
             return json({ ok: true });
           }
@@ -233,8 +251,11 @@ export function registerRunnerRoutes(router: HttpRouter): void {
           }
           let reserved: any;
           if (callId) {
-            await ctx.runQuery(internal.runnerControl.authorizeTool, context);
-            reserved = await ctx.runMutation(internal.agentTools.reserveToolCall, { ...context, tool: name, callId });
+            reserved = await ctx.runMutation(internal.agentTools.reserveToolCall, {
+              investigationId: context.investigationId, environmentId: context.environmentId,
+              sessionId: context.sessionId, attemptId: context.attemptId, epoch: context.epoch,
+              tool: name, callId,
+            });
             if (reserved.status === "duplicate") {
               if (name === "request_subtask" && (reserved.result as { status?: string } | null)?.status === "reserved") {
                 return json({ status: "retry_later", reason: "call_in_progress" });
@@ -303,6 +324,14 @@ export function registerRunnerRoutes(router: HttpRouter): void {
           return json(result);
         } catch (error) {
           const code = errorCode(error);
+          if (isArgumentValidationError(error)) {
+            if (callId && name !== "request_subtask") {
+              await ctx.runMutation(internal.agentTools.finishToolCall, {
+                callId, result: { status: "error", reason: "invalid_request" },
+              }).catch(() => undefined);
+            }
+            return errorResponse(error, 400);
+          }
           if (["finding_not_read", "finding_not_in_investigation"].includes(code)) {
             const result = { status: "rejected", reason: code };
             if (callId) await ctx.runMutation(internal.agentTools.finishToolCall, { callId, result }).catch(() => undefined);
@@ -313,7 +342,7 @@ export function registerRunnerRoutes(router: HttpRouter): void {
               callId, result: { status: "error", reason: code },
             }).catch(() => undefined);
           }
-          const status = code === "unauthorized" ? 401 : ["fenced", "lease_expired", "grant_revoked", "investigation_cancelling", "environment_inactive"].includes(code) ? 409 : 500;
+          const status = code === "unauthorized" ? 401 : ["fenced", "lease_expired", "grant_revoked", "session_mismatch", "investigation_cancelling", "environment_inactive"].includes(code) ? 409 : 500;
           return json({ error: code }, status);
         }
       }),

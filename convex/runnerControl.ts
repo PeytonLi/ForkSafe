@@ -275,7 +275,10 @@ export const complete = internalMutation({
 
 /** Fence check for every tool call. Returns the records the tool needs. */
 export const authorizeTool = internalQuery({
-  args: { credentialId: v.string(), attemptId: v.string(), grantId: v.string(), epoch: v.number(), investigationId: v.string(), environmentId: v.string() },
+  args: {
+    credentialId: v.string(), attemptId: v.string(), grantId: v.string(), epoch: v.number(),
+    investigationId: v.string(), environmentId: v.string(), sessionId: v.string(),
+  },
   handler: async (ctx, args) => {
     const credential = await ctx.db.query("runnerCredentials").withIndex("by_appId", (q) => q.eq("appId", args.credentialId)).unique();
     if (!credential || credential.revokedAtMs !== undefined || credential.expiresAtMs <= Date.now()) throw new ConvexError("unauthorized");
@@ -287,6 +290,11 @@ export const authorizeTool = internalQuery({
     if (attempt.leasedUntilMs <= Date.now()) throw new ConvexError("lease_expired");
     const grant = await ctx.db.query("grants").withIndex("by_attempt", (q) => q.eq("attemptId", attempt.appId)).unique();
     if (!grant || grant.appId !== args.grantId || grant.revokedAtMs !== undefined || grant.expiresAtMs <= Date.now()) throw new ConvexError("grant_revoked");
+    if (grant.jobId !== job.appId || grant.epoch !== args.epoch || grant.investigationId !== job.investigationId
+      || grant.environmentId !== job.environmentId) throw new ConvexError("fenced");
+    const session = await ctx.db.query("sessions").withIndex("by_appId", (q) => q.eq("appId", args.sessionId)).unique();
+    if (!session || session.investigationId !== job.investigationId || session.environmentId !== job.environmentId
+      || session.attemptId !== attempt.appId) throw new ConvexError("session_mismatch");
     const investigation = await ctx.db.query("investigations").withIndex("by_appId", (q) => q.eq("appId", job.investigationId)).unique();
     if (!investigation || investigation.cancelStatus !== "none" || job.cancelRequestedAtMs !== undefined) throw new ConvexError("investigation_cancelling");
     const environment = await ctx.db.query("environments").withIndex("by_appId", (q) => q.eq("appId", job.environmentId!)).unique();
