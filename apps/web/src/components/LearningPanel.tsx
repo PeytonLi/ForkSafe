@@ -44,8 +44,8 @@ export function LearningPanel({ workspace }: { workspace: InvestigationWorkspace
                   {entry.version === 1 ? <span>Baseline v1</span> : (
                     <span>
                       {entry.investigationId
-                        ? <a href={routeHref({ investigationId: entry.investigationId, tab: "compare" })}>{approvedLabel(entry.label)}</a>
-                        : approvedLabel(entry.label)}{" "}
+                        ? <a href={routeHref({ investigationId: entry.investigationId, tab: "compare" })}>{entry.label}</a>
+                        : entry.label}{" "}
                       <strong>v{entry.version}</strong>
                     </span>
                   )}
@@ -106,10 +106,6 @@ export function LearningPanel({ workspace }: { workspace: InvestigationWorkspace
       )}
     </Panel>
   );
-}
-
-function approvedLabel(label: string): string {
-  return label.replace(/^Fix approved in /, "Fix approved in ").replace(/ while carrying cube.*$/, "");
 }
 
 function RetryReplays({ before, after, scene }: { before: LearningExperimentSummary; after: LearningExperimentSummary; scene: Record<string, number> }) {

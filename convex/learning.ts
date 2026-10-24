@@ -162,6 +162,7 @@ function experimentSummary(row: any) {
     completed: row.completed,
     ...(row.completionTimeSec !== undefined ? { completionTimeSec: row.completionTimeSec } : {}),
     ...(row.firstFailure ? { firstFailure: row.firstFailure } : {}),
+    failureKinds: row.failureKinds ?? [],
     ...(row.replayArtifactId ? { replayArtifactId: row.replayArtifactId } : {}),
     controllerSha256: row.controllerSha256,
   };

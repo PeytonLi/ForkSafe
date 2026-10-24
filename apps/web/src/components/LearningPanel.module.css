@@ -2,7 +2,8 @@
 .card { min-width: 0; padding: 0.9rem; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--panel); box-shadow: var(--shadow-card); }
 .card h3 { margin: 0 0 0.55rem; font-size: var(--text-md); }
 .lineage { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.6rem; min-width: 0; overflow-wrap: anywhere; }
-.lineageItem { min-width: 0; overflow-wrap: anywhere; }
+.lineageItem { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.lineageItem a { overflow-wrap: anywhere; }
 .current { padding: 0.2rem 0.45rem; border-radius: 8px; color: var(--ink); background: var(--accent-soft); font-weight: 650; }
 .arrow { margin-right: 0.5rem; color: var(--muted); }
 .thisRun { margin: 0.65rem 0 0; color: var(--muted); font-size: var(--text-xs); overflow-wrap: anywhere; }

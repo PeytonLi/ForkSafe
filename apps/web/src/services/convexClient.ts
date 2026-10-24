@@ -90,7 +90,7 @@ const LearningExperiment = z.object({
   firstFailure: z.object({ kind: z.string(), tSec: z.number(), detail: z.string() }).optional(),
   replayArtifactId: z.string().optional(),
   controllerSha256: z.string(),
-  failureKinds: z.array(z.string()).optional(),
+  failureKinds: z.array(z.string()).default([]),
 });
 export const LearningViewSchema = z.object({
   taskFamily: z.string().default("divider_pick_place"),
