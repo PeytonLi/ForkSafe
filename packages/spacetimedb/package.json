@@ -1,0 +1,31 @@
+{
+  "name": "@forksafe/spacetimedb",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./client/index.ts",
+      "default": "./client/index.ts"
+    },
+    "./logic": "./src/logic/index.ts"
+  },
+  "scripts": {
+    "build": "spacetime build --module-path .",
+    "generate": "spacetime generate --lang typescript --out-dir client/module_bindings --module-path . -y",
+    "typecheck": "node scripts/ensure-bindings.mjs && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.client.json",
+    "test": "vitest run test/unit",
+    "test:local": "node scripts/smoke-local.mjs"
+  },
+  "dependencies": {
+    "@forksafe/contracts": "workspace:*",
+    "spacetimedb": "2.13.*",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "tsx": "^4.19.4",
+    "typescript": "~5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
