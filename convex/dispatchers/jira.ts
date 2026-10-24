@@ -99,6 +99,9 @@ export async function deliverJiraPayload(
     if (!review) throw new TypeError("review_missing");
     investigationId = review.investigationId;
     idempotencyKey = jiraIdempotencyKey(value);
+  } else if (value.kind === "awaiting_review" && typeof value.investigationId === "string") {
+    investigationId = value.investigationId;
+    idempotencyKey = jiraIdempotencyKey(value);
   } else if (explicit.success) {
     investigationId = explicit.data.investigation.id;
     idempotencyKey = typeof value.idempotencyKey === "string"
@@ -309,6 +312,7 @@ export function jiraIdempotencyKey(payload: unknown): string | undefined {
   const value = payload as Record<string, unknown>;
   if (typeof value.idempotencyKey === "string") return value.idempotencyKey;
   if (value.kind === "review" && typeof value.id === "string") return `review:${value.id}:jira_sync`;
+  if (value.kind === "awaiting_review" && typeof value.investigationId === "string") return `awaiting_review:${value.investigationId}:jira_sync`;
   if (value.kind === "review" && value.record && typeof value.record === "object" && typeof (value.record as { id?: unknown }).id === "string") {
     return `review:${(value.record as { id: string }).id}:jira_sync`;
   }

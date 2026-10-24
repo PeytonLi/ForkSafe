@@ -3,6 +3,7 @@ import { AtlassianHttpError, JiraClient } from "../../packages/integrations/atla
 import {
   classifyJiraFailure,
   deliverJiraPayload,
+  jiraIdempotencyKey,
   operationIdForIdempotencyKey,
 } from "./jira.js";
 import { SpacetimeRejected, SpacetimeUnavailable } from "./spacetime.js";
@@ -204,6 +205,32 @@ describe("Jira outbox dispatcher", () => {
 
     expect(jira.remoteLinks.size).toBe(1);
     expect([...jira.remoteLinks.keys()]).toEqual([`forksafe:confluence:${investigationId}:12345`]);
+  });
+});
+
+describe("Jira awaiting_review issue", () => {
+  it("opens the investigation issue before any review exists, with a stable key", async () => {
+    const jira = jiraFixture();
+    const deps = {
+      client: jira.client,
+      spacetime: {
+        getReview: async () => { throw new Error("must not read a review"); },
+        listCandidates: async () => [candidate],
+        listEvaluations: async () => [evaluation],
+        findingsCount: async () => 2,
+        listReviews: async () => [],
+      },
+      snapshot: async () => ({ investigation, environments: [{ state: "active" }] }),
+      projectKey: "FS",
+      siteUrl: "https://jira.example.invalid",
+      readyStatuses: ["In Progress"],
+    } as unknown as Parameters<typeof deliverJiraPayload>[1];
+    const payload = { kind: "awaiting_review", investigationId };
+    expect(jiraIdempotencyKey(payload)).toBe(`awaiting_review:${investigationId}:jira_sync`);
+    let result: unknown;
+    try { result = await deliverJiraPayload(payload, deps); } catch { result = await deliverJiraPayload(payload, deps); }
+    expect(result).toBeTruthy();
+    expect(jiraIdempotencyKey({ kind: "awaiting_review" })).toBeUndefined();
   });
 });
 

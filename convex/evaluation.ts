@@ -172,6 +172,7 @@ export const advance = internalMutation({
       }
       if (!finalists.length) {
         await ctx.db.patch(investigation._id, { state: "awaiting_review", version: investigation.version + 1, updatedAtMs: now });
+        await scheduleReviewIssue(ctx, args.investigationId);
         return { action: "awaiting_review_no_finalists" };
       }
       for (const finalist of finalists) {
@@ -191,6 +192,7 @@ export const advance = internalMutation({
       if (candidate.status === "evaluating") await ctx.db.patch(candidate._id, { status: "evaluated", updatedAtMs: now });
     }
     await ctx.db.patch(investigation._id, { state: "awaiting_review", version: investigation.version + 1, updatedAtMs: now });
+    await scheduleReviewIssue(ctx, args.investigationId);
     return { action: "awaiting_review" };
   },
 });
@@ -388,3 +390,11 @@ export const evaluateNext = internalAction({
     return { action: "evaluated", jobId };
   },
 });
+
+// Opens the FS review issue as soon as review is needed; the review reducer's own jira_sync row later updates it.
+async function scheduleReviewIssue(ctx: any, investigationId: string): Promise<void> {
+  await ctx.scheduler.runAfter(0, internal.outbox.insert, {
+    destination: "jira_sync", idempotencyKey: `awaiting_review:${investigationId}:jira_sync`, operationId: appId(),
+    payload: { kind: "awaiting_review", investigationId }, source: "convex",
+  });
+}
