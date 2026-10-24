@@ -52,6 +52,31 @@ export type SessionManagerOptions = {
   }) => Promise<void>;
 };
 
+function permissionAuditDetails(params: PermissionParams): Record<string, unknown>[] {
+  return params.toolUses.map((use) => {
+    const details = use.details;
+    const calls = Array.isArray(details.calls)
+      ? details.calls.flatMap((call) => {
+        if (typeof call !== "object" || call === null || Array.isArray(call)) return [];
+        const nested = call as Record<string, unknown>;
+        const confirmation = nested.confirmation;
+        if (typeof nested.toolName !== "string" || typeof confirmation !== "object" || confirmation === null || Array.isArray(confirmation)) return [];
+        const type = (confirmation as Record<string, unknown>).type;
+        return typeof type === "string" ? [{ toolName: nested.toolName, type }] : [];
+      })
+      : undefined;
+    const toolName = typeof details.toolName === "string" ? details.toolName : use.name;
+    const serverName = details.serverName ?? details.server;
+    return {
+      type: typeof details.type === "string" ? details.type : use.confirmationType,
+      ...(typeof toolName === "string" ? { toolName } : {}),
+      ...(typeof serverName === "string" ? { serverName } : {}),
+      ...(typeof details.actualToolName === "string" ? { actualToolName: details.actualToolName } : {}),
+      ...(calls ? { calls } : {}),
+    };
+  });
+}
+
 type RunTurnOptions = {
   abortSignal?: AbortSignal;
   nonBlocking?: boolean;
@@ -127,6 +152,7 @@ export class SessionManager {
           summary: decision.allowed ? "permission allowed" : "permission denied",
           data: {
             toolNames: (params as PermissionParams).toolUses.map((use) => use.name ?? use.confirmationType),
+            details: permissionAuditDetails(params as PermissionParams),
             allowed: decision.allowed,
             reasons: decision.reasons,
           },

@@ -2,8 +2,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { ToolConfirmationOutcome, ToolConfirmationType } from "@factory/droid-sdk/node";
 import { ActivityLog } from "../src/activity-log.js";
-import { FixtureFactoryAdapter } from "../src/adapter.js";
+import { FixtureFactoryAdapter, type AdapterSessionOptions, type FactoryAdapter } from "../src/adapter.js";
 import { SessionCapError, SessionManager, SessionRegistrationError } from "../src/session-manager.js";
 import { UsageLedger } from "../src/usage.js";
 
@@ -104,6 +105,57 @@ describe("SessionManager", () => {
     (adapter as unknown as { sessions: Set<string> }).sessions.clear();
     const replacement = await sessions.resume(created.sessionId);
     expect(sessions.replacesSessionId(replacement.sessionId)).toBe(created.sessionId);
+  });
+
+  it("logs permission details without nested tool inputs", async () => {
+    const fixture = new FixtureFactoryAdapter();
+    let permissionHandler: AdapterSessionOptions["permissionHandler"];
+    const adapter: FactoryAdapter = {
+      mode: "fixture",
+      createSession: async (options) => {
+        permissionHandler = options.permissionHandler;
+        return fixture.createSession(options);
+      },
+      resumeSession: async (vendorId, options) => {
+        permissionHandler = options.permissionHandler;
+        return fixture.resumeSession(vendorId, options);
+      },
+    };
+    const log = new ActivityLog();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "forksafe-sessions-"));
+    dirs.push(workspaceRoot);
+    const sessions = new SessionManager({
+      adapter, ledger: new UsageLedger(), workspaceRoot, toolBackend: backend, log,
+    });
+    await sessions.createSession({ investigationId: investigations[0]!, environmentId: environments[6]! });
+
+    await permissionHandler!({
+      toolUses: [{
+        confirmationType: ToolConfirmationType.Script,
+        details: {
+          type: ToolConfirmationType.Script,
+          calls: [{
+            toolName: "forksafe___submit_candidate",
+            toolInput: { privateValue: "do-not-log" },
+            confirmation: {
+              type: ToolConfirmationType.McpTool,
+              toolName: "forksafe___submit_candidate",
+              actualToolName: "submit_candidate",
+              serverName: "forksafe",
+            },
+          }],
+        },
+      }],
+      options: [{ value: ToolConfirmationOutcome.ProceedOnce }, { value: ToolConfirmationOutcome.Cancel }],
+    });
+
+    const permission = log.list().find((entry) => entry.kind === "permission");
+    expect(permission?.data?.details).toEqual([{
+      type: "script",
+      calls: [{ toolName: "forksafe___submit_candidate", type: "mcp_tool" }],
+    }]);
+    expect(JSON.stringify(permission)).not.toContain("do-not-log");
+    expect(JSON.stringify(permission)).not.toContain("toolInput");
   });
 
   it("returns session_cap when a subtask would create the third environment session", async () => {
