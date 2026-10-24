@@ -39,6 +39,11 @@ export async function claimJob(ctx: MutationCtx, job: any, workerId: string) {
   );
   if (!decision.ok) throw new ConvexError(decision.reason);
   const now = Date.now();
+  if (previousAttempt && !["succeeded", "failed", "expired", "fenced"].includes(previousAttempt.state)) {
+    await ctx.db.patch(previousAttempt._id, { state: "fenced", endedAtMs: now });
+    await releaseAttemptModelTurns(ctx, previousAttempt.appId, now, "fenced");
+    await markAttemptUsageUnknown(ctx, previousAttempt.appId, job.environmentId, now);
+  }
   const attemptId = decision.job.activeAttemptId;
   await ctx.db.insert("attempts", {
     appId: attemptId, jobId: job.appId, epoch: decision.newEpoch, state: "leased", workerId,
@@ -61,6 +66,81 @@ export async function heartbeatAttempt(ctx: MutationCtx, job: any, attempt: any,
   await ctx.db.patch(attempt._id, { state: "heartbeating", leasedUntilMs: decision.leasedUntilMs, lastHeartbeatMs: now });
   await ctx.db.patch(job._id, { leaseExpiresAtMs: decision.leasedUntilMs, updatedAtMs: now });
   return { ok: true as const, leasedUntilMs: decision.leasedUntilMs, grantExpiresAtMs: attempt.grantExpiresAtMs ?? decision.grantExtendUntilMs, epoch: attempt.epoch };
+}
+
+export async function releaseAttemptModelTurns(ctx: MutationCtx, attemptId: string, now: number, reason: string) {
+  const reservations = await ctx.db.query("reservations")
+    .withIndex("by_kind_status", (q) => q.eq("kind", "model_turn").eq("status", "active"))
+    .collect();
+  let released = 0;
+  for (const reservation of reservations) {
+    if (reservation.holder.attemptId === attemptId) {
+      await ctx.db.patch(reservation._id, {
+        status: "released", releasedAtMs: now, releaseReason: reason,
+      });
+      released += 1;
+    }
+  }
+  return released;
+}
+
+export async function markAttemptUsageUnknown(ctx: MutationCtx, attemptId: string, environmentId: string | undefined, now: number) {
+  if (!environmentId) return;
+  const sessions = await ctx.db.query("sessions")
+    .withIndex("by_environment", (q) => q.eq("environmentId", environmentId))
+    .collect();
+  for (const session of sessions) {
+    if (session.attemptId !== attemptId || session.usageReportedAtMs !== undefined) continue;
+    await ctx.db.patch(session._id, {
+      tokenUsage: { ...session.tokenUsage, usageKnown: false },
+      usageUnknownTurns: Math.max(session.usageUnknownTurns ?? 0, 1),
+      usageReportedAtMs: now,
+      updatedAtMs: now,
+    });
+  }
+}
+
+export async function finalizeCancelledJob(ctx: MutationCtx, job: any, now: number) {
+  const attempt = job.activeAttemptId ? await byAppId(ctx, "attempts", job.activeAttemptId) : null;
+  if (attempt && !["succeeded", "failed", "expired", "fenced"].includes(attempt.state)) {
+    await ctx.db.patch(attempt._id, { state: "expired", endedAtMs: now });
+  }
+  await ctx.db.patch(job._id, {
+    state: "cancelled",
+    epoch: job.epoch + 1,
+    activeAttemptId: undefined,
+    cancelRequestedAtMs: job.cancelRequestedAtMs ?? now,
+    leaseExpiresAtMs: undefined,
+    workerId: undefined,
+    pendingRevocation: undefined,
+    updatedAtMs: now,
+  });
+  if (attempt) {
+    await releaseAttemptModelTurns(ctx, attempt.appId, now, "cancelled");
+    await markAttemptUsageUnknown(ctx, attempt.appId, job.environmentId, now);
+    const grants = await ctx.db.query("grants")
+      .withIndex("by_attempt", (q) => q.eq("attemptId", attempt.appId))
+      .collect();
+    for (const grant of grants) {
+      if (grant.revokedAtMs === undefined) {
+        await ctx.db.patch(grant._id, { revokedAtMs: now, revokeReason: "cancelled" });
+      }
+      if (grant.spacetimeInstalled && !grant.spacetimeRevoked) {
+        await ctx.scheduler.runAfter(0, internal.bridge.revokeGrant, { grantId: grant.appId, reason: "cancelled" });
+      }
+    }
+  }
+  const reservations = await ctx.db.query("reservations")
+    .withIndex("by_operation", (q) => q.eq("operationId", job.operationId))
+    .collect();
+  for (const reservation of reservations) {
+    if (reservation.kind !== "sandbox" && countsTowardCapacity(reservation.status)) {
+      await ctx.db.patch(reservation._id, {
+        status: "released", releasedAtMs: now, releaseReason: "cancelled",
+      });
+    }
+  }
+  return { jobId: job.appId, attemptId: attempt?.appId };
 }
 
 export async function currentStages(ctx: MutationCtx, job: any, attempt: any) {
@@ -117,6 +197,7 @@ export async function completeJob(
   if (!decision.ok) throw new ConvexError(decision.reason);
   const now = Date.now();
   await ctx.db.patch(attempt._id, { state: decision.attemptState, outcome, endedAtMs: now });
+  await releaseAttemptModelTurns(ctx, attempt.appId, now, outcome);
   const grant = await ctx.db.query("grants").withIndex("by_attempt", (q) => q.eq("attemptId", attempt.appId)).unique();
   if (grant && grant.revokedAtMs === undefined) {
     await ctx.db.patch(grant._id, { revokedAtMs: now, revokeReason: decision.retry ? "attempt_retry" : outcome });

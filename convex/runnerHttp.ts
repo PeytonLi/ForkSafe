@@ -37,17 +37,18 @@ function errorResponse(error: unknown, fallbackStatus: number): Response {
   if (isArgumentValidationError(error)) {
     return json({ error: "invalid_request", message: INVALID_ARGUMENT_MESSAGE }, 400);
   }
-  return json({ error: errorCode(error) }, fallbackStatus);
+  const code = errorCode(error);
+  if (code === "fenced" || code === "stale_epoch") return json({ error: "stale_epoch" }, 409);
+  return json({ error: code }, fallbackStatus);
 }
 
-async function authenticate(ctx: any, request: Request): Promise<{ ok: true; credential: any; body: any } | { ok: false; response: Response }> {
-  const rawBody = await request.text();
+async function authenticateRaw(ctx: any, request: Request, rawBody: string, options: { ignoreCredentialStatus?: boolean; ignoreRevocation?: boolean; ignoreExpiration?: boolean } = {}): Promise<{ ok: true; credential: any; body: any } | { ok: false; response: Response }> {
   if (rawBody.length > MAX_BODY_BYTES) return { ok: false, response: json({ error: "body_too_large" }, 413) };
   const credentialId = request.headers.get("x-forksafe-runner");
   const credential = credentialId ? await ctx.runQuery(internal.runnerControl.getCredential, { credentialId }) : null;
   const verdict = await verifyRunnerSignature(credential, {
     credentialId, timestamp: request.headers.get("x-forksafe-timestamp"), signature: request.headers.get("x-forksafe-signature"),
-  }, rawBody, Date.now());
+  }, rawBody, Date.now(), options);
   if (!verdict.ok) return { ok: false, response: json({ error: "unauthorized", reason: verdict.reason }, 401) };
   let body: unknown;
   try {
@@ -57,6 +58,15 @@ async function authenticate(ctx: any, request: Request): Promise<{ ok: true; cre
   }
   if (!body || typeof body !== "object" || Array.isArray(body)) return { ok: false, response: json({ error: "invalid_body" }, 400) };
   return { ok: true, credential, body };
+}
+
+async function authenticate(ctx: any, request: Request): Promise<{ ok: true; credential: any; body: any } | { ok: false; response: Response }> {
+  return authenticateRaw(ctx, request, await request.text());
+}
+
+async function sha256(rawBody: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rawBody));
+  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
 }
 
 function contractJob(job: any) {
@@ -140,14 +150,40 @@ export function registerRunnerRoutes(router: HttpRouter): void {
       const { attemptId, grantId, epoch } = auth.body;
       if (typeof attemptId !== "string" || typeof grantId !== "string" || typeof epoch !== "number") return json({ ok: false, reason: "unknown_attempt" });
       try {
-        return json(await ctx.runMutation(internal.runnerControl.heartbeat, { credentialId: auth.credential.appId, attemptId, grantId, epoch }));
+        const result = await ctx.runMutation(internal.runnerControl.heartbeat, { credentialId: auth.credential.appId, attemptId, grantId, epoch });
+        if (result.reason === "fenced") return json({ error: "stale_epoch" }, 409);
+        return json(result);
       } catch (error) {
         if (isArgumentValidationError(error)) return errorResponse(error, 400);
         const code = errorCode(error);
+        if (code === "fenced" || code === "stale_epoch") return errorResponse(error, 409);
         return json({ ok: false, reason: code === "unauthorized" ? "revoked" : "unknown_attempt" }, code === "unauthorized" ? 401 : 200);
       }
     }),
   });
+
+  for (const endpoint of ["reserve", "release"] as const) {
+    router.route({
+      path: `/runner/model_turn/${endpoint}`,
+      method: "POST",
+      handler: httpAction(async (ctx, request) => {
+        traceLog(`/runner/model_turn/${endpoint}`, request);
+        const auth = await authenticate(ctx, request);
+        if (!auth.ok) return auth.response;
+        const { attemptId, grantId, epoch, sessionId, turnKey } = auth.body;
+        if (typeof attemptId !== "string" || typeof grantId !== "string" || typeof epoch !== "number"
+          || typeof sessionId !== "string" || typeof turnKey !== "string") return json({ error: "invalid_body" }, 400);
+        try {
+          const fn = endpoint === "reserve" ? internal.runnerControl.reserveModelTurn : internal.runnerControl.releaseModelTurn;
+          return json(await ctx.runMutation(fn, {
+            credentialId: auth.credential.appId, attemptId, grantId, epoch, sessionId, turnKey,
+          }));
+        } catch (error) {
+          return errorResponse(error, 409);
+        }
+      }),
+    });
+  }
 
   router.route({
     path: "/runner/start",
@@ -184,6 +220,26 @@ export function registerRunnerRoutes(router: HttpRouter): void {
   });
 
   router.route({
+    path: "/runner/usage",
+    method: "POST",
+    handler: httpAction(async (ctx, request) => {
+      traceLog("/runner/usage", request);
+      const auth = await authenticateRaw(ctx, request, await request.text(), { ignoreRevocation: true });
+      if (!auth.ok) return auth.response;
+      const { attemptId, sessionId, tokenUsage, unknownTurns, partialTurns } = auth.body;
+      if (typeof attemptId !== "string" || typeof sessionId !== "string" || !tokenUsage
+        || typeof unknownTurns !== "number" || typeof partialTurns !== "number") return json({ error: "invalid_body" }, 400);
+      try {
+        return json(await ctx.runMutation(internal.runnerControl.recordUsage, {
+          credentialId: auth.credential.appId, attemptId, sessionId, tokenUsage, unknownTurns, partialTurns,
+        }));
+      } catch (error) {
+        return errorResponse(error, 409);
+      }
+    }),
+  });
+
+  router.route({
     path: "/runner/checkpoint",
     method: "POST",
     handler: httpAction(async (ctx, request) => {
@@ -210,7 +266,25 @@ export function registerRunnerRoutes(router: HttpRouter): void {
     method: "POST",
     handler: httpAction(async (ctx, request) => {
       traceLog("/runner/complete", request);
-      const auth = await authenticate(ctx, request);
+      const rawBody = await request.text();
+      if (rawBody.length > MAX_BODY_BYTES) return json({ error: "body_too_large" }, 413);
+      let parsed: any;
+      try { parsed = rawBody ? JSON.parse(rawBody) : {}; } catch { return json({ error: "invalid_json" }, 400); }
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return json({ error: "invalid_body" }, 400);
+      const credentialId = request.headers.get("x-forksafe-runner");
+      if (typeof parsed.operationId === "string" && credentialId) {
+        const ack = await ctx.runQuery(internal.runnerControl.getCompletionAck, { operationId: parsed.operationId });
+        const bodyHash = await sha256(rawBody);
+        if (ack && ack.credentialId === credentialId && ack.attemptId === parsed.attemptId && ack.rawBodySha256 === bodyHash) {
+          const replayAuth = await authenticateRaw(ctx, request, rawBody, { ignoreCredentialStatus: true });
+          if (!replayAuth.ok) return replayAuth.response;
+          if (ack.response?.reason === "fenced" || ack.response?.reason === "stale_epoch") {
+            return json({ error: "stale_epoch" }, 409);
+          }
+          return json(ack.response);
+        }
+      }
+      const auth = await authenticateRaw(ctx, request, rawBody);
       if (!auth.ok) return auth.response;
       const body = auth.body;
       if (typeof body.operationId !== "string" || typeof body.attemptId !== "string" || typeof body.grantId !== "string" || typeof body.epoch !== "number"
@@ -218,14 +292,17 @@ export function registerRunnerRoutes(router: HttpRouter): void {
       try {
         const result = await ctx.runMutation(internal.runnerControl.complete, {
           credentialId: auth.credential.appId, operationId: body.operationId, attemptId: body.attemptId, grantId: body.grantId,
+          rawBodySha256: await sha256(rawBody),
           epoch: body.epoch, outcome: body.outcome, result: body.result ?? {}, sessions: Array.isArray(body.sessions) ? body.sessions : [],
           finishedAtMs: typeof body.finishedAtMs === "number" ? body.finishedAtMs : Date.now(),
         });
+        if (result.reason === "fenced" || result.reason === "stale_epoch") return json({ error: "stale_epoch" }, 409);
         return json(result);
       } catch (error) {
         if (isArgumentValidationError(error)) return errorResponse(error, 400);
         const code = errorCode(error);
         console.log("runner/complete rejected", code);
+        if (code === "fenced" || code === "stale_epoch") return errorResponse(error, 409);
         return json({ accepted: false, reason: code }, 409);
       }
     }),
@@ -353,8 +430,10 @@ export function registerRunnerRoutes(router: HttpRouter): void {
               callId, result: { status: "error", reason: code },
             }).catch(() => undefined);
           }
-          const status = code === "unauthorized" ? 401 : ["fenced", "lease_expired", "grant_revoked", "session_mismatch", "investigation_cancelling", "environment_inactive"].includes(code) ? 409 : 500;
-          return json({ error: code }, status);
+          const status = code === "unauthorized" ? 401 : ["fenced", "stale_epoch", "lease_expired", "grant_revoked", "session_mismatch", "investigation_cancelling", "environment_inactive"].includes(code) ? 409 : 500;
+          return code === "fenced" || code === "stale_epoch"
+            ? json({ error: "stale_epoch" }, 409)
+            : json({ error: code }, status);
         }
       }),
     });

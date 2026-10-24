@@ -1,8 +1,9 @@
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api.js";
 import { internalMutation, internalQuery } from "./_generated/server.js";
-import { RUNNER_CREDENTIAL_TTL_MS } from "./lib/constants.js";
+import { LEASE_EXPIRY_MS, RUNNER_CREDENTIAL_TTL_MS, readLimits } from "./lib/constants.js";
 import { byAppId, claimJob, completeJob, currentStages, heartbeatAttempt, recordStageRow } from "./lib/jobOps.js";
+import { countsTowardCapacity } from "./lib/reservations.js";
 import { randomSecret } from "./lib/runnerAuth.js";
 import { appId, assertUUID } from "./lib/validators.js";
 
@@ -132,7 +133,116 @@ export const heartbeat = internalMutation({
       return { ok: false as const, reason: reason as "revoked" | "expired" | "fenced" };
     }
     await ctx.db.patch(credential._id, { lastSeenAtMs: Date.now() });
+    const modelTurns = await ctx.db.query("reservations")
+      .withIndex("by_kind_status", (q) => q.eq("kind", "model_turn").eq("status", "active"))
+      .collect();
+    for (const reservation of modelTurns) {
+      if (reservation.holder.attemptId === lease.attempt.appId) {
+        await ctx.db.patch(reservation._id, { leasedUntilMs: result.leasedUntilMs });
+      }
+    }
     return result;
+  },
+});
+
+export const reserveModelTurn = internalMutation({
+  args: {
+    credentialId: v.string(),
+    attemptId: v.string(),
+    epoch: v.number(),
+    grantId: v.string(),
+    sessionId: v.string(),
+    turnKey: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const credential = await requireCredential(ctx, args.credentialId);
+    const { attempt, job } = await requireLease(ctx, credential, args.attemptId, args.epoch, args.grantId);
+    if (!args.turnKey.startsWith(`${attempt.appId}:${args.sessionId}:`)) throw new ConvexError("turn_key_invalid");
+    const session = await ctx.db.query("sessions")
+      .withIndex("by_appId", (q) => q.eq("appId", args.sessionId))
+      .unique();
+    if (!session || session.investigationId !== credential.investigationId
+      || session.environmentId !== credential.environmentId || session.attemptId !== attempt.appId) {
+      throw new ConvexError("session_mismatch");
+    }
+    const grant = await ctx.db.query("grants")
+      .withIndex("by_appId", (q) => q.eq("appId", args.grantId))
+      .unique();
+    if (!grant || grant.attemptId !== attempt.appId || grant.revokedAtMs !== undefined || grant.expiresAtMs <= Date.now()) {
+      throw new ConvexError("grant_revoked");
+    }
+    const now = Date.now();
+    const existing = await ctx.db.query("reservations")
+      .withIndex("by_turn_key", (q) => q.eq("turnKey", args.turnKey))
+      .unique();
+    if (existing) {
+      if (existing.investigationId !== job.investigationId || existing.holder.attemptId !== attempt.appId
+        || existing.holder.sessionId !== args.sessionId) throw new ConvexError("turn_key_conflict");
+      if (existing.status === "active" && existing.leasedUntilMs !== undefined && existing.leasedUntilMs <= now) {
+        await ctx.db.patch(existing._id, {
+          status: "expired", releasedAtMs: now, releaseReason: "lease_expired",
+        });
+        return { granted: false, retryAfterMs: 2_000, reason: "turn_already_released" };
+      }
+      return countsTowardCapacity(existing.status)
+        ? { granted: true, reservationId: existing.appId, leasedUntilMs: existing.leasedUntilMs }
+        : { granted: false, retryAfterMs: 2_000, reason: "turn_already_released" };
+    }
+    const active = await ctx.db.query("reservations")
+      .withIndex("by_kind_status", (q) => q.eq("kind", "model_turn").eq("status", "active"))
+      .collect();
+    for (const reservation of active) {
+      if (reservation.leasedUntilMs !== undefined && reservation.leasedUntilMs <= now) {
+        await ctx.db.patch(reservation._id, {
+          status: "expired", releasedAtMs: now, releaseReason: "lease_expired",
+        });
+      }
+    }
+    const stillActive = active.filter((reservation) => reservation.leasedUntilMs === undefined || reservation.leasedUntilMs > now);
+    const cap = Math.min(readLimits().maxActiveModelCalls, 4);
+    if (stillActive.length >= cap) return { granted: false, retryAfterMs: 2_000, reason: "global_capacity_exhausted" };
+    const reservationId = appId();
+    const leasedUntilMs = now + LEASE_EXPIRY_MS;
+    await ctx.db.insert("reservations", {
+      appId: reservationId,
+      kind: "model_turn",
+      status: "active",
+      investigationId: job.investigationId,
+      environmentId: credential.environmentId,
+      holder: { jobId: job.appId, attemptId: attempt.appId, sessionId: args.sessionId },
+      turnKey: args.turnKey,
+      operationId: appId(),
+      leasedUntilMs,
+      createdAtMs: now,
+    });
+    return { granted: true, reservationId, leasedUntilMs };
+  },
+});
+
+export const releaseModelTurn = internalMutation({
+  args: {
+    credentialId: v.string(),
+    attemptId: v.string(),
+    epoch: v.number(),
+    grantId: v.string(),
+    sessionId: v.string(),
+    turnKey: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const credential = await requireCredential(ctx, args.credentialId);
+    const { attempt } = await requireLease(ctx, credential, args.attemptId, args.epoch, args.grantId);
+    const reservation = await ctx.db.query("reservations")
+      .withIndex("by_turn_key", (q) => q.eq("turnKey", args.turnKey))
+      .unique();
+    if (!reservation) return { released: false };
+    if (reservation.holder.attemptId !== attempt.appId || reservation.holder.sessionId !== args.sessionId) {
+      throw new ConvexError("turn_key_conflict");
+    }
+    if (!countsTowardCapacity(reservation.status)) return { released: false };
+    await ctx.db.patch(reservation._id, {
+      status: "released", releasedAtMs: Date.now(), releaseReason: "turn_complete",
+    });
+    return { released: true };
   },
 });
 
@@ -164,19 +274,41 @@ const sessionInput = v.object({
   mode: v.union(v.literal("live"), v.literal("local"), v.literal("fixture"), v.literal("blocked"), v.literal("not_implemented")),
   tokenUsage,
   turns: v.optional(v.number()),
+  unknownTurns: v.optional(v.number()),
+  partialTurns: v.optional(v.number()),
   createdAtMs: v.number(),
   closedAtMs: v.optional(v.number()),
+});
+
+export const getCompletionAck = internalQuery({
+  args: { operationId: v.string() },
+  handler: async (ctx, args) => await ctx.db.query("runnerCompletionAcks")
+    .withIndex("by_operation", (q) => q.eq("operationId", args.operationId))
+    .unique(),
 });
 
 async function upsertSessionRow(ctx: any, credential: any, attemptId: string, session: any) {
   assertUUID(session.id, "sessionId");
   const existing = await ctx.db.query("sessions").withIndex("by_appId", (q: any) => q.eq("appId", session.id)).unique();
   const now = Date.now();
+  const usage = existing ? {
+    inputTokens: Math.max(existing.tokenUsage.inputTokens, session.tokenUsage.inputTokens),
+    outputTokens: Math.max(existing.tokenUsage.outputTokens, session.tokenUsage.outputTokens),
+    cacheReadTokens: Math.max(existing.tokenUsage.cacheReadTokens, session.tokenUsage.cacheReadTokens),
+    cacheCreationTokens: Math.max(existing.tokenUsage.cacheCreationTokens, session.tokenUsage.cacheCreationTokens),
+    usageKnown: existing.tokenUsage.usageKnown || session.tokenUsage.usageKnown,
+    ...(session.tokenUsage.factoryCredits !== undefined
+      ? { factoryCredits: Math.max(existing.tokenUsage.factoryCredits ?? 0, session.tokenUsage.factoryCredits) }
+      : existing.tokenUsage.factoryCredits !== undefined ? { factoryCredits: existing.tokenUsage.factoryCredits } : {}),
+  } : session.tokenUsage;
   const row = {
     appId: session.id, investigationId: credential.investigationId, environmentId: credential.environmentId, attemptId,
     state: session.state, ...(session.factorySession ? { factorySession: session.factorySession } : {}),
-    ...(session.model ? { model: session.model } : {}), mode: session.mode, tokenUsage: session.tokenUsage,
-    ...(session.turns !== undefined ? { turns: session.turns } : {}), createdAtMs: session.createdAtMs,
+    ...(session.model ? { model: session.model } : {}), mode: session.mode, tokenUsage: usage,
+    ...(session.turns !== undefined ? { turns: session.turns } : {}),
+    ...(session.unknownTurns !== undefined ? { usageUnknownTurns: Math.max(existing?.usageUnknownTurns ?? 0, session.unknownTurns) } : {}),
+    ...(session.partialTurns !== undefined ? { usagePartialTurns: Math.max(existing?.usagePartialTurns ?? 0, session.partialTurns) } : {}),
+    createdAtMs: session.createdAtMs,
     ...(session.closedAtMs !== undefined ? { closedAtMs: session.closedAtMs } : {}), updatedAtMs: now,
   };
   if (existing) {
@@ -192,6 +324,53 @@ export const upsertSession = internalMutation({
     await requireLease(ctx, credential, args.attemptId, args.epoch);
     await upsertSessionRow(ctx, credential, args.attemptId, args.session);
     return { ok: true };
+  },
+});
+
+export const recordUsage = internalMutation({
+  args: {
+    credentialId: v.string(),
+    attemptId: v.string(),
+    sessionId: v.string(),
+    tokenUsage,
+    unknownTurns: v.number(),
+    partialTurns: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const credential = await ctx.db.query("runnerCredentials")
+      .withIndex("by_appId", (q) => q.eq("appId", args.credentialId))
+      .unique();
+    if (!credential || (credential.revokedAtMs !== undefined && Date.now() - credential.revokedAtMs > 15 * 60_000)) {
+      throw new ConvexError("unauthorized");
+    }
+    const attempt = await byAppId(ctx, "attempts", args.attemptId);
+    const session = await ctx.db.query("sessions")
+      .withIndex("by_appId", (q) => q.eq("appId", args.sessionId))
+      .unique();
+    const job = attempt ? await byAppId(ctx, "jobs", attempt.jobId) : null;
+    if (!attempt || !session || !job || job.environmentId !== credential.environmentId
+      || job.investigationId !== credential.investigationId || session.attemptId !== attempt.appId
+      || session.environmentId !== credential.environmentId || session.investigationId !== credential.investigationId) {
+      throw new ConvexError("session_mismatch");
+    }
+    const prior = session.tokenUsage;
+    await ctx.db.patch(session._id, {
+      tokenUsage: {
+        inputTokens: Math.max(prior.inputTokens, args.tokenUsage.inputTokens),
+        outputTokens: Math.max(prior.outputTokens, args.tokenUsage.outputTokens),
+        cacheReadTokens: Math.max(prior.cacheReadTokens, args.tokenUsage.cacheReadTokens),
+        cacheCreationTokens: Math.max(prior.cacheCreationTokens, args.tokenUsage.cacheCreationTokens),
+        usageKnown: prior.usageKnown || args.tokenUsage.usageKnown,
+        ...(args.tokenUsage.factoryCredits !== undefined
+          ? { factoryCredits: Math.max(prior.factoryCredits ?? 0, args.tokenUsage.factoryCredits) }
+          : prior.factoryCredits !== undefined ? { factoryCredits: prior.factoryCredits } : {}),
+      },
+      usageUnknownTurns: Math.max(session.usageUnknownTurns ?? 0, args.unknownTurns),
+      usagePartialTurns: Math.max(session.usagePartialTurns ?? 0, args.partialTurns),
+      usageReportedAtMs: Date.now(),
+      updatedAtMs: Date.now(),
+    });
+    return { recorded: true };
   },
 });
 
@@ -226,6 +405,7 @@ export const complete = internalMutation({
   args: {
     credentialId: v.string(),
     operationId: v.string(),
+    rawBodySha256: v.optional(v.string()),
     attemptId: v.string(),
     grantId: v.string(),
     epoch: v.number(),
@@ -236,12 +416,35 @@ export const complete = internalMutation({
   },
   handler: async (ctx, args) => {
     const credential = await requireCredential(ctx, args.credentialId);
+    const existingAck = await ctx.db.query("runnerCompletionAcks")
+      .withIndex("by_operation", (q) => q.eq("operationId", args.operationId))
+      .unique();
+    if (existingAck) {
+      return existingAck.credentialId === args.credentialId && existingAck.rawBodySha256 === (args.rawBodySha256 ?? "")
+        ? existingAck.response
+        : { accepted: false, reason: "operation_conflict" };
+    }
+    const saveAck = async (response: any) => {
+      await ctx.db.insert("runnerCompletionAcks", {
+        operationId: args.operationId,
+        credentialId: args.credentialId,
+        attemptId: args.attemptId,
+        rawBodySha256: args.rawBodySha256 ?? "",
+        response,
+        createdAtMs: Date.now(),
+      });
+      return response;
+    };
     const { attempt, job } = await requireLease(ctx, credential, args.attemptId, args.epoch, args.grantId).catch((error) => {
       if (error instanceof ConvexError && error.data === "fenced") return { attempt: null, job: null };
       throw error;
     });
-    if (!attempt || !job) return { accepted: false, reason: "fenced" };
-    for (const session of args.sessions) await upsertSessionRow(ctx, credential, attempt.appId, session);
+    if (!attempt || !job) return await saveAck({ accepted: false, reason: "fenced" });
+    for (const session of args.sessions) {
+      await upsertSessionRow(ctx, credential, attempt.appId, session);
+      const row = await ctx.db.query("sessions").withIndex("by_appId", (q) => q.eq("appId", session.id)).unique();
+      if (row) await ctx.db.patch(row._id, { usageReportedAtMs: Date.now() });
+    }
     const summary = {
       operationId: args.operationId,
       sessions: args.sessions.map((session) => ({ id: session.id, factorySession: session.factorySession, usage: session.tokenUsage })),
@@ -254,11 +457,11 @@ export const complete = internalMutation({
         const stages = await currentStages(ctx, job, attempt);
         if (!stages.some((row) => row.stage === "work_started")) {
           const started = await recordStageRow(ctx, job, attempt, args.epoch, "work_started", { implied: true, runnerOperationId: args.operationId });
-          if ("stale" in started) return { accepted: false, reason: "stale_epoch" };
+          if ("stale" in started) return await saveAck({ accepted: false, reason: "stale_epoch" });
         }
       }
       const stageResult = await recordStageRow(ctx, job, attempt, args.epoch, stage, { runnerOperationId: args.operationId, ...(stage === "evidence_committed" ? { evidenceIds: args.sessions.map((session) => session.id) } : {}) });
-      if ("stale" in stageResult) return { accepted: false, reason: "fenced" };
+      if ("stale" in stageResult) return await saveAck({ accepted: false, reason: "fenced" });
       if (job.state !== "artifacts_pending" && job.state !== "evidence_pending") {
         job.state = stage === "artifacts_persisted" ? "artifacts_pending" : "evidence_pending";
       }
@@ -267,9 +470,9 @@ export const complete = internalMutation({
     const refreshedAttempt = await byAppId(ctx, "attempts", attempt.appId);
     const completion = await completeJob(ctx, refreshedJob, refreshedAttempt, args.epoch, args.outcome,
       typeof args.result?.error === "string" ? String(args.result.error).slice(0, 200) : undefined);
-    if ("rejected" in completion) return { accepted: false, reason: completion.reason };
+    if ("rejected" in completion) return await saveAck({ accepted: false, reason: completion.reason });
     void summary;
-    return { accepted: true, jobState: completion.jobState, retry: completion.retry };
+    return await saveAck({ accepted: true, jobState: completion.jobState, retry: completion.retry });
   },
 });
 

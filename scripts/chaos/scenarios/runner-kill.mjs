@@ -3,6 +3,7 @@ import { activeTurnsAt, kill, startRunner } from "../lib/runners.mjs";
 import { postRunner } from "../lib/runnerHttp.mjs";
 import { captureInvestigation, preflight } from "../lib/scenario.mjs";
 import { snapshot, waitFor } from "../lib/investigation.mjs";
+import { rejectedStaleHeartbeat } from "../lib/resiliencePredicates.mjs";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -25,9 +26,12 @@ async function recordSessionEvidence(ctx, state) {
     state: session.state,
     turns: session.turns ?? 0,
     tokenUsage: session.tokenUsage ?? {},
+    unknownUsageTurns: session.usageUnknownTurns ?? 0,
+    partialUsageTurns: session.usagePartialTurns ?? 0,
     tokens: tokenCount(session),
   }));
   ctx.tokens = sessions.reduce((sum, session) => sum + session.tokens, 0);
+  ctx.unknownUsageTurns = sessions.reduce((sum, session) => sum + session.unknownUsageTurns, 0);
   ctx.evidence.sessions = sessions;
 }
 
@@ -207,7 +211,7 @@ export async function run(ctx) {
     && handoff.stage === "completion_acknowledged"
     && handoff.stale === false
     && handoff.atMs >= replayAtMs);
-  const rejectedHeartbeat = staleHeartbeat.json?.ok === false;
+  const rejectedHeartbeat = rejectedStaleHeartbeat(staleHeartbeat);
   const rejectedComplete = staleComplete.status >= 400 || staleComplete.json?.accepted === false;
   const rejectedTool = staleTool.status >= 400 || Boolean(staleTool.json?.error);
   const stateClass = (state) => ["leased", "heartbeating", "completing"].includes(state) ? "live" : state;

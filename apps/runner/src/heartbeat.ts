@@ -1,5 +1,6 @@
 import type { Heartbeat } from "@forksafe/contracts";
 import type { JobSource } from "./job-source.js";
+import { FencedError } from "./job-source.js";
 import type { Lease } from "./protocol.js";
 
 export const HEARTBEAT_INTERVAL_MS = 5_000;
@@ -91,6 +92,10 @@ export class LeaseKeeper {
       this.lastAckMs = this.clock();
       this.checkDeadline();
     } catch (error) {
+      if (error instanceof FencedError) {
+        this.abort("fenced");
+        return;
+      }
       console.error(JSON.stringify({ kind: "heartbeat_failed", attemptId: this.lease.attempt.id, reason: error instanceof Error ? error.message.slice(0, 160) : "unknown" }));
       this.checkDeadline();
     } finally {

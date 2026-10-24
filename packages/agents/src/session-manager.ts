@@ -42,6 +42,11 @@ export type SessionManagerOptions = {
   workspaceRoot: string;
   sessionsPerEnvironment?: number;
   maxActiveTurns?: number;
+  turnGate?: {
+    acquire(input: { attemptId: string; epoch: number; grantId: string; sessionId: string; turnKey: string }, signal?: AbortSignal): Promise<boolean>;
+    tryAcquire(input: { attemptId: string; epoch: number; grantId: string; sessionId: string; turnKey: string }): Promise<boolean>;
+    release(input: { attemptId: string; epoch: number; grantId: string; sessionId: string; turnKey: string }): Promise<void>;
+  };
   toolBackend: ForkSafeToolBackend;
   log: ActivityLog;
   onSessionReady?: (input: { attemptId: string; epoch: number; session: AgentSessionType }) => Promise<unknown>;
@@ -212,32 +217,58 @@ export class SessionManager {
     if (session.active) throw new TurnInProgressError("A turn is already active for this session");
     session.active = true;
     Object.assign(session.toolContext, options.toolContext ?? {});
-    let preAcquired = false;
-    if (options.nonBlocking) {
-      if (!this.tryAcquire()) {
-        session.active = false;
-        return null;
-      }
-      preAcquired = true;
-    }
     let reservation: string;
     try {
       reservation = this.options.ledger.reserve(session.id);
     } catch (error) {
       session.active = false;
-      if (preAcquired) this.release();
       if (error instanceof BudgetExceededError) session.state = "budget_exhausted";
       throw error;
     }
     let acquired = false;
+    let gateAcquired = false;
     let started = false;
     const startedAt = Date.now();
     const toolCalls: TurnOutcome["toolCalls"] = [];
     let text = "";
     let finalResult: Extract<StreamMsg, { type: "result" }> | undefined;
+    const context = session.toolContext;
+    const gateInput = context.attemptId && context.grantId && context.epoch !== undefined && context.turnIndex !== undefined
+      ? {
+        attemptId: context.attemptId, epoch: context.epoch, grantId: context.grantId,
+        sessionId: session.id, turnKey: `${context.attemptId}:${session.id}:${context.turnIndex}`,
+      }
+      : undefined;
+    const releaseGate = async () => {
+      if (!gateAcquired || !this.options.turnGate || !gateInput) return;
+      gateAcquired = false;
+      await Promise.resolve()
+        .then(() => this.options.turnGate!.release(gateInput))
+        .catch(() => undefined);
+    };
     try {
-      if (!preAcquired) await this.acquire(options.abortSignal);
-      acquired = true;
+      if (this.options.turnGate && gateInput) {
+        gateAcquired = options.nonBlocking
+          ? await this.options.turnGate.tryAcquire(gateInput)
+          : await this.options.turnGate.acquire(gateInput, options.abortSignal);
+        if (!gateAcquired) {
+          this.options.ledger.release(reservation);
+          reservation = "";
+          return null;
+        }
+      }
+      if (options.nonBlocking) {
+        acquired = this.tryAcquire();
+        if (!acquired) {
+          await releaseGate();
+          this.options.ledger.release(reservation);
+          reservation = "";
+          return null;
+        }
+      } else {
+        await this.acquire(options.abortSignal);
+        acquired = true;
+      }
       session.state = "streaming";
       started = true;
       for await (const message of session.adapterSession.stream(prompt, { abortSignal: options.abortSignal })) {
@@ -270,7 +301,6 @@ export class SessionManager {
         tokenUsage,
         durationMs: finalResult?.durationMs ?? Date.now() - startedAt,
       };
-      const context = session.toolContext;
       if (context.jobId && context.turnIndex !== undefined) {
         await this.options.onTurnComplete?.({
           investigationId: session.investigationId, environmentId: session.environmentId,
@@ -294,6 +324,7 @@ export class SessionManager {
       throw error;
     } finally {
       if (acquired) this.release();
+      await releaseGate();
       session.active = false;
     }
   }
@@ -420,9 +451,10 @@ export class SessionManager {
     await Promise.all([...this.sessions.values()].filter((session) => session.state !== "closed").map((session) => this.close(session.id)));
   }
 
-  toAgentSession(sessionId: string): AgentSessionType {
+  toAgentSession(sessionId: string): AgentSessionType & { unknownTurns: number; partialTurns: number } {
     const session = this.requireSession(sessionId);
-    return AgentSession.parse({
+    return {
+      ...AgentSession.parse({
       id: session.id,
       investigationId: session.investigationId,
       environmentId: session.environmentId,
@@ -432,7 +464,9 @@ export class SessionManager {
       tokenUsage: this.options.ledger.sessionUsage(sessionId),
       createdAtMs: session.createdAtMs,
       ...(session.closedAtMs !== undefined ? { closedAtMs: session.closedAtMs } : {}),
-    });
+      }),
+      ...this.options.ledger.sessionUsageCounts(sessionId),
+    };
   }
 
   replacesSessionId(sessionId: string): string | undefined {
@@ -477,7 +511,7 @@ export class SessionManager {
       return Promise.resolve();
     }
     return new Promise<void>((resolvePromise, reject) => {
-      const waiter = { resolve: () => { cleanup(); this.activeTurns += 1; resolvePromise(); }, reject, signal };
+      const waiter = { resolve: () => { cleanup(); resolvePromise(); }, reject, signal };
       const abort = () => {
         this.waiters = this.waiters.filter((candidate) => candidate !== waiter);
         cleanup();

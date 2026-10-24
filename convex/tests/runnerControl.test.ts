@@ -55,6 +55,99 @@ describe("runner control plane", () => {
     await expect(t.mutation(internal.runnerControl.claim, { credentialId: credential.credentialId, workerId: "w1" })).rejects.toThrow(/unauthorized/);
   });
 
+  it("reserves model turns idempotently and records monotonic usage", async () => {
+    const t = createTest();
+    const { investigationId, environmentId, credential } = await startedInvestigation(t);
+    const { lease, grantId } = await claimWithGrant(t, credential.credentialId, investigationId, environmentId);
+    const sessionId = crypto.randomUUID();
+    await t.mutation(internal.runnerControl.upsertSession, {
+      credentialId: credential.credentialId,
+      attemptId: lease.attemptId,
+      epoch: lease.epoch,
+      session: { ...session(sessionId), investigationId, environmentId },
+    });
+    const turn = {
+      credentialId: credential.credentialId, attemptId: lease.attemptId, grantId, epoch: lease.epoch,
+      sessionId, turnKey: `${lease.attemptId}:${sessionId}:0`,
+    };
+    const usage = {
+      inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0, usageKnown: true,
+    };
+    const first = await t.mutation(internal.runnerControl.reserveModelTurn, turn);
+    expect(first.granted).toBe(true);
+    expect(await t.mutation(internal.runnerControl.reserveModelTurn, turn)).toMatchObject({ granted: true });
+    expect(await t.mutation(internal.runnerControl.releaseModelTurn, turn)).toEqual({ released: true });
+    expect(await t.mutation(internal.runnerControl.reserveModelTurn, turn)).toMatchObject({
+      granted: false, reason: "turn_already_released",
+    });
+
+    await t.mutation(internal.runnerControl.recordUsage, {
+      credentialId: credential.credentialId, attemptId: lease.attemptId, sessionId,
+      tokenUsage: { ...usage, inputTokens: 5, outputTokens: 2 },
+      unknownTurns: 1, partialTurns: 0,
+    });
+    await t.mutation(internal.runnerControl.recordUsage, {
+      credentialId: credential.credentialId, attemptId: lease.attemptId, sessionId,
+      tokenUsage: { ...usage, inputTokens: 3, outputTokens: 1 },
+      unknownTurns: 0, partialTurns: 0,
+    });
+    const saved = await t.run(async (ctx: any) =>
+      (await ctx.db.query("sessions").withIndex("by_appId", (q: any) => q.eq("appId", sessionId)).unique())!,
+    );
+    expect(saved.tokenUsage).toMatchObject({ inputTokens: 5, outputTokens: 2 });
+    expect(saved.usageUnknownTurns).toBe(1);
+  });
+
+  it("finalizes cancellation immediately for reserved jobs and releases grants and model turns", async () => {
+    const t = createTest();
+    const { investigationId, environmentId, credential } = await startedInvestigation(t);
+    const { lease, grantId } = await claimWithGrant(t, credential.credentialId, investigationId, environmentId);
+    const sessionId = crypto.randomUUID();
+    await t.mutation(internal.runnerControl.upsertSession, {
+      credentialId: credential.credentialId, attemptId: lease.attemptId, epoch: lease.epoch,
+      session: { ...session(sessionId), investigationId, environmentId },
+    });
+    const turn = {
+      credentialId: credential.credentialId, attemptId: lease.attemptId, grantId, epoch: lease.epoch,
+      sessionId, turnKey: `${lease.attemptId}:${sessionId}:0`,
+    };
+    expect((await t.mutation(internal.runnerControl.reserveModelTurn, turn)).granted).toBe(true);
+    await t.run(async (ctx: any) => {
+      const job = (await ctx.db.query("jobs").collect())[0]!;
+      await ctx.db.patch(job._id, { state: "reserved" });
+    });
+
+    await t.mutation(api.investigations.cancel, { investigationId, serviceToken: token });
+    const state = await t.run(async (ctx: any) => ({
+      job: (await ctx.db.query("jobs").collect())[0]!,
+      attempt: (await ctx.db.query("attempts").collect())[0]!,
+      grant: (await ctx.db.query("grants").collect())[0]!,
+      reservation: (await ctx.db.query("reservations")
+        .withIndex("by_turn_key", (q: any) => q.eq("turnKey", turn.turnKey)).unique())!,
+    }));
+    expect(state.job).toMatchObject({ state: "cancelled", epoch: lease.epoch + 1 });
+    expect(state.attempt.state).toBe("expired");
+    expect(state.grant).toMatchObject({ revokedAtMs: expect.any(Number), revokeReason: "cancelled" });
+    expect(state.reservation.status).toBe("released");
+  });
+
+  it("reconciles a cancel-requested investigation with a missing job timestamp", async () => {
+    const t = createTest();
+    const { investigationId } = await startedInvestigation(t);
+    await t.run(async (ctx: any) => {
+      const investigation = (await ctx.db.query("investigations").collect())[0]!;
+      await ctx.db.patch(investigation._id, { cancelStatus: "cancel_requested" });
+    });
+    const result = await t.mutation(internal.reconcile.tick, { now: Date.now() });
+    const rows = await t.run(async (ctx: any) => ({
+      investigation: (await ctx.db.query("investigations").collect())[0]!,
+      job: (await ctx.db.query("jobs").collect())[0]!,
+    }));
+    expect(result.finalizedCancellations).toBe(1);
+    expect(rows.investigation).toMatchObject({ appId: investigationId, state: "cancelled", cancelStatus: "cancelled" });
+    expect(rows.job).toMatchObject({ state: "cancelled", cancelRequestedAtMs: expect.any(Number) });
+  });
+
   it("resumes only the latest primary checkpoint", async () => {
     const t = createTest();
     const { investigationId, environmentId, credential } = await startedInvestigation(t);

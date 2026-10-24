@@ -15,6 +15,7 @@ import { requireServiceToken } from "./lib/auth.js";
 import { LOG_TAIL_MAX_BYTES } from "./lib/constants.js";
 import { assertUUID } from "./lib/validators.js";
 import { evaluatorSandboxEnv } from "./lib/evaluatorBackend.js";
+import { sandboxReconcileDecision } from "./lib/sandboxReconcile.js";
 
 function createCloudProvider(): CloudDaytonaProvider {
   const config = loadDaytonaConfig();
@@ -144,6 +145,55 @@ export const reconcileSandbox = internalAction({
     const known = new Set<string>(ops.map((op: any) => op.appId));
     let resolved = 0;
     for (const op of ops as any[]) {
+      if (["ready", "creating"].includes(op.status)) {
+        const investigation = await ctx.runQuery(internal.investigations.getByAppId, { investigationId: op.investigationId });
+        const terminal = !investigation || ["completed", "cancelled", "failed"].includes(investigation.state);
+        const initialDecision = sandboxReconcileDecision({
+          status: op.status,
+          ageMs: Date.now() - op.createdAtMs,
+          investigationTerminal: terminal,
+          hasSandbox: Boolean(op.sandbox),
+        });
+        if (initialDecision === "terminate") {
+          await ctx.runAction(internal.sandboxActions.terminate, { sandboxOpId: op.appId });
+          resolved += 1;
+          continue;
+        }
+        if (initialDecision === "missing") {
+          await ctx.runMutation(internal.sandboxes.updateSandboxOp, {
+            sandboxOpId: op.appId,
+            status: "terminated",
+            terminatedAtMs: Date.now(),
+            releaseReservation: true,
+            lastError: "sandbox_missing",
+          });
+          resolved += 1;
+          continue;
+        }
+        const ageMs = Date.now() - op.createdAtMs;
+        const shouldCheckProvider = op.status === "ready" || (op.status === "creating" && ageMs >= 10 * 60_000);
+        if (shouldCheckProvider && op.sandbox) {
+          const sandbox = await provider.get(op.sandbox as VendorRef);
+          const decision = sandboxReconcileDecision({
+            status: op.status,
+            ageMs: Date.now() - op.createdAtMs,
+            investigationTerminal: terminal,
+            hasSandbox: true,
+            sandboxExists: Boolean(sandbox),
+          });
+          if (decision === "missing") {
+            await ctx.runMutation(internal.sandboxes.updateSandboxOp, {
+              sandboxOpId: op.appId,
+              status: "terminated",
+              terminatedAtMs: Date.now(),
+              releaseReservation: true,
+              lastError: "sandbox_missing",
+            });
+            resolved += 1;
+            continue;
+          }
+        }
+      }
       if (op.status === "ambiguous_create") {
         const sandbox = byOperation.get(op.appId);
         if (sandbox) {

@@ -1,5 +1,6 @@
 import { activeTurnsAt, startRunner } from "../lib/runners.mjs";
 import { capture, credentialFor, snapshot } from "../lib/investigation.mjs";
+import { scale10Provisioning } from "../lib/resiliencePredicates.mjs";
 import { preflight } from "../lib/scenario.mjs";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -144,6 +145,9 @@ export async function run(ctx) {
   ]));
   const totalTokens = latestSnapshot.sessions.reduce((sum, session) => sum + tokenCount(session), 0);
   ctx.tokens = totalTokens;
+  ctx.unknownUsageTurns = latestSnapshot.sessions.reduce(
+    (sum, session) => sum + (Number(session.usageUnknownTurns) || 0), 0,
+  );
   const sessionsEvidence = latestSnapshot.environments.map((environment) => {
     const sessions = sessionsByEnvironment.get(environment.appId) ?? [];
     const vendorIds = new Set(sessions.map((session) => session.factorySession?.id).filter(Boolean));
@@ -179,8 +183,15 @@ export async function run(ctx) {
     item.sandboxOps.filter((op) => op.status === "error"));
   const observedEnvironmentErrors = snapshotSummaries.flatMap((item) =>
     item.environments.filter((environment) => environment.state === "error"));
-  const allEnvironmentsProvisioned = latestSnapshot.environments.length === envs
-    && latestSnapshot.environments.every((environment) => runnerOpsSeen.has(environment.appId) && everActive.has(environment.appId));
+  const runnerOpsCount = latestSnapshot.sandboxOps.filter((op) => op.purpose === "runner").length;
+  const provisioning = scale10Provisioning({
+    environments: latestSnapshot.environments,
+    expectedEnvironmentCount: envs,
+    everActive,
+    runnerOpsSeen,
+    runnerOpsCount,
+  });
+  const { externalMode, allEnvironmentsProvisioned } = provisioning;
   ctx.checks.check(
     "S4",
     "provisioning queues without errors, stalls, or missing active runner environments",
@@ -204,6 +215,8 @@ export async function run(ctx) {
       observedEnvironmentErrors,
       environments: latestSnapshot.environments.map(({ appId, state, lastError }) => ({ appId, state, lastError })),
       runnerOpsSeen: [...runnerOpsSeen],
+      externalMode,
+      runnerOpsCount,
       everActive: [...everActive],
       stall,
       workflowId: latestSnapshot.investigation?.workflowId ?? ctx.captureResponse?.workflowId ?? null,
@@ -217,6 +230,7 @@ export async function run(ctx) {
       turns: session.turns ?? 0,
       state: session.state,
       tokenUsage: session.tokenUsage,
+      unknownUsageTurns: session.usageUnknownTurns ?? 0,
       tokens: tokenCount(session),
       passed: (session.turns ?? 0) < 1
         || ((session.turns ?? 0) <= 1 && ["budget_exhausted", "idle", "closed"].includes(session.state)),
@@ -225,7 +239,7 @@ export async function run(ctx) {
       "S5",
       "each session uses at most one turn and closes in an allowed state",
       sessionBudgets.every((item) => item.passed),
-      { sessions: sessionBudgets, totalTokens },
+      { sessions: sessionBudgets, totalTokens, unknownUsageTurns: ctx.unknownUsageTurns },
     );
   } else {
     ctx.checks.notReached("S5", "session turn and token budgets are bounded", "no runner ever started", { sessions: latestSnapshot.sessions, totalTokens });

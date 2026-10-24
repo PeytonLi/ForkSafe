@@ -7,6 +7,7 @@ export type TokenUsage = {
   cacheReadTokens: number;
   thinkingTokens?: number;
   factoryCredits?: number;
+  usageKnown?: boolean;
 };
 
 export type UsageLimits = { totalTokens: number; outputTokens: number };
@@ -15,6 +16,7 @@ export type UsageSnapshot = {
   used: UsageLimits;
   known: UsageLimits;
   unknownTurns: number;
+  partialTurns: number;
   remaining: UsageLimits;
 };
 
@@ -35,12 +37,15 @@ export class UsageLedger {
   private readonly knownUsage: UsageLimits = { totalTokens: 0, outputTokens: 0 };
   private readonly chargedUsage: UsageLimits = { totalTokens: 0, outputTokens: 0 };
   private unknownTurns = 0;
+  private partialTurns = 0;
   private sessionTotals = new Map<string, {
     inputTokens: number;
     outputTokens: number;
     cacheReadTokens: number;
     cacheCreationTokens: number;
     usageKnown: boolean;
+    unknownTurns: number;
+    partialTurns: number;
     factoryCredits?: number;
   }>();
 
@@ -72,7 +77,10 @@ export class UsageLedger {
     this.reservations.delete(reservationId);
     let totals = this.sessionTotals.get(reservation.sessionId);
     if (!totals) {
-      totals = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, usageKnown: true };
+      totals = {
+        inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0,
+        usageKnown: true, unknownTurns: 0, partialTurns: 0,
+      };
       this.sessionTotals.set(reservation.sessionId, totals);
     }
     if (usage === null) {
@@ -80,8 +88,7 @@ export class UsageLedger {
       this.chargedUsage.outputTokens += reservation.size.output;
       this.unknownTurns += 1;
       totals.usageKnown = false;
-      totals.inputTokens += Math.max(0, reservation.size.total - reservation.size.output);
-      totals.outputTokens += reservation.size.output;
+      totals.unknownTurns += 1;
       return;
     }
     const output = usage.outputTokens + (usage.thinkingTokens ?? 0);
@@ -94,6 +101,11 @@ export class UsageLedger {
     totals.outputTokens += output;
     totals.cacheReadTokens += usage.cacheReadTokens;
     totals.cacheCreationTokens += usage.cacheCreationTokens;
+    if (usage.usageKnown === false) {
+      this.partialTurns += 1;
+      totals.partialTurns += 1;
+      totals.usageKnown = false;
+    }
     if (usage.factoryCredits !== undefined) totals.factoryCredits = (totals.factoryCredits ?? 0) + usage.factoryCredits;
   }
 
@@ -114,6 +126,7 @@ export class UsageLedger {
       used,
       known: { ...this.knownUsage },
       unknownTurns: this.unknownTurns,
+      partialTurns: this.partialTurns,
       remaining: {
         totalTokens: Math.max(0, this.limits.totalTokens - used.totalTokens),
         outputTokens: Math.max(0, this.limits.outputTokens - used.outputTokens),
@@ -131,5 +144,10 @@ export class UsageLedger {
       usageKnown: totals?.usageKnown ?? true,
       ...(totals?.factoryCredits !== undefined ? { factoryCredits: totals.factoryCredits } : {}),
     };
+  }
+
+  sessionUsageCounts(sessionId: string): { unknownTurns: number; partialTurns: number } {
+    const totals = this.sessionTotals.get(sessionId);
+    return { unknownTurns: totals?.unknownTurns ?? 0, partialTurns: totals?.partialTurns ?? 0 };
   }
 }

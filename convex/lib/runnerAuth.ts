@@ -34,11 +34,12 @@ export async function verifyRunnerSignature(
   headers: RunnerSignatureHeaders,
   rawBody: string,
   now: number,
+  options: { ignoreCredentialStatus?: boolean; ignoreRevocation?: boolean; ignoreExpiration?: boolean } = {},
 ): Promise<{ ok: true } | { ok: false; reason: "missing_headers" | "unknown_credential" | "credential_expired" | "credential_revoked" | "timestamp_skew" | "bad_signature" }> {
   if (!headers.credentialId || !headers.timestamp || !headers.signature) return { ok: false, reason: "missing_headers" };
   if (!credential) return { ok: false, reason: "unknown_credential" };
-  if (credential.revokedAtMs !== undefined) return { ok: false, reason: "credential_revoked" };
-  if (credential.expiresAtMs <= now) return { ok: false, reason: "credential_expired" };
+  if (!options.ignoreCredentialStatus && !options.ignoreRevocation && credential.revokedAtMs !== undefined) return { ok: false, reason: "credential_revoked" };
+  if (!options.ignoreCredentialStatus && !options.ignoreExpiration && credential.expiresAtMs <= now) return { ok: false, reason: "credential_expired" };
   const timestamp = Number(headers.timestamp);
   if (!Number.isFinite(timestamp) || Math.abs(now - timestamp) > RUNNER_SIGNATURE_MAX_SKEW_MS) return { ok: false, reason: "timestamp_skew" };
   const expected = await hmacSha256Hex(credential.secret, `${headers.timestamp}.${rawBody}`);

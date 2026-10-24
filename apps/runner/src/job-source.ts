@@ -26,6 +26,16 @@ export interface JobSource {
   claim(request: z.infer<typeof ClaimRequest>): Promise<Lease | null>;
   heartbeat(heartbeat: Heartbeat): Promise<z.infer<typeof HeartbeatResponse>>;
   complete(completion: z.infer<typeof CompletionRequest>): Promise<z.infer<typeof CompletionResponse>>;
+  reserveModelTurn?(input: { attemptId: string; epoch: number; grantId: string; sessionId: string; turnKey: string }): Promise<{ granted: boolean; retryAfterMs?: number }>;
+  releaseModelTurn?(input: { attemptId: string; epoch: number; grantId: string; sessionId: string; turnKey: string }): Promise<unknown>;
+  usage?(input: { attemptId: string; epoch: number; session: any }): Promise<unknown>;
+}
+
+export class FencedError extends Error {
+  constructor() {
+    super("Runner lease is stale");
+    this.name = "FencedError";
+  }
 }
 
 export class RunnerHttpError extends Error {
@@ -80,6 +90,24 @@ export class HttpJobSource implements JobSource {
     return this.post("complete", completion, CompletionResponse);
   }
 
+  reserveModelTurn(input: { attemptId: string; epoch: number; grantId: string; sessionId: string; turnKey: string }): Promise<{ granted: boolean; retryAfterMs?: number }> {
+    return this.post("model_turn/reserve", input, z.object({ granted: z.boolean(), retryAfterMs: z.number().optional() }));
+  }
+
+  releaseModelTurn(input: { attemptId: string; epoch: number; grantId: string; sessionId: string; turnKey: string }): Promise<unknown> {
+    return this.post("model_turn/release", input, z.unknown());
+  }
+
+  usage(input: { attemptId: string; epoch: number; session: any }): Promise<unknown> {
+    return this.post("usage", {
+      attemptId: input.attemptId,
+      sessionId: input.session.id,
+      tokenUsage: input.session.tokenUsage,
+      unknownTurns: input.session.unknownTurns ?? 0,
+      partialTurns: input.session.partialTurns ?? 0,
+    }, z.unknown());
+  }
+
   private async post<S extends z.ZodTypeAny>(endpoint: string, body: unknown, schema: S): Promise<z.output<S>> {
     const rawBody = JSON.stringify(body);
     const timestamp = String(Date.now());
@@ -102,6 +130,10 @@ export class HttpJobSource implements JobSource {
       } catch {
         errorBody = undefined;
       }
+      const code = errorBody && typeof errorBody === "object" && !Array.isArray(errorBody)
+        ? String((errorBody as { error?: string }).error ?? "")
+        : "";
+      if (response.status === 409 && code === "stale_epoch") throw new FencedError();
       throw new RunnerHttpError(endpoint, response.status, errorBody);
     }
     return schema.parse(await response.json());

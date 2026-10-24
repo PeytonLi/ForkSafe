@@ -96,6 +96,33 @@ export async function main(): Promise<void> {
       }),
       workspaceRoot,
       maxActiveTurns: maxActiveModelCalls,
+      ...("reserveModelTurn" in source ? {
+        turnGate: {
+          acquire: async (input: { attemptId: string; epoch: number; grantId: string; sessionId: string; turnKey: string }, signal?: AbortSignal) => {
+            while (!signal?.aborted) {
+              const result = await source.reserveModelTurn!(input);
+              if (result.granted) return true;
+              await new Promise<void>((resolveDelay, reject) => {
+                const timer = setTimeout(() => {
+                  signal?.removeEventListener("abort", abort);
+                  resolveDelay();
+                }, result.retryAfterMs ?? 2_000);
+                const abort = () => {
+                  clearTimeout(timer);
+                  reject(signal?.reason ?? new Error("Aborted"));
+                };
+                signal?.addEventListener("abort", abort, { once: true });
+              });
+            }
+            return false;
+          },
+          tryAcquire: async (input: { attemptId: string; epoch: number; grantId: string; sessionId: string; turnKey: string }) =>
+            (await source.reserveModelTurn!(input)).granted,
+          release: async (input: { attemptId: string; epoch: number; grantId: string; sessionId: string; turnKey: string }) => {
+            await source.releaseModelTurn!(input);
+          },
+        },
+      } : {}),
       toolBackend: activeBackend,
       log,
       onSessionReady: async ({ attemptId, epoch, session }) =>

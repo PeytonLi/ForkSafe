@@ -27,7 +27,10 @@ describe("UsageLedger", () => {
       unknownTurns: 1,
     });
     expect(ledger.sessionUsage("session").usageKnown).toBe(false);
-    expect(ledger.sessionUsage("session").outputTokens).toBe(4);
+    expect(ledger.sessionUsage("session")).toMatchObject({
+      inputTokens: 0, outputTokens: 0, usageKnown: false,
+    });
+    expect(ledger.sessionUsageCounts("session")).toEqual({ unknownTurns: 1, partialTurns: 0 });
   });
 
   it("releases unused reservations and returns contract-compatible session usage", () => {

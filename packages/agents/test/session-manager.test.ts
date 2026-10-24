@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ToolConfirmationOutcome, ToolConfirmationType } from "@factory/droid-sdk/node";
 import { ActivityLog } from "../src/activity-log.js";
 import { FixtureFactoryAdapter, type AdapterSessionOptions, type FactoryAdapter } from "../src/adapter.js";
@@ -26,7 +26,7 @@ const backend = {
 };
 async function manager(
   adapter = new FixtureFactoryAdapter(),
-  opts: Pick<ConstructorParameters<typeof SessionManager>[0], "sessionsPerEnvironment" | "maxActiveTurns" | "onTurnComplete" | "onSessionReady"> = {},
+  opts: Pick<ConstructorParameters<typeof SessionManager>[0], "sessionsPerEnvironment" | "maxActiveTurns" | "onTurnComplete" | "onSessionReady" | "turnGate"> = {},
 ) {
   const workspaceRoot = await mkdtemp(join(tmpdir(), "forksafe-sessions-"));
   dirs.push(workspaceRoot);
@@ -68,6 +68,155 @@ describe("SessionManager", () => {
     for (let i = 0; i < 5; i += 1) ids.push((await sessions.createSession({ investigationId: investigations[0]!, environmentId: environments[i]! })).sessionId);
     await Promise.all(ids.map((id) => sessions.runTurn(id, "inspect")));
     expect(maximum).toBe(4);
+  });
+
+  it.each([1, 2])("hands off all waiter slots without leaking capacity at cap %i", async (cap) => {
+    let active = 0;
+    let maximum = 0;
+    let release!: () => void;
+    let entered!: () => void;
+    let enteredCount = 0;
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    const enoughEntered = new Promise<void>((resolve) => { entered = resolve; });
+    const adapter = new FixtureFactoryAdapter({ gate: async () => {
+      active += 1;
+      maximum = Math.max(maximum, active);
+      enteredCount += 1;
+      if (enteredCount === cap) entered();
+      await hold;
+      active -= 1;
+    } });
+    const sessions = await manager(adapter, { maxActiveTurns: cap });
+    const ids = [];
+    for (let i = 0; i < 4; i += 1) ids.push((await sessions.createSession({
+      investigationId: crypto.randomUUID(), environmentId: crypto.randomUUID(),
+    })).sessionId);
+    const turns = ids.map((id) => sessions.runTurn(id, "bounded"));
+    await enoughEntered;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    release();
+    await expect(Promise.all(turns)).resolves.toHaveLength(4);
+    expect(maximum).toBe(cap);
+    await expect(sessions.runTurn(ids[0]!, "later", { nonBlocking: true })).resolves.not.toBeNull();
+  });
+
+  it("removes an aborted waiter without leaking a local turn slot", async () => {
+    let release!: () => void;
+    let entered!: () => void;
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    const firstEntered = new Promise<void>((resolve) => { entered = resolve; });
+    const adapter = new FixtureFactoryAdapter({ gate: async () => {
+      entered();
+      await hold;
+    } });
+    const sessions = await manager(adapter, { maxActiveTurns: 1 });
+    const first = await sessions.createSession({ investigationId: crypto.randomUUID(), environmentId: crypto.randomUUID() });
+    const waiting = await sessions.createSession({ investigationId: crypto.randomUUID(), environmentId: crypto.randomUUID() });
+    const activeTurn = sessions.runTurn(first.sessionId, "active");
+    await firstEntered;
+    const controller = new AbortController();
+    const waitingTurn = sessions.runTurn(waiting.sessionId, "waiting", { abortSignal: controller.signal });
+    controller.abort();
+    await expect(waitingTurn).rejects.toMatchObject({ name: "AbortError" });
+    release();
+    await expect(activeTurn).resolves.toMatchObject({ success: true });
+    await expect(sessions.runTurn(waiting.sessionId, "after abort", { nonBlocking: true })).resolves.not.toBeNull();
+  });
+
+  it("releases the global reservation when local non-blocking capacity is unavailable", async () => {
+    let release!: () => void;
+    let entered!: () => void;
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    const firstEntered = new Promise<void>((resolve) => { entered = resolve; });
+    const adapter = new FixtureFactoryAdapter({ gate: async () => {
+      entered();
+      await hold;
+    } });
+    const turnGate = {
+      acquire: async () => false,
+      tryAcquire: vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true),
+      release: vi.fn(async () => {}),
+    };
+    const sessions = await manager(adapter, { maxActiveTurns: 1, turnGate });
+    const first = await sessions.createSession({ investigationId: crypto.randomUUID(), environmentId: crypto.randomUUID() });
+    const second = await sessions.createSession({ investigationId: crypto.randomUUID(), environmentId: crypto.randomUUID() });
+    const toolContext = { attemptId: crypto.randomUUID(), grantId: crypto.randomUUID(), epoch: 0, turnIndex: 0 };
+
+    await expect(sessions.runTurn(first.sessionId, "denied", {
+      nonBlocking: true, toolContext,
+    })).resolves.toBeNull();
+    const activeTurn = sessions.runTurn(first.sessionId, "active", {
+      nonBlocking: true, toolContext: { ...toolContext, turnIndex: 1 },
+    });
+    await firstEntered;
+    await expect(sessions.runTurn(second.sessionId, "at cap", {
+      nonBlocking: true, toolContext: { ...toolContext, turnIndex: 2 },
+    })).resolves.toBeNull();
+    expect(turnGate.tryAcquire).toHaveBeenCalledTimes(3);
+    release();
+    await expect(activeTurn).resolves.toMatchObject({ success: true });
+    await expect(sessions.runTurn(second.sessionId, "later", {
+      nonBlocking: true, toolContext: { ...toolContext, turnIndex: 3 },
+    })).resolves.not.toBeNull();
+    expect(turnGate.release).toHaveBeenCalledTimes(3);
+  });
+
+  it("acquires global turn capacity before local turn slots", async () => {
+    let globalHeld = false;
+    const waiters: (() => void)[] = [];
+    const turnGate = {
+      acquire: vi.fn(async () => {
+        if (globalHeld) await new Promise<void>((resolve) => waiters.push(resolve));
+        globalHeld = true;
+        return true;
+      }),
+      tryAcquire: vi.fn(async () => {
+        if (globalHeld) return false;
+        globalHeld = true;
+        return true;
+      }),
+      release: vi.fn(async () => {
+        const next = waiters.shift();
+        if (next) next();
+        else globalHeld = false;
+      }),
+    };
+    let releaseAdapter!: () => void;
+    let markFirstEntered!: () => void;
+    let markSecondEntered!: () => void;
+    const adapterHold = new Promise<void>((resolve) => { releaseAdapter = resolve; });
+    const firstEntered = new Promise<void>((resolve) => { markFirstEntered = resolve; });
+    const secondEntered = new Promise<void>((resolve) => { markSecondEntered = resolve; });
+    let streamCount = 0;
+    const adapter = new FixtureFactoryAdapter({ gate: async () => {
+      streamCount += 1;
+      if (streamCount === 1) markFirstEntered();
+      else markSecondEntered();
+      await adapterHold;
+    } });
+    const sessions = await manager(adapter, { maxActiveTurns: 2, turnGate });
+    const first = await sessions.createSession({ investigationId: crypto.randomUUID(), environmentId: crypto.randomUUID() });
+    const second = await sessions.createSession({ investigationId: crypto.randomUUID(), environmentId: crypto.randomUUID() });
+    const local = sessions as unknown as { acquire(signal?: AbortSignal): Promise<void> };
+    const originalAcquire = local.acquire.bind(sessions);
+    const acquireSpy = vi.spyOn(local, "acquire").mockImplementation(async (signal) => {
+      expect(globalHeld).toBe(true);
+      await originalAcquire(signal);
+    });
+    const toolContext = { attemptId: crypto.randomUUID(), grantId: crypto.randomUUID(), epoch: 0, turnIndex: 0 };
+
+    const firstTurn = sessions.runTurn(first.sessionId, "first", { toolContext });
+    await firstEntered;
+    const secondTurn = sessions.runTurn(second.sessionId, "second", {
+      toolContext: { ...toolContext, turnIndex: 1 },
+    });
+    expect(turnGate.acquire).toHaveBeenCalledTimes(2);
+    expect(acquireSpy).toHaveBeenCalledTimes(1);
+
+    releaseAdapter();
+    await secondEntered;
+    await Promise.all([firstTurn, secondTurn]);
+    expect(acquireSpy).toHaveBeenCalledTimes(2);
   });
 
   it("returns retry_later instead of waiting when all active turn slots are occupied", async () => {

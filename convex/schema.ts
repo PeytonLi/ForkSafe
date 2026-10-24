@@ -93,6 +93,8 @@ export default defineSchema({
     candidatesUsed: v.number(),
     runnerCredentialId: v.optional(uuid),
     runnerSandboxOpId: v.optional(uuid),
+    queuedReason: v.optional(v.string()),
+    queuedAtMs: v.optional(v.number()),
     lastError: v.optional(v.string()),
   }).index("by_appId", ["appId"]).index("by_investigation", ["investigationId"]),
 
@@ -175,13 +177,15 @@ export default defineSchema({
       sessionId: v.optional(uuid),
       sandboxOpId: v.optional(uuid),
     }),
+    turnKey: v.optional(v.string()),
     operationId: uuid,
     leasedUntilMs: v.optional(v.number()),
     createdAtMs: v.number(),
     releasedAtMs: v.optional(v.number()),
     releaseReason: v.optional(v.string()),
   }).index("by_kind_status", ["kind", "status"])
-    .index("by_investigation", ["investigationId"]).index("by_operation", ["operationId"]),
+    .index("by_investigation", ["investigationId"]).index("by_operation", ["operationId"])
+    .index("by_turn_key", ["turnKey"]),
 
   sandboxOps: defineTable({
     appId: uuid,
@@ -195,7 +199,7 @@ export default defineSchema({
     provider: v.union(v.literal("daytona"), v.literal("local")),
     sandbox: v.optional(vendorRef),
     status: v.union(
-      v.literal("requested"), v.literal("creating"), v.literal("ready"), v.literal("ambiguous_create"),
+      v.literal("queued"), v.literal("requested"), v.literal("creating"), v.literal("ready"), v.literal("ambiguous_create"),
       v.literal("terminating"), v.literal("ambiguous_terminate"), v.literal("terminated"), v.literal("error"),
     ),
     reservationId: uuid,
@@ -300,6 +304,14 @@ export default defineSchema({
     workerId: v.optional(v.string()),
   }).index("by_appId", ["appId"]).index("by_environment", ["environmentId"])
     .index("by_investigation", ["investigationId"]),
+  runnerCompletionAcks: defineTable({
+    operationId: uuid,
+    credentialId: uuid,
+    attemptId: uuid,
+    rawBodySha256: v.string(),
+    response: v.any(),
+    createdAtMs: v.number(),
+  }).index("by_operation", ["operationId"]),
 
   /** Execution grants Convex installed in SpacetimeDB, one per attempt+epoch. */
   grants: defineTable({
@@ -348,6 +360,9 @@ export default defineSchema({
       factoryCredits: v.optional(v.number()),
     }),
     turns: v.optional(v.number()),
+    usageUnknownTurns: v.optional(v.number()),
+    usagePartialTurns: v.optional(v.number()),
+    usageReportedAtMs: v.optional(v.number()),
     createdAtMs: v.number(),
     closedAtMs: v.optional(v.number()),
     updatedAtMs: v.number(),
@@ -510,9 +525,11 @@ export default defineSchema({
     sandboxOpId: v.optional(uuid),
     spacetimeCommitted: v.boolean(),
     createdAtMs: v.number(),
+    commitStatus: v.optional(v.union(v.literal("pending"), v.literal("committed"), v.literal("commit_failed"), v.literal("not_applicable"))),
+    commitError: v.optional(v.string()),
     updatedAtMs: v.number(),
   }).index("by_appId", ["appId"]).index("by_candidate", ["candidateId"])
-    .index("by_investigation", ["investigationId"]),
+    .index("by_investigation", ["investigationId"]).index("by_commitStatus", ["commitStatus"]),
 
   /** Human reviews bound to the exact controller sha. */
   reviews: defineTable({
