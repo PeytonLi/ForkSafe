@@ -1,0 +1,10 @@
+export * from "./bundle.js";
+export * from "./canonical.js";
+export * from "./errors.js";
+export * from "./redact.js";
+export * from "./verify.js";
+export * from "./verdict.js";
+export { renderDiff, highlightCode } from "./highlight.js";
+export { renderEvidencePack, PACK_VERSION, DEFAULT_MAX_BYTES, DEFAULT_MAX_FRAMES_PER_REPLAY } from "./render.js";
+export type { RenderOptions, RenderResult } from "./render.js";
+export { bundleFromDemo } from "./fixtures/demo.js";
