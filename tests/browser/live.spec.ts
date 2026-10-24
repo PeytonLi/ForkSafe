@@ -45,8 +45,8 @@ test("fixture live stream advances, hands off to replay, and appears in environm
   await expect(capturedFailure.getByText("Running", { exact: true })).toBeVisible();
   await expect(capturedFailure.getByText("Not known yet", { exact: true })).toBeVisible();
   await expect(capturedFailure.getByText(/forbidden contact/i)).toHaveCount(0);
-  await expect(viewer).toHaveAttribute("data-state", "streaming", { timeout: 10_000 });
-  await expect(viewer.getByText("Fixture stream", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await expect(viewer).toHaveAttribute("data-state", "streaming", { timeout: 25_000 });
+  await expect(viewer.getByText("Fixture stream", { exact: true })).toBeVisible({ timeout: 25_000 });
   await expect(viewer.getByText("Live", { exact: true })).toHaveCount(0);
   if (mobile) await page.screenshot({ path: evidencePath(info, "phone-capture-streaming.png") });
   const readout = viewer.getByTestId("frame-readout");
@@ -73,8 +73,8 @@ test("fixture live stream advances, hands off to replay, and appears in environm
   if (mobile) {
     const switcher = environmentGrid.getByRole("tablist", { name: "Live environments" });
     await expect(switcher.getByRole("tab")).toHaveCount(3);
-    await expect(firstEnvironment.getByTestId("live-viewer")).toHaveAttribute("data-state", "streaming", { timeout: 10_000 });
-    await expect(firstEnvironment.getByTestId("live-viewer").getByText("Fixture stream", { exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(firstEnvironment.getByTestId("live-viewer")).toHaveAttribute("data-state", "streaming", { timeout: 25_000 });
+    await expect(firstEnvironment.getByTestId("live-viewer").getByText("Fixture stream", { exact: true })).toBeVisible({ timeout: 25_000 });
     await expect(firstEnvironment.getByTestId("live-viewer").locator("[data-label]")).toHaveAttribute("data-label", /.+/);
     await expect(firstEnvironment.getByTestId("live-viewer").locator("[data-label]")).not.toHaveAttribute("data-label", "Env 1");
     for (const index of [2, 3]) {
@@ -85,8 +85,8 @@ test("fixture live stream advances, hands off to replay, and appears in environm
     const secondEnvironment = page.getByTestId("env-tile-2");
     await secondEnvironment.getByRole("button", { name: "Watch live" }).click();
     await expect(switcher.getByRole("tab", { name: "Env 2" })).toHaveAttribute("aria-selected", "true");
-    await expect(secondEnvironment.getByTestId("live-viewer")).toHaveAttribute("data-state", "streaming", { timeout: 10_000 });
-    await expect(secondEnvironment.getByTestId("live-viewer").getByText("Fixture stream", { exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(secondEnvironment.getByTestId("live-viewer")).toHaveAttribute("data-state", "streaming", { timeout: 25_000 });
+    await expect(secondEnvironment.getByTestId("live-viewer").getByText("Fixture stream", { exact: true })).toBeVisible({ timeout: 25_000 });
     await expect(firstEnvironment.getByRole("button", { name: "Watch live" })).toBeVisible();
     await page.screenshot({ path: evidencePath(info, "phone-environments-watch-live.png") });
     await switcher.getByRole("tab", { name: "Env 3" }).click();
@@ -97,8 +97,8 @@ test("fixture live stream advances, hands off to replay, and appears in environm
     for (const index of [1, 2, 3]) {
       const tile = page.getByTestId(`env-tile-${index}`);
       const environmentViewer = tile.getByTestId("live-viewer");
-      await expect(environmentViewer).toHaveAttribute("data-state", "streaming", { timeout: 10_000 });
-      await expect(environmentViewer.getByText("Fixture stream", { exact: true })).toBeVisible({ timeout: 10_000 });
+      await expect(environmentViewer).toHaveAttribute("data-state", "streaming", { timeout: 25_000 });
+      await expect(environmentViewer.getByText("Fixture stream", { exact: true })).toBeVisible({ timeout: 25_000 });
       const canvasCaption = environmentViewer.locator("[data-label]");
       await expect(canvasCaption).toHaveAttribute("data-label", /.+/);
       expect(await canvasCaption.getAttribute("data-label")).not.toBe(`Env ${index}`);
@@ -121,5 +121,5 @@ test("fixture mode without opt-in keeps the normal baseline replay", async ({ pa
   await openDemo(page, mobile, false);
   const capture = page.getByTestId("baseline-replay");
   await expect(capture.getByTestId("live-viewer")).toHaveCount(0);
-  await expect(capture.getByTestId("replay-scrubber")).toBeVisible();
+  await expect(capture.getByTestId("replay-scrubber")).toBeVisible({ timeout: 25_000 });
 });

@@ -79,3 +79,47 @@ export function validateSceneOverrides(
   }
   return { ok: true };
 }
+
+export type SceneBaseline = {
+  caseId: string;
+  suite: "original" | "public" | "withheld";
+  seed: number;
+  sceneOverrides: Record<string, number>;
+  taskFamily?: string;
+  description?: string;
+};
+
+function round5(value: number): number {
+  return Number(value.toFixed(5));
+}
+
+function nudgeInRange(current: number, step: number, min: number, max: number, positive: boolean): number {
+  const signed = positive ? step : -step;
+  const epsilon = 1e-9;
+  const outside = (value: number) => value < min - epsilon || value > max + epsilon;
+  let next = current + signed;
+  if (outside(next)) next = current - signed;
+  if (next < min) next = min;
+  if (next > max) next = max;
+  return round5(next);
+}
+
+/** Nearby scene for one environment. Index 0 is the captured baseline. */
+export function sceneVariantFor(index: number, baseline: SceneBaseline): SceneBaseline {
+  if (index <= 0) {
+    return { ...baseline, sceneOverrides: { ...baseline.sceneOverrides } };
+  }
+  const family = isTaskFamily(baseline.taskFamily) ? baseline.taskFamily : DEFAULT_TASK_FAMILY;
+  const keys = TASK_FAMILY_SPECS[family].overrideKeys;
+  const key = keys[(index - 1) % keys.length]!;
+  const range = SCENE_OVERRIDE_RANGES[key];
+  const raw = baseline.sceneOverrides[key];
+  const current = typeof raw === "number" && Number.isFinite(raw) ? raw : 0;
+  const value = nudgeInRange(current, range.step, range.min, range.max, index % 2 === 1);
+  return {
+    ...baseline,
+    seed: baseline.seed + index,
+    sceneOverrides: { ...baseline.sceneOverrides, [key]: value },
+    description: `Environment ${index + 1} changes ${range.label}.`,
+  };
+}

@@ -184,7 +184,11 @@ export function NewSimulation({ onAccepted }: { onAccepted: (investigationId: st
       {step === 3 && (
         <section aria-labelledby="agents-heading" className={styles.card}>
           <h2 id="agents-heading">Agents</h2>
-          <p className={styles.description}>Your agents will explore this scene in {environments} environment{environments === 1 ? "" : "s"}.</p>
+          <p className={styles.description}>
+            {environments === 1
+              ? "This exact scene is what the agent runs."
+              : "Environment 1 runs this exact scene. Each extra environment runs the same task with a nearby seed and one setting moved a single step, so the agents are not repeating one layout."}
+          </p>
           <ControllerChoice taskFamily={taskFamily} value={controller} onChange={setController} />
           <fieldset className={styles.environmentFieldset}>
             <legend>Agent environments</legend>

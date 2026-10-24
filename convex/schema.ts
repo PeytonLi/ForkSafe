@@ -83,6 +83,7 @@ export default defineSchema({
     appId: uuid,
     investigationId: uuid,
     index: v.number(),
+    sceneVariant: v.optional(simCase),
     state: v.union(
       v.literal("provisioning"), v.literal("active"), v.literal("paused"),
       v.literal("closing"), v.literal("closed"), v.literal("error"),

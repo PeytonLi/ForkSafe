@@ -13,6 +13,24 @@ import { traceLog } from "./lib/tracing.js";
  *  secret never leave Convex. */
 
 const MAX_BODY_BYTES = 512 * 1024;
+
+function isPayloadSimCase(value: unknown): value is { caseId: string; sceneOverrides: Record<string, unknown> } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as { caseId?: unknown; sceneOverrides?: unknown };
+  return typeof record.caseId === "string"
+    && !!record.sceneOverrides
+    && typeof record.sceneOverrides === "object"
+    && !Array.isArray(record.sceneOverrides);
+}
+
+/** The repair brief uses the environment scene on the job when it is a case. */
+export function baselineCaseFromJobPayload<T>(payload: unknown, investigationBaseline: T): T {
+  const simCase = payload && typeof payload === "object" && !Array.isArray(payload)
+    ? (payload as { simCase?: unknown }).simCase
+    : undefined;
+  return isPayloadSimCase(simCase) ? simCase as T : investigationBaseline;
+}
+
 const TOOL_NAMES = ["inspect_failure", "read_source", "apply_patch", "fork_candidate", "request_subtask", "run_experiment", "propose_controller_revision", "submit_candidate", "read_findings", "write_finding", "request_evidence"] as const;
 const INVALID_ARGUMENT_MESSAGE = "Request does not match the expected runner contract.";
 
@@ -139,7 +157,7 @@ export function registerRunnerRoutes(router: HttpRouter): void {
           ...(job.payload ?? {}),
           ...(job.attemptsUsed > 1 && checkpoint ? { resume: checkpoint } : {}),
           repair: {
-            investigationTitle: investigation.title, environmentIndex: environment.index, baselineCase: investigation.baselineCase,
+            investigationTitle: investigation.title, environmentIndex: environment.index, baselineCase: baselineCaseFromJobPayload(job.payload, investigation.baselineCase),
             ...(baselineControllerSource ? { baselineControllerSource } : {}),
             priorHints: job.payload?.priorHints ?? [],
             failureSummary,

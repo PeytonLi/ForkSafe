@@ -75,6 +75,16 @@ export function EnvironmentGrid({ workspace: w }: { workspace: InvestigationWork
               <dd>{activeAgents} active / {sessions.length}</dd>
               <dt>Current</dt>
               <dd>{current ? current.simCase.caseId : "idle"}</dd>
+              {e.sceneVariant && (
+                <>
+                  <dt>Scene</dt>
+                  <dd>
+                    {e.index > 0 && e.sceneVariant.description
+                      ? e.sceneVariant.description
+                      : `seed ${e.sceneVariant.seed} · ${e.sceneVariant.caseId}`}
+                  </dd>
+                </>
+              )}
               <dt>Elapsed</dt>
               <dd>{elapsed !== undefined ? fmtDuration(elapsed) : "not started"}</dd>
               <dt>Experiments</dt>

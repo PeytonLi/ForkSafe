@@ -283,44 +283,64 @@ export function ReplayViewer({
   const wrapRef = useRef<HTMLDivElement>(null);
   const s3Ref = useRef<Scene3D | null>(null);
   const [webglError, setWebglError] = useState<string | null>(null);
+  const [viewerReady, setViewerReady] = useState(0);
   const resolvedScene = useMemo(() => resolveScene(taskFamily, overrides), [taskFamily, overrides]);
   const smp = replay ? sampleAt(replay.frames, t) : undefined;
 
   useEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
-    const canvas = document.createElement("canvas");
-    canvas.className = styles.canvas!;
-    canvas.setAttribute("aria-label", `${label}, 3D view`);
-    canvas.setAttribute("role", "img");
-    wrap.appendChild(canvas);
-    let s3: Scene3D;
-    try {
-      s3 = build(canvas);
-    } catch (e) {
-      canvas.remove();
-      setWebglError((e as Error).message || "WebGL unavailable");
-      return;
-    }
-    s3Ref.current = s3;
-    const resize = () => {
-      const w = Math.max(1, wrap.clientWidth);
-      const h = Math.max(1, Math.round(w * 0.62));
-      s3.renderer.setSize(w, h, false);
-      s3.camera.aspect = w / h;
-      s3.camera.updateProjectionMatrix();
-      s3.renderer.render(s3.scene, s3.camera);
-      canvas.dataset.rendered = "true";
-    };
-    const ro = new ResizeObserver(resize);
-    ro.observe(wrap);
-    resize();
+    let disposed = false;
+    let teardown = () => {};
+    // Let the caption and status paint before the synchronous WebGL setup,
+    // which can block the page thread for several seconds on software GL.
+    const handle = window.setTimeout(() => {
+      if (disposed) return;
+      const canvas = document.createElement("canvas");
+      canvas.className = styles.canvas!;
+      canvas.setAttribute("aria-label", `${label}, 3D view`);
+      canvas.setAttribute("role", "img");
+      wrap.appendChild(canvas);
+      let s3: Scene3D;
+      try {
+        s3 = build(canvas);
+      } catch (e) {
+        canvas.remove();
+        setWebglError((e as Error).message || "WebGL unavailable");
+        return;
+      }
+      if (disposed) {
+        s3.renderer.dispose();
+        s3.renderer.forceContextLoss();
+        canvas.remove();
+        return;
+      }
+      s3Ref.current = s3;
+      const resize = () => {
+        const w = Math.max(1, wrap.clientWidth);
+        const h = Math.max(1, Math.round(w * 0.62));
+        s3.renderer.setSize(w, h, false);
+        s3.camera.aspect = w / h;
+        s3.camera.updateProjectionMatrix();
+        s3.renderer.render(s3.scene, s3.camera);
+        canvas.dataset.rendered = "true";
+      };
+      const ro = new ResizeObserver(resize);
+      ro.observe(wrap);
+      resize();
+      teardown = () => {
+        ro.disconnect();
+        s3.renderer.dispose();
+        s3.renderer.forceContextLoss();
+        s3Ref.current = null;
+        canvas.remove();
+      };
+      setViewerReady((n) => n + 1);
+    }, 0);
     return () => {
-      ro.disconnect();
-      s3.renderer.dispose();
-      s3.renderer.forceContextLoss();
-      s3Ref.current = null;
-      canvas.remove();
+      disposed = true;
+      window.clearTimeout(handle);
+      teardown();
     };
   }, [label]);
 
@@ -329,7 +349,7 @@ export function ReplayViewer({
     if (!s3) return;
     setStaticScene(s3, resolvedScene);
     s3.renderer.render(s3.scene, s3.camera);
-  }, [resolvedScene, webglError]);
+  }, [resolvedScene, viewerReady, webglError]);
 
   useEffect(() => {
     const s3 = s3Ref.current;
@@ -341,14 +361,14 @@ export function ReplayViewer({
         (child as THREE.Line).geometry.dispose();
       }
     }
-  }, [replay, ghost, webglError]);
+  }, [replay, ghost, viewerReady, webglError]);
 
   useEffect(() => {
     const s3 = s3Ref.current;
     if (!s3) return;
     apply(s3, replay, t, ghost, resolvedScene);
     s3.renderer.render(s3.scene, s3.camera);
-  }, [replay, t, ghost, resolvedScene, webglError]);
+  }, [replay, t, ghost, resolvedScene, viewerReady, webglError]);
   const ghostSample = ghost ? sampleAt(ghost.frames, t) : undefined;
 
   const contact = replay ? smp?.contacts[0] : undefined;
