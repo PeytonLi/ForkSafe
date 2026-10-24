@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { authTables } from "@convex-dev/auth/server";
 
 const uuid = v.string();
 const vendorRef = v.object({ provider: v.string(), id: v.string() });
@@ -23,6 +24,7 @@ const attemptState = v.union(
 );
 
 export default defineSchema({
+  ...authTables,
   readinessSnapshots: defineTable({
     key: v.string(),
     checkedAtMs: v.number(),

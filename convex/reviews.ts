@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api.js";
 import { action, internalMutation, internalQuery } from "./_generated/server.js";
-import { requireServiceToken } from "./lib/auth.js";
+import { requireWriteIdentity } from "./lib/webAccess.js";
 import { appId, assertUUID } from "./lib/validators.js";
 
 /** Web: `reviews:record` — a human decision bound to the exact controller
@@ -60,12 +60,10 @@ export const record = action({
     decision, notes: v.optional(v.string()), idempotencyKey: v.optional(v.string()), serviceToken: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<Record<string, unknown>> => {
-    requireServiceToken(args.serviceToken);
+    const reviewerIdentity = await requireWriteIdentity(ctx, args.serviceToken);
     for (const [name, value] of [["investigationId", args.investigationId], ["candidateId", args.candidateId], ["evaluationId", args.evaluationId]] as const) assertUUID(value, name);
     if (!/^[0-9a-f]{64}$/.test(args.controllerSha256)) throw new ConvexError("controllerSha256 must be lowercase sha256");
     if (args.notes && args.notes.length > 4000) throw new ConvexError("notes too long");
-    const identity = await ctx.auth.getUserIdentity();
-    const reviewerIdentity = identity?.tokenIdentifier ?? identity?.subject ?? (process.env.FORKSAFE_DEV_ANONYMOUS_UI === "true" ? "local:anonymous-ui" : "service:integration");
     const idempotencyKey = args.idempotencyKey ?? `${args.evaluationId}:${args.controllerSha256}:${args.decision}:${reviewerIdentity}`;
     const check = await ctx.runQuery(internal.reviews.validate, { investigationId: args.investigationId, candidateId: args.candidateId, evaluationId: args.evaluationId, controllerSha256: args.controllerSha256, idempotencyKey });
     if (check.existing) return toHumanReview(check.existing);

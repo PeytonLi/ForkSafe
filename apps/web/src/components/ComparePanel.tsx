@@ -9,11 +9,13 @@ import { useReplayClock } from "../viewer/useReplayClock";
 import { Badge, Panel } from "./Panel";
 import { human, stateTone } from "./tone";
 import styles from "./ComparePanel.module.css";
+import { useBrowserAccess } from "../services/browserAccess";
 
 export function ComparePanel({ workspace: w }: { workspace: InvestigationWorkspace }) {
+  const access = useBrowserAccess();
   const [selected, setSelected] = useState<string | undefined>(w.candidates[0]?.id);
   if (!w.candidates.length)
-    return <p className={styles.muted} data-testid="empty-state">No candidates submitted yet. Environments submit exact controller versions here once they find a repair.</p>;
+    return <div><p className={styles.muted} data-testid="empty-state">No candidates submitted yet. Environments submit exact controller versions here once they find a repair.</p>{!access.canWrite && <button type="button" onClick={access.showSignIn}>Sign in to review</button>}</div>;
   const cand = w.candidates.find((c) => c.id === selected) ?? w.candidates[0]!;
   return (
     <div className={styles.wrap}>
@@ -170,6 +172,7 @@ const DECISIONS: [ReviewDecision, string][] = [
 /** Review binds to the exact evaluated controllerSha256 and evaluation id. */
 function ReviewForm({ w, cand, evals }: { w: InvestigationWorkspace; cand: ControllerCandidate; evals: CandidateEvaluation[] }) {
   const client = useClient();
+  const access = useBrowserAccess();
   const final = evals.find((e) => e.suite === "withheld") ?? evals.find((e) => e.suite === "public");
   const existing = w.reviews.filter((r) => r.candidateId === cand.id).sort((a, b) => b.createdAtMs - a.createdAtMs);
   const [decision, setDecision] = useState<ReviewDecision | "">("");
@@ -180,6 +183,7 @@ function ReviewForm({ w, cand, evals }: { w: InvestigationWorkspace; cand: Contr
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (!access.canWrite) { access.showSignIn(); return; }
     if (!final || !decision) return;
     setBusy(true);
     setErr(null);
@@ -219,7 +223,7 @@ function ReviewForm({ w, cand, evals }: { w: InvestigationWorkspace; cand: Contr
           ))}
         </ul>
       )}
-      {!reviewable ? (
+      {!access.canWrite ? <button type="button" onClick={access.showSignIn}>Sign in to review</button> : !reviewable ? (
         <p className={styles.muted} data-testid="review-unavailable">
           {final ? `Review opens when the investigation is awaiting review (currently ${human(w.investigation.state)}).` : "Review needs a completed evaluation for this exact candidate."}
         </p>

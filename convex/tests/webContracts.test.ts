@@ -48,7 +48,7 @@ describe("web Convex contracts", () => {
   });
 
   it("validates seeded list, workspace, findings, and replay outputs with the web schemas", async () => {
-    vi.stubEnv("FORKSAFE_DEV_ANONYMOUS_UI", "true");
+    vi.stubEnv("FORKSAFE_PUBLIC_INVESTIGATION_IDS", id);
     const t = convexTest(schema, modules);
     await t.run(async (ctx) => {
       await ctx.db.insert("investigations", {
@@ -78,7 +78,7 @@ describe("web Convex contracts", () => {
   });
 
   it("validates empty collections and rejects missing workspace/replay records", async () => {
-    vi.stubEnv("FORKSAFE_DEV_ANONYMOUS_UI", "true");
+    vi.stubEnv("FORKSAFE_PUBLIC_INVESTIGATION_IDS", id);
     const t = convexTest(schema, modules);
     expect(schemas.listInvestigations.parse(await t.query(api.investigations.list, {}))).toEqual([]);
     expect(schemas.findings.parse(await t.query(api.evidence.findings, { investigationId: id }))).toEqual([]);
@@ -88,6 +88,7 @@ describe("web Convex contracts", () => {
 
   it("denies unauthenticated web writes even when anonymous reads are enabled", async () => {
     vi.stubEnv("FORKSAFE_DEV_ANONYMOUS_UI", "true");
+    vi.stubEnv("CONVEX_CLOUD_URL", "https://hosted.convex.cloud");
     const t = convexTest(schema, modules);
     await expect(t.mutation(api.investigations.capture, { title: "", seed: 0, sceneOverrides: {}, requestedEnvironments: 1 })).rejects.toThrow(/unauthorized/);
     await expect(t.mutation(api.investigations.cancel, { investigationId: id })).rejects.toThrow(/unauthorized/);

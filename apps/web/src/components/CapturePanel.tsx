@@ -9,6 +9,7 @@ import { useReplayClock } from "../viewer/useReplayClock";
 import { Badge, Panel } from "./Panel";
 import { human, stateTone } from "./tone";
 import styles from "./CapturePanel.module.css";
+import { useBrowserAccess } from "../services/browserAccess";
 
 export function CapturePanel({ workspace }: { workspace: InvestigationWorkspace }) {
   const inv = workspace.investigation;
@@ -89,6 +90,7 @@ const FIELDS: [string, string, number][] = [
 /** Named parameters change between runs only; recording goes through the client. */
 function SceneEditor({ scene, seed, envs }: { scene: Record<string, number>; seed: number; envs: number }) {
   const client = useClient();
+  const access = useBrowserAccess();
   const [draft, setDraft] = useState<Record<string, number>>(() => ({ ...scene }));
   const [draftSeed, setDraftSeed] = useState(seed);
   const [envCount, setEnvCount] = useState(envs);
@@ -98,6 +100,7 @@ function SceneEditor({ scene, seed, envs }: { scene: Record<string, number>; see
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (!access.canWrite) { access.showSignIn(); return; }
     setBusy(true);
     setOutcome(null);
     try {
@@ -139,8 +142,8 @@ function SceneEditor({ scene, seed, envs }: { scene: Record<string, number>; see
         </label>
       </div>
       <div className={styles.actions}>
-        <button type="submit" className="primary" disabled={busy}>
-          {busy ? "Requesting…" : "Record baseline run"}
+        <button type={access.canWrite ? "submit" : "button"} onClick={access.canWrite ? undefined : access.showSignIn} className="primary" disabled={busy}>
+          {!access.canWrite ? "Sign in to capture" : busy ? "Requesting…" : "Record baseline run"}
         </button>
         {changed.length > 0 && <span className={styles.note}>{changed.length} parameter(s) changed</span>}
       </div>

@@ -10,6 +10,7 @@
 
 import type * as agentTools from "../agentTools.js";
 import type * as artifacts from "../artifacts.js";
+import type * as auth from "../auth.js";
 import type * as bridge from "../bridge.js";
 import type * as bundles from "../bundles.js";
 import type * as candidates from "../candidates.js";
@@ -42,6 +43,7 @@ import type * as lib_reservations from "../lib/reservations.js";
 import type * as lib_runnerAuth from "../lib/runnerAuth.js";
 import type * as lib_spacetime from "../lib/spacetime.js";
 import type * as lib_validators from "../lib/validators.js";
+import type * as lib_webAccess from "../lib/webAccess.js";
 import type * as outbox from "../outbox.js";
 import type * as readiness from "../readiness.js";
 import type * as reconcile from "../reconcile.js";
@@ -63,6 +65,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   agentTools: typeof agentTools;
   artifacts: typeof artifacts;
+  auth: typeof auth;
   bridge: typeof bridge;
   bundles: typeof bundles;
   candidates: typeof candidates;
@@ -95,6 +98,7 @@ declare const fullApi: ApiFromModules<{
   "lib/runnerAuth": typeof lib_runnerAuth;
   "lib/spacetime": typeof lib_spacetime;
   "lib/validators": typeof lib_validators;
+  "lib/webAccess": typeof lib_webAccess;
   outbox: typeof outbox;
   readiness: typeof readiness;
   reconcile: typeof reconcile;

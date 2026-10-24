@@ -10,6 +10,7 @@
     "dev:once": "convex dev --once"
   },
   "dependencies": {
+    "@convex-dev/auth": "^0.0.96",
     "@convex-dev/static-hosting": "0.2.1",
     "@convex-dev/workflow": "^0.4.10",
     "@convex-dev/workpool": "^0.4.14",

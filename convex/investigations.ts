@@ -4,7 +4,7 @@ import { internal } from "./_generated/api.js";
 import { mutation, query, internalMutation, internalQuery, type MutationCtx } from "./_generated/server.js";
 import { readLimits } from "./lib/constants.js";
 import { countsTowardCapacity } from "./lib/reservations.js";
-import { requireServiceToken, requireUiAccess } from "./lib/auth.js";
+import { hasPrivateAccess, isPublicInvestigation, requireInvestigationRead, requireWriteIdentity } from "./lib/webAccess.js";
 import { appId, assertUUID } from "./lib/validators.js";
 
 const simCase = v.object({
@@ -26,7 +26,7 @@ export const create = mutation({
     serviceToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    requireUiAccess(args.serviceToken);
+    await requireWriteIdentity(ctx, args.serviceToken);
     const existing = await ctx.db.query("investigations")
       .withIndex("by_idempotencyKey", (q) => q.eq("idempotencyKey", args.idempotencyKey))
       .unique();
@@ -155,7 +155,7 @@ async function startHandler(ctx: MutationCtx, args: { investigationId: string; e
 export const start = mutation({
   args: { investigationId: v.string(), expectedVersion: v.number(), serviceToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    requireUiAccess(args.serviceToken);
+    await requireWriteIdentity(ctx, args.serviceToken);
     return await startHandler(ctx, args);
   },
 });
@@ -245,7 +245,7 @@ export const enterEvaluation = internalMutation({
 export const get = query({
   args: { investigationId: v.string(), serviceToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    requireUiAccess(args.serviceToken);
+    await requireInvestigationRead(ctx, args.investigationId, args.serviceToken);
     assertUUID(args.investigationId, "investigationId");
     return await ctx.db.query("investigations")
       .withIndex("by_appId", (q) => q.eq("appId", args.investigationId))
@@ -271,7 +271,7 @@ export const attachWorkflowId = internalMutation({
 export const cancel = mutation({
   args: { investigationId: v.string(), expectedVersion: v.optional(v.number()), serviceToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    requireServiceToken(args.serviceToken);
+    await requireWriteIdentity(ctx, args.serviceToken);
     assertUUID(args.investigationId, "investigationId");
     const investigation = await ctx.db.query("investigations")
       .withIndex("by_appId", (q) => q.eq("appId", args.investigationId))
@@ -365,9 +365,11 @@ function toInvestigation(row: any) {
 export const list = query({
   args: { serviceToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    requireUiAccess(args.serviceToken);
+    const privateAccess = await hasPrivateAccess(ctx, args.serviceToken);
     const rows = await ctx.db.query("investigations").order("desc").take(100);
-    return rows.map((row) => ({ id: row.appId, title: row.title, state: row.state, requestedEnvironments: row.requestedEnvironments, updatedAtMs: row.updatedAtMs }));
+    return rows.map((row) => privateAccess || isPublicInvestigation(row.appId)
+      ? { id: row.appId, title: row.title, state: row.state, requestedEnvironments: row.requestedEnvironments, updatedAtMs: row.updatedAtMs }
+      : { id: row.appId, title: "Restricted investigation", state: "restricted" as const });
   },
 });
 
@@ -377,7 +379,7 @@ const sha64 = (value: string) => /^[0-9a-f]{64}$/i.test(value) ? value : "0".rep
 export const workspace = query({
   args: { investigationId: v.string(), serviceToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    requireUiAccess(args.serviceToken);
+    await requireInvestigationRead(ctx, args.investigationId, args.serviceToken);
     assertUUID(args.investigationId, "investigationId");
     const investigation = await ctx.db.query("investigations").withIndex("by_appId", (q) => q.eq("appId", args.investigationId)).unique();
     if (!investigation) throw new ConvexError("investigation not found");
@@ -442,7 +444,7 @@ export const capture = mutation({
     autoStart: v.optional(v.boolean()), idempotencyKey: v.optional(v.string()), serviceToken: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<{ accepted: true; investigationId: string } | { accepted: false; mode: string; reason: string }> => {
-    requireServiceToken(args.serviceToken);
+    await requireWriteIdentity(ctx, args.serviceToken);
     const limits = readLimits();
     if (!args.title.trim()) return { accepted: false, mode: "live", reason: "title is required" };
     if (!Number.isInteger(args.seed) || args.seed < 0) return { accepted: false, mode: "live", reason: "seed must be a non-negative integer" };

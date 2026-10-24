@@ -1,6 +1,6 @@
 import { ConvexError, v } from "convex/values";
 import { internalMutation, internalQuery, query } from "./_generated/server.js";
-import { requireUiAccess } from "./lib/auth.js";
+import { requireInvestigationRead } from "./lib/webAccess.js";
 import { compactReplay } from "./lib/experimentStatus.js";
 import { appId, assertUUID } from "./lib/validators.js";
 
@@ -87,10 +87,10 @@ export const saveReplay = internalMutation({
 export const replay = query({
   args: { artifactId: v.string(), serviceToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    requireUiAccess(args.serviceToken);
     assertUUID(args.artifactId, "artifactId");
     const row = await ctx.db.query("replays").withIndex("by_artifact", (q) => q.eq("artifactId", args.artifactId)).unique();
     if (!row) throw new ConvexError("replay not found");
+    await requireInvestigationRead(ctx, row.investigationId, args.serviceToken);
     if (row.visibility === "withheld") throw new ConvexError("forbidden: withheld replay");
     return row.result;
   },
