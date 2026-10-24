@@ -68,9 +68,11 @@ export async function currentStages(ctx: MutationCtx, job: any, attempt: any) {
   return rows.filter((row) => !row.stale && (row.attemptId === attempt.appId || row.stage === "admission_reserved"));
 }
 
+const ATTEMPT_LIVE_STATES = new Set(["leased", "heartbeating", "completing"]);
+
 export async function recordStageRow(ctx: MutationCtx, job: any, attempt: any, epoch: number, stage: HandoffStageName, detail: Record<string, unknown> = {}) {
   const stages = await currentStages(ctx, job, attempt);
-  if (job.activeAttemptId !== attempt.appId || job.epoch !== epoch || attempt.epoch !== epoch) {
+  if (job.activeAttemptId !== attempt.appId || job.epoch !== epoch || attempt.epoch !== epoch || !ATTEMPT_LIVE_STATES.has(attempt.state) || job.state === "reserved") {
     const duplicate = stages.some((row) => row.attemptId === attempt.appId && row.stage === stage);
     if (!duplicate) {
       await ctx.db.insert("handoffs", {
