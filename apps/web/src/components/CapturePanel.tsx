@@ -60,6 +60,7 @@ export function CapturePanel({ workspace }: { workspace: InvestigationWorkspace 
           <LiveViewer
             experimentId={inv.baselineExperimentId}
             scene={inv.baselineCase.sceneOverrides}
+            taskFamily={inv.baselineCase.taskFamily}
             label="Original controller"
             onFinished={finishLive}
             onProgress={noteLiveProgress}
@@ -82,8 +83,13 @@ export function CapturePanel({ workspace }: { workspace: InvestigationWorkspace 
             <dt>Seed</dt>
             <dd data-testid="baseline-seed">{inv.baselineCase.seed}</dd>
             <dt>Result</dt>
-            <dd>{baseline ? <Badge tone={stateTone(baseline.status)}>{human(baseline.status)}</Badge> : "missing"}</dd>
-            {baseline?.failureKinds.length ? (
+            <dd>{showLive ? <Badge tone="blue">Running</Badge> : baseline ? <Badge tone={stateTone(baseline.status)}>{human(baseline.status)}</Badge> : "missing"}</dd>
+            {showLive ? (
+              <>
+                <dt>Failure</dt>
+                <dd>Not known yet</dd>
+              </>
+            ) : baseline?.failureKinds.length ? (
               <>
                 <dt>Failure</dt>
                 <dd>{baseline.failureKinds.map(words).join(", ")}</dd>
@@ -96,7 +102,7 @@ export function CapturePanel({ workspace }: { workspace: InvestigationWorkspace 
             <dt>Engine</dt>
             <dd>{baseline?.engineVersion ?? "—"}</dd>
           </dl>
-          {inv.baselineCase.description && <p className={styles.note}>{inv.baselineCase.description}</p>}
+          {!showLive && inv.baselineCase.description && <p className={styles.note}>{inv.baselineCase.description}</p>}
           <footer className={styles.cardFooter}>
             <SceneEditor
               scene={inv.baselineCase.sceneOverrides}
