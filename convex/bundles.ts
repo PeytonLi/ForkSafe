@@ -25,6 +25,28 @@ export const record = internalMutation({
   },
 });
 
+/** Large bundles (the simulator tar) bypass the 64 MB HTTP-action limit via a storage upload URL. */
+export const createUploadUrl = internalMutation({
+  args: {},
+  handler: async (ctx) => await ctx.storage.generateUploadUrl(),
+});
+
+export const recordUploaded = internalMutation({
+  args: { key: bundleKey, storageId: v.id("_storage"), note: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const metadata = await ctx.storage.getMetadata(args.storageId);
+    if (!metadata) throw new ConvexError("storage_object_missing");
+    const sha256 = /^[0-9a-f]{64}$/i.test(metadata.sha256)
+      ? metadata.sha256.toLowerCase()
+      : [...Uint8Array.from(atob(metadata.sha256), (char) => char.charCodeAt(0))].map((value) => value.toString(16).padStart(2, "0")).join("");
+    const existing = await ctx.db.query("bundles").withIndex("by_key", (q) => q.eq("key", args.key)).unique();
+    const row = { key: args.key, storageId: args.storageId, sha256, bytes: metadata.size, uploadedAtMs: Date.now(), ...(args.note ? { note: args.note } : {}) };
+    if (existing && existing.sha256 === sha256) return { duplicate: true, sha256, bytes: metadata.size };
+    if (existing) await ctx.db.patch(existing._id, row); else await ctx.db.insert("bundles", row);
+    return { duplicate: false, replaced: Boolean(existing), sha256, bytes: metadata.size };
+  },
+});
+
 export const recordBaselineSource = internalMutation({
   args: { controllerSha256: v.string(), artifactId: v.string(), source: v.string() },
   handler: async (ctx, args) => {

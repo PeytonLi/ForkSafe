@@ -27,6 +27,23 @@ async function upload(key, bytes, note) {
   console.log(`${key}: ${sha256} (${bytes.byteLength} bytes) ${body}`);
 }
 
+// Large bundles go through a Convex storage upload URL (HTTP actions are capped at 64 MB of memory).
+function convexRun(fn, args) {
+  const out = execFileSync("npx", ["convex", "run", fn, JSON.stringify(args)], { cwd: join(repo, "convex"), env: process.env, stdio: ["ignore", "pipe", "inherit"] });
+  return JSON.parse(out.toString());
+}
+async function uploadLarge(key, bytes, note) {
+  if (!process.env.CONVEX_DEPLOY_KEY) throw new Error("CONVEX_DEPLOY_KEY is required to publish large bundles");
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const uploadUrl = convexRun("bundles:createUploadUrl", {});
+  const response = await fetch(uploadUrl, { method: "POST", headers: { "content-type": "application/x-tar" }, body: bytes });
+  if (!response.ok) throw new Error(`${key} storage upload failed: HTTP ${response.status}`);
+  const { storageId } = await response.json();
+  const recorded = convexRun("bundles:recordUploaded", { key, storageId, note });
+  if (recorded.sha256 !== sha256) throw new Error(`${key} sha mismatch after upload: ${recorded.sha256} != ${sha256}`);
+  console.log(`${key}: ${sha256} (${bytes.byteLength} bytes) ${JSON.stringify(recorded)}`);
+}
+
 const runnerPath = resolve(here, "../dist/runner.mjs");
 await stat(runnerPath).catch(() => { throw new Error("run `node scripts/build-bundle.mjs` first"); });
 await upload("runner", await readFile(runnerPath), `git ${execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: repo }).toString().trim()}`);
@@ -46,5 +63,5 @@ execFileSync("cp", [join(here, "forksafe_preflight.py"), join(staging, "forksafe
 execFileSync("find", [staging, "-name", "__pycache__", "-prune", "-exec", "rm", "-rf", "{}", "+"]);
 const tarPath = join(staging, "..", `forksafe-sim-${Date.now()}.tar`);
 execFileSync("tar", ["-cf", tarPath, "-C", staging, "."]);
-await upload("simulator", await readFile(tarPath), "services/simulator + evaluation + controllers + assets");
+await uploadLarge("simulator", await readFile(tarPath), "services/simulator + evaluation + controllers + assets");
 await upload("baseline_controller", await readFile(join(repo, "controllers/baseline/task_controller.py")), "controllers/baseline/task_controller.py");
