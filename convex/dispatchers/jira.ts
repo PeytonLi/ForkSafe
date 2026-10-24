@@ -231,7 +231,8 @@ export const dispatch = internalAction({
       email: env.ATLASSIAN_EMAIL,
       apiToken: env.ATLASSIAN_API_TOKEN,
     }));
-    const spacetime = new SpacetimeClient();
+    const bridgeToken = await ctx.runAction(internal.bridge.sharedBridgeToken, {});
+    const spacetime = new SpacetimeClient(bridgeToken ? { ...process.env, SPACETIMEDB_BRIDGE_TOKEN: bridgeToken } : process.env);
     const snapshot = (query: { id?: string; jiraIssueKey?: string }) =>
       ctx.runQuery(getInvestigationRef, query);
     const key = jiraIdempotencyKey(args.payload);

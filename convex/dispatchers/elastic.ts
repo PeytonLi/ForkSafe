@@ -199,7 +199,8 @@ export const dispatch = internalAction({
     const client = createElasticClient(env);
     if (!client) return { delivered: false, mode: "blocked", reason: "elastic_not_configured" };
     const indexer = new ElasticIndexer(mode, client);
-    const spacetime = new SpacetimeClient();
+    const bridgeToken = await ctx.runAction(internal.bridge.sharedBridgeToken, {});
+    const spacetime = new SpacetimeClient(bridgeToken ? { ...process.env, SPACETIMEDB_BRIDGE_TOKEN: bridgeToken } : process.env);
     try {
       return await deliverElasticPayload(args.payload, {
         mode,
