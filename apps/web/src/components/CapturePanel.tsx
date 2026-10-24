@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEven
 import { SIM } from "@forksafe/contracts";
 import { shortSha, useClient, useLoad } from "../hooks";
 import type { CaptureOutcome, InvestigationWorkspace } from "../services";
-import { useBrowserAccess } from "../services/browserAccess";
 import { ReplayControls } from "../viewer/ReplayControls";
 import { ReplayViewer } from "../viewer/ReplayViewer";
 import { replayDuration } from "../viewer/transform";
@@ -10,6 +9,7 @@ import { useReplayClock } from "../viewer/useReplayClock";
 import { Badge, Panel } from "./Panel";
 import { human, stateTone, words } from "./tone";
 import styles from "./CapturePanel.module.css";
+import { useBrowserAccess } from "../services/browserAccess";
 
 export function CapturePanel({ workspace }: { workspace: InvestigationWorkspace }) {
   const inv = workspace.investigation;

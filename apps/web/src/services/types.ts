@@ -69,6 +69,52 @@ export type CaptureOutcome =
   | { accepted: true; investigationId: string }
   | { accepted: false; mode: IntegrationMode; reason: string };
 
+/** Pipeline counters for the health page (Convex-owned bookkeeping). */
+export interface PipelineHealth {
+  mode: IntegrationMode;
+  checkedAtMs: number;
+  activeSandboxes: number;
+  sandboxCap: number;
+  runners: number;
+  outboxBacklog: number;
+  outboxDead: number;
+  oldestBacklogAtMs?: number;
+}
+
+export interface EvidenceCitation {
+  id: string;
+  docType: "finding" | "evidence" | "experiment_result";
+  summary: string;
+  environmentId?: string;
+}
+
+/** Answer from the Elastic evidence agent, scoped to one investigation. */
+export interface EvidenceAnswer {
+  mode: IntegrationMode;
+  /** True only when the answer is backed by at least one validated citation. */
+  enoughEvidence: boolean;
+  answer?: string;
+  label?: string;
+  reason?: string;
+  citations: EvidenceCitation[];
+  /** Citations the agent used that failed validation (revoked, stale, out of scope...). */
+  withheld: { id: string; reason: string }[];
+}
+
+export type HandoffStage =
+  | "admission_reserved" | "grant_installed" | "work_started"
+  | "artifacts_persisted" | "evidence_committed" | "completion_acknowledged";
+
+/** One durable handoff step of a Convex job, for the timeline. */
+export interface HandoffEvent {
+  jobId: string;
+  jobKind: string;
+  environmentId?: string;
+  stage: HandoffStage;
+  atMs: number;
+  stale: boolean;
+}
+
 export interface ForkSafeClient {
   readonly source: DataSourceInfo;
   listInvestigations(): Promise<InvestigationListItem[]>;
@@ -84,6 +130,10 @@ export interface ForkSafeClient {
   /** Invalidation stream; listeners re-fetch what they render. */
   subscribe(investigationId: string, onChange: () => void): () => void;
   getReadiness(): Promise<WebIntegrationReadiness[]>;
+  getPipelineHealth(): Promise<PipelineHealth>;
+  /** Investigation-scoped question to the evidence agent; never affects scores. */
+  askEvidence(investigationId: string, question: string): Promise<EvidenceAnswer>;
+  listHandoffs(investigationId: string): Promise<HandoffEvent[]>;
 }
 
 export type { SimCase };

@@ -1,6 +1,12 @@
 import { Daytona, type Sandbox } from "@daytonaio/sdk";
 import type { IntegrationReadiness, VendorRef } from "@forksafe/contracts";
-import { daytonaReadiness, redactDaytonaError, type DaytonaConfig } from "./config.js";
+import {
+  daytonaReadiness,
+  redactDaytonaError,
+  runnerNetworkPolicy,
+  toDaytonaNetworkOptions,
+  type DaytonaConfig,
+} from "./config.js";
 import { assertCommandAllowed } from "./policy.js";
 import {
   AmbiguousOperationError,
@@ -44,6 +50,8 @@ export class CloudDaytonaProvider implements SandboxProvider {
   }
 
   async create(spec: SandboxSpec): Promise<SandboxHandle> {
+    const policy = spec.networkPolicy ?? (spec.purpose === "runner" ? runnerNetworkPolicy(this.config) : undefined);
+    const networkOptions = toDaytonaNetworkOptions(spec.purpose, policy);
     const existing = await this.findByOperation(spec.operationId);
     if (existing) return existing;
     const owned = await this.listOwned();
@@ -62,6 +70,7 @@ export class CloudDaytonaProvider implements SandboxProvider {
         autoStopInterval: spec.autoStopMinutes,
         autoArchiveInterval: spec.autoArchiveMinutes,
         autoDeleteInterval: spec.autoDeleteMinutes,
+        ...networkOptions,
       }, { timeout: spec.createTimeoutSec });
       return handleFromSandbox(created);
     } catch {

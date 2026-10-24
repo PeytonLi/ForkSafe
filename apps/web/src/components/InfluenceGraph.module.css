@@ -1,0 +1,15 @@
+.figure { min-width: 0; margin: 0; padding: 0.8rem; border: 1px solid rgba(221, 226, 222, 0.76); border-radius: var(--radius-md); background: var(--panel); box-shadow: var(--shadow-card); }
+.svg { display: block; width: 100%; max-width: 680px; height: auto; margin: 0 auto; }
+.edge { fill: none; stroke: #9db7b9; stroke-width: 2; transition: opacity 160ms ease; }
+.cross { stroke: var(--accent); stroke-dasharray: 6 5; }
+.dim { opacity: 0.18; }
+.node { cursor: default; outline: none; transition: opacity 160ms ease; }
+.node:focus-visible circle, .node:focus-visible rect { stroke: var(--ink); stroke-width: 3; }
+.label { fill: var(--ink); font-size: 13px; font-weight: 600; }
+.sub { fill: var(--muted); font-size: 11px; }
+.caption { display: flex; flex-wrap: wrap; gap: 0.3rem 1rem; margin-top: 0.4rem; color: var(--muted); font-size: 11px; }
+.caption span { display: inline-flex; align-items: center; gap: 0.35rem; }
+.keySolid, .keyDashed { display: inline-block; width: 18px; height: 0; border-top: 2px solid #9db7b9; }
+.keyDashed { border-top: 2px dashed var(--accent); }
+.empty { margin: 0; color: var(--muted); font-size: var(--text-sm); }
+@media (max-width: 560px) { .figure { padding: 0.55rem; } }

@@ -11,6 +11,7 @@ from simulator.assets import ASSET_DIR
 from simulator.models import SimCase
 
 SCENE_CONFIG_PATH = Path(__file__).with_name("scene_config.json")
+PUSH_GAP_CONFIG_PATH = Path(__file__).parent / "scene_configs/push_gap.json"
 OVERRIDE_KEYS = {
     "cubeDx",
     "cubeDy",
@@ -19,6 +20,15 @@ OVERRIDE_KEYS = {
     "dividerDx",
     "dividerDy",
     "dividerHeight",
+    "speedScale",
+}
+PUSH_GAP_OVERRIDE_KEYS = {
+    "cubeDx",
+    "cubeDy",
+    "targetDx",
+    "targetDy",
+    "gapDx",
+    "gapWidth",
     "speedScale",
 }
 
@@ -37,13 +47,33 @@ class BuiltScene:
     joint_ids: list[int]
     actuator_ids: list[int]
     home_key_id: int
+    task_family: str
 
 
-def _scene_values(case: SimCase) -> tuple[dict[str, object], float]:
+def task_family(case: SimCase) -> str:
+    extra = case.model_extra or {}
+    family = extra.get("taskFamily", "divider_pick_place")
+    if not isinstance(family, str) or family not in {
+        "divider_pick_place",
+        "push_through_gap",
+    }:
+        raise ValueError(f"unknown taskFamily: {family!r}")
+    return family
+
+
+def _scene_values(
+    case: SimCase, base_config: dict[str, object] | None = None
+) -> tuple[dict[str, object], float]:
+    if task_family(case) == "push_through_gap":
+        return _push_gap_scene_values(case, base_config)
     unknown = set(case.scene_overrides) - OVERRIDE_KEYS
     if unknown:
         raise ValueError(f"unknown scene override(s): {', '.join(sorted(unknown))}")
-    values = json.loads(SCENE_CONFIG_PATH.read_text())
+    values = (
+        json.loads(SCENE_CONFIG_PATH.read_text())
+        if base_config is None
+        else json.loads(json.dumps(base_config))
+    )
     cube = np.asarray(values["cubeStart"], dtype=float)
     target = np.asarray(values["target"], dtype=float)
     divider = np.asarray(values["dividerCenter"], dtype=float)
@@ -75,8 +105,54 @@ def _scene_values(case: SimCase) -> tuple[dict[str, object], float]:
     return values, float(speed_scale)
 
 
-def build_scene(case: SimCase) -> BuiltScene:
-    values, speed_scale = _scene_values(case)
+def _push_gap_scene_values(
+    case: SimCase, base_config: dict[str, object] | None = None
+) -> tuple[dict[str, object], float]:
+    unknown = set(case.scene_overrides) - PUSH_GAP_OVERRIDE_KEYS
+    if unknown:
+        raise ValueError(f"unknown scene override(s): {', '.join(sorted(unknown))}")
+    values = (
+        json.loads(PUSH_GAP_CONFIG_PATH.read_text())
+        if base_config is None
+        else json.loads(json.dumps(base_config))
+    )
+    cube = np.asarray(values["cubeStart"], dtype=float)
+    target = np.asarray(values["target"], dtype=float)
+    gap_center = np.asarray(values["gapCenter"], dtype=float)
+    for key, axis, coordinates in (
+        ("cubeDx", 0, cube),
+        ("cubeDy", 1, cube),
+        ("targetDx", 0, target),
+        ("targetDy", 1, target),
+        ("gapDx", 0, gap_center),
+    ):
+        offset = case.scene_overrides.get(key, 0.0)
+        if not np.isfinite(offset):
+            raise ValueError(f"nonfinite scene override: {key}")
+        coordinates[axis] += offset
+    gap_width = case.scene_overrides.get("gapWidth", float(values["gapWidth"]))
+    speed_scale = case.scene_overrides.get("speedScale", 1.0)
+    if not np.isfinite(gap_width) or gap_width <= 0.045:
+        raise ValueError("gapWidth must be finite and greater than 0.045")
+    if not np.isfinite(speed_scale) or speed_scale <= 0:
+        raise ValueError("speedScale must be finite and positive")
+    wall_start, wall_end = values["wallSpanX"]
+    gap_left = gap_center[0] - gap_width / 2
+    gap_right = gap_center[0] + gap_width / 2
+    if gap_left <= wall_start or gap_right >= wall_end:
+        raise ValueError("gap must fit within wallSpanX")
+    values["cubeStart"] = [float(value) for value in cube]
+    values["target"] = [float(value) for value in target]
+    values["gapCenter"] = [float(value) for value in gap_center]
+    values["gapWidth"] = float(gap_width)
+    return values, float(speed_scale)
+
+
+def build_scene(
+    case: SimCase, *, base_config: dict[str, object] | None = None
+) -> BuiltScene:
+    family = task_family(case)
+    values, speed_scale = _scene_values(case, base_config)
     spec = mujoco.MjSpec.from_file(str(ASSET_DIR / "panda.xml"))
     spec.option.timestep = 0.002
 
@@ -103,17 +179,36 @@ def build_scene(case: SimCase) -> BuiltScene:
         friction=[1.0, 0.005, 0.0001],
     )
 
-    divider_x, divider_y = values["dividerCenter"]
-    half_length = float(values["dividerHalfLength"])
-    half_thickness = float(values["dividerHalfThickness"])
-    wall_height = 0.04
-    spec.worldbody.add_geom(
-        name="divider",
-        type=mujoco.mjtGeom.mjGEOM_BOX,
-        pos=[divider_x, divider_y, float(values["dividerHeight"]) / 2],
-        size=[half_length, half_thickness, float(values["dividerHeight"]) / 2],
-        rgba=[0.35, 0.38, 0.42, 1],
-    )
+    if family == "divider_pick_place":
+        divider_x, divider_y = values["dividerCenter"]
+        half_length = float(values["dividerHalfLength"])
+        half_thickness = float(values["dividerHalfThickness"])
+        wall_height = 0.04
+        spec.worldbody.add_geom(
+            name="divider",
+            type=mujoco.mjtGeom.mjGEOM_BOX,
+            pos=[divider_x, divider_y, float(values["dividerHeight"]) / 2],
+            size=[half_length, half_thickness, float(values["dividerHeight"]) / 2],
+            rgba=[0.35, 0.38, 0.42, 1],
+        )
+    else:
+        gap_x, gap_y = values["gapCenter"]
+        gap_half_width = float(values["gapWidth"]) / 2
+        half_thickness = float(values["wallHalfThickness"])
+        wall_height = float(values["wallHeight"])
+        wall_start, wall_end = values["wallSpanX"]
+        wall_segments = (
+            ("gap_wall_left", float(wall_start), gap_x - gap_half_width),
+            ("gap_wall_right", gap_x + gap_half_width, float(wall_end)),
+        )
+        for name, start, end in wall_segments:
+            spec.worldbody.add_geom(
+                name=name,
+                type=mujoco.mjtGeom.mjGEOM_BOX,
+                pos=[(start + end) / 2, gap_y, wall_height / 2],
+                size=[(end - start) / 2, half_thickness, wall_height / 2],
+                rgba=[0.35, 0.38, 0.42, 1],
+            )
     wall_defs = (
         ("wall_near", [0.20, 0, wall_height / 2], [0.01, 0.4, wall_height / 2]),
         ("wall_far", [0.90, 0, wall_height / 2], [0.01, 0.4, wall_height / 2]),
@@ -161,9 +256,31 @@ def build_scene(case: SimCase) -> BuiltScene:
 
     model = spec.compile()
     # Yaw noise is supplied per run by the runner from the same case seed.
+    geom_names = (
+        (
+            "floor",
+            "cube_geom",
+            "divider",
+            "wall_near",
+            "wall_far",
+            "wall_left",
+            "wall_right",
+        )
+        if family == "divider_pick_place"
+        else (
+            "floor",
+            "cube_geom",
+            "gap_wall_left",
+            "gap_wall_right",
+            "wall_near",
+            "wall_far",
+            "wall_left",
+            "wall_right",
+        )
+    )
     geom_ids = {
         name: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, name)
-        for name in ("floor", "cube_geom", "divider", "wall_near", "wall_far", "wall_left", "wall_right")
+        for name in geom_names
     }
     body_ids = {
         name: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
@@ -197,4 +314,5 @@ def build_scene(case: SimCase) -> BuiltScene:
             for i in range(1, 9)
         ],
         home_key_id=mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, "home"),
+        task_family=family,
     )
