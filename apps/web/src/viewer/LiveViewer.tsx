@@ -5,6 +5,8 @@ import type { LiveStreamSnapshot } from "../services/types";
 import { Badge } from "../components/Panel";
 import { LiveBuffer, type LivePlaybackState } from "./liveBuffer";
 import { ReplayViewer } from "./ReplayViewer";
+import { sampleAt } from "./transform";
+import replayStyles from "./ReplayViewer.module.css";
 import styles from "./LiveViewer.module.css";
 
 interface LiveViewerProps {
@@ -84,41 +86,70 @@ export function LiveViewer({ experimentId, scene, label, compact = false, onFini
     assetsSha256: "0".repeat(64),
     controllerSha256: "0".repeat(64),
   }) : null, [experimentId, frames]);
-
-  return (
-    <div ref={wrapperRef} className={styles.liveViewer} data-testid="live-viewer" data-state={snapshot.status}>
-      <div className={styles.statusBar}>
-        {snapshot.status === "waiting" && <p className={styles.status} role="status">Waiting for the sandbox to start…</p>}
-        {snapshot.status === "streaming" && (
-          <Badge tone={snapshot.mode === "fixture" ? "amber" : "green"}>
-            {snapshot.mode === "fixture" ? "Fixture stream" : "Live"}
-          </Badge>
-        )}
-        {snapshot.status === "unavailable" && (
-          <p className={styles.status} role="status">Live view isn't available for this run. The full replay will appear here when it finishes.</p>
-        )}
-        {snapshot.status === "finished" && <p className={styles.status} role="status">Full replay ready.</p>}
+  const sample = replay ? sampleAt(replay.frames, playback.t) : undefined;
+  const badge = snapshot.status === "waiting"
+    ? { tone: "gray" as const, text: "Waiting for sandbox" }
+    : snapshot.status === "unavailable"
+      ? { tone: "gray" as const, text: "Live view unavailable" }
+      : snapshot.status === "finished"
+        ? { tone: "gray" as const, text: "Finished" }
+        : playback.state === "buffering"
+          ? { tone: "gray" as const, text: "Buffering" }
+          : snapshot.mode === "fixture"
+            ? { tone: "amber" as const, text: "Fixture stream" }
+            : { tone: "green" as const, text: "Live" };
+  const showSkip = snapshot.status === "streaming" && playback.lagSec > 1;
+  const captionExtra = (
+    <span className={styles.captionExtra}>
+      <Badge tone={badge.tone}>{badge.text}</Badge>
+      {showSkip && (
         <button
           type="button"
-          className={`${styles.skip} ${snapshot.status === "streaming" && playback.lagSec > 1 ? "" : styles.skipHidden}`}
-          disabled={snapshot.status !== "streaming" || playback.lagSec <= 1}
-          aria-hidden={snapshot.status !== "streaming" || playback.lagSec <= 1}
+          className={styles.skip}
           onClick={() => {
             buffer.skipToLatest();
             setPlayback({ t: buffer.t, state: "playing", lagSec: buffer.lagSec });
           }}
-        >Skip to latest</button>
-      </div>
-      {visible && replay ? (
-        <ReplayViewer replay={replay} t={playback.t} label={label} scene={scene} compact={compact} />
-      ) : (
-        <div className={styles.canvasPlaceholder} aria-hidden="true" />
+        >
+          Skip to latest
+        </button>
       )}
-      <span
-        className={`${styles.buffering} ${snapshot.status === "streaming" && playback.state === "buffering" ? "" : styles.bufferingHidden}`}
-        role="status"
-        aria-hidden={snapshot.status !== "streaming" || playback.state !== "buffering"}
-      >Buffering</span>
+    </span>
+  );
+
+  return (
+    <div ref={wrapperRef} className={styles.liveViewer} data-testid="live-viewer" data-state={snapshot.status}>
+      {visible && replay ? (
+        <ReplayViewer replay={replay} t={playback.t} label={label} scene={scene} compact={compact} captionExtra={captionExtra} />
+      ) : (
+        <figure className={replayStyles.viewer}>
+          <div className={replayStyles.canvasWrap}>
+            {snapshot.status === "unavailable" && !replay && (
+              <div className={styles.canvasPlaceholder} role="status">
+                The full replay will appear here when the run finishes.
+              </div>
+            )}
+          </div>
+          <figcaption className={replayStyles.caption}>
+            <strong>{label}</strong>
+            {replay && (
+              <span data-testid="frame-readout">
+                t={sample?.tSec.toFixed(2) ?? "0.00"} s · frame {sample ? sample.frameIndex + 1 : 0}/{replay.frames.length}
+              </span>
+            )}
+            {!compact && replay && (
+              sample?.contacts[0] ? (
+                <span className={replayStyles.contact}>
+                  Contact {sample.contacts[0].a}↔{sample.contacts[0].b} {(sample.contacts[0].depthM * 1000).toFixed(1)} mm
+                </span>
+              ) : (
+                <span className={replayStyles.muted}>{sample?.attached ? "Cube grasped" : "No contact"}</span>
+              )
+            )}
+            {captionExtra}
+          </figcaption>
+        </figure>
+      )}
     </div>
   );
 }

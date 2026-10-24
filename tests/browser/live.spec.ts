@@ -2,7 +2,7 @@ import path from "node:path";
 import { expect, test, type Page, type TestInfo } from "../../apps/web/e2e/playwright";
 
 const INVESTIGATION_ID = "3b7d9303-7082-4b73-a3b6-1391b3e2fc4d";
-test.use({ video: "on" });
+test.use({ video: { mode: "on", size: { width: 1440, height: 900 } } });
 
 async function openDemo(page: Page, mobile: boolean, fixtureStream: boolean) {
   await page.goto(fixtureStream ? "/?fixtureStream=1" : "/");
@@ -33,15 +33,20 @@ async function assertNoOverflow(page: Page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
 }
 
-test("fixture live stream advances, hands off to replay, and appears in the environment wall", async ({ page }, info) => {
+test("fixture live stream advances, hands off to replay, and appears in environment cards", async ({ page }, info) => {
   const mobile = info.project.name === "mobile";
   await page.setViewportSize(mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 });
   await openDemo(page, mobile, true);
   const capture = page.getByTestId("baseline-replay");
   const viewer = capture.getByTestId("live-viewer");
+  const capturedFailure = page.getByRole("region", { name: "Captured failure" });
   await expect(viewer).toHaveAttribute("data-state", "waiting");
+  await expect(viewer.getByText("Waiting for sandbox", { exact: true })).toBeVisible();
+  await expect(capturedFailure.getByText("Running", { exact: true })).toBeVisible();
+  await expect(capturedFailure.getByText("Not known yet", { exact: true })).toBeVisible();
+  await expect(capturedFailure.getByText(/forbidden contact/i)).toHaveCount(0);
   await expect(viewer).toHaveAttribute("data-state", "streaming", { timeout: 10_000 });
-  await expect(viewer.getByText("Fixture stream", { exact: true })).toBeVisible();
+  await expect(viewer.getByText("Fixture stream", { exact: true })).toBeVisible({ timeout: 10_000 });
   await expect(viewer.getByText("Live", { exact: true })).toHaveCount(0);
   if (mobile) await page.screenshot({ path: evidencePath(info, "phone-capture-streaming.png") });
   const readout = viewer.getByTestId("frame-readout");
@@ -56,29 +61,58 @@ test("fixture live stream advances, hands off to replay, and appears in the envi
   await page.waitForTimeout(7_500);
   const scrubber = capture.getByTestId("replay-scrubber");
   await expect(scrubber).toBeVisible({ timeout: 20_000 });
+  await expect(capturedFailure.getByText(/forbidden contact/i)).toBeVisible();
   if (!mobile) await page.screenshot({ path: evidencePath(info, "capture-after-handoff-desktop.png") });
 
   await openEnvironments(page, mobile);
-  const wall = page.getByTestId("live-wall");
-  await expect(wall).toBeVisible();
+  const environmentGrid = page.getByTestId("environment-grid");
+  await expect(environmentGrid).toBeVisible();
   const firstEnvironment = page.getByTestId("env-tile-1");
   await expect(firstEnvironment.getByText("Active", { exact: true })).toBeVisible();
   await expect(firstEnvironment.getByText("1 active / 2", { exact: true })).toBeVisible();
   if (mobile) {
-    const switcher = wall.getByRole("tablist", { name: "Live environments" });
+    const switcher = environmentGrid.getByRole("tablist", { name: "Live environments" });
     await expect(switcher.getByRole("tab")).toHaveCount(3);
-    await expect(wall.getByTestId("live-viewer")).toHaveAttribute("data-state", "streaming", { timeout: 5_000 });
-    await expect(wall.getByTestId("live-viewer").locator('[data-label="Env 1"]')).toBeVisible();
-    await switcher.getByRole("tab", { name: "Env 2" }).click();
-    await expect(wall.getByTestId("live-viewer").locator('[data-label="Env 2"]')).toBeVisible({ timeout: 5_000 });
-    await page.screenshot({ path: evidencePath(info, "phone-live-switcher.png") });
+    await expect(firstEnvironment.getByTestId("live-viewer")).toHaveAttribute("data-state", "streaming", { timeout: 10_000 });
+    await expect(firstEnvironment.getByTestId("live-viewer").getByText("Fixture stream", { exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(firstEnvironment.getByTestId("live-viewer").locator("[data-label]")).toHaveAttribute("data-label", /.+/);
+    await expect(firstEnvironment.getByTestId("live-viewer").locator("[data-label]")).not.toHaveAttribute("data-label", "Env 1");
+    for (const index of [2, 3]) {
+      await expect(page.getByTestId(`env-tile-${index}`).getByRole("button", { name: "Watch live" })).toBeVisible();
+      await expect(page.getByTestId(`env-tile-${index}`).getByTestId("live-viewer")).toHaveCount(0);
+    }
+    await page.screenshot({ path: evidencePath(info, "phone-environments-live.png") });
+    const secondEnvironment = page.getByTestId("env-tile-2");
+    await secondEnvironment.getByRole("button", { name: "Watch live" }).click();
+    await expect(switcher.getByRole("tab", { name: "Env 2" })).toHaveAttribute("aria-selected", "true");
+    await expect(secondEnvironment.getByTestId("live-viewer")).toHaveAttribute("data-state", "streaming", { timeout: 10_000 });
+    await expect(secondEnvironment.getByTestId("live-viewer").getByText("Fixture stream", { exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(firstEnvironment.getByRole("button", { name: "Watch live" })).toBeVisible();
+    await page.screenshot({ path: evidencePath(info, "phone-environments-watch-live.png") });
+    await switcher.getByRole("tab", { name: "Env 3" }).click();
+    await expect(page.getByTestId("env-tile-3").getByTestId("live-viewer")).toHaveCount(1);
+    await expect(secondEnvironment.getByRole("button", { name: "Watch live" })).toBeVisible();
+    await expect(firstEnvironment.getByTestId("live-viewer")).toHaveCount(0);
   } else {
-    await expect(wall.getByTestId("live-viewer").first()).toHaveAttribute("data-state", "streaming", { timeout: 10_000 });
-    await page.screenshot({ path: evidencePath(info, "environments-live-wall-desktop.png") });
+    for (const index of [1, 2, 3]) {
+      const tile = page.getByTestId(`env-tile-${index}`);
+      const environmentViewer = tile.getByTestId("live-viewer");
+      await expect(environmentViewer).toHaveAttribute("data-state", "streaming", { timeout: 10_000 });
+      await expect(environmentViewer.getByText("Fixture stream", { exact: true })).toBeVisible({ timeout: 10_000 });
+      const canvasCaption = environmentViewer.locator("[data-label]");
+      await expect(canvasCaption).toHaveAttribute("data-label", /.+/);
+      expect(await canvasCaption.getAttribute("data-label")).not.toBe(`Env ${index}`);
+    }
+    await page.screenshot({ path: evidencePath(info, "environments-live-desktop.png") });
   }
-  await page.waitForTimeout(5_000);
-  const viewers = await wall.getByTestId("live-viewer").count();
-  expect(await wall.locator("canvas").count()).toBeLessThanOrEqual(viewers);
+  const visibleViewers = await environmentGrid.getByTestId("live-viewer").evaluateAll((viewers) =>
+    viewers.filter((viewer) => {
+      const rect = viewer.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && rect.top < window.innerHeight && rect.bottom > 0 &&
+        rect.left < window.innerWidth && rect.right > 0;
+    }).length,
+  );
+  expect(await environmentGrid.locator("canvas").count()).toBeLessThanOrEqual(visibleViewers);
   await assertNoOverflow(page);
 });
 
