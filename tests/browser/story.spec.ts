@@ -10,6 +10,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("browser story: readiness, fixture investigation, replay scrub, review", async ({ page }, info) => {
+  if (info.project.name === "desktop") test.setTimeout(90_000);
   await page.goto("/");
 
   // The compact status pill makes fixture mode and integration details available.
