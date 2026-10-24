@@ -36,7 +36,7 @@ async function claimWithGrant(t: any, credentialId: string, investigationId: str
   return { lease, grantId: grant.grantId };
 }
 
-const session = (id: string) => ({ id, state: "closed" as const, mode: "fixture" as const, tokenUsage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0, usageKnown: true }, createdAtMs: 1 });
+const session = (id: string) => ({ id, investigationId: crypto.randomUUID(), environmentId: crypto.randomUUID(), state: "closed" as const, mode: "fixture" as const, tokenUsage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0, usageKnown: true }, createdAtMs: 1 });
 
 describe("runner control plane", () => {
   beforeEach(() => { vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "Date"] }); vi.stubEnv("INTEGRATION_SHARED_SECRET", token); vi.stubEnv("SPACETIMEDB_MODE", "fixture"); });

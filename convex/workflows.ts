@@ -10,7 +10,12 @@ export const workflow = new WorkflowManager(components.workflow);
  *  each environment active. Convex owns every lifecycle write; the workflow
  *  only sequences durable steps. */
 export const investigationWorkflow = workflow.define({
-  args: { investigationId: v.string(), provider: v.union(v.literal("daytona"), v.literal("local")), runnerSnapshot: v.string(), executionSnapshot: v.string(), siteUrl: v.string() },
+  args: {
+    investigationId: v.string(), provider: v.union(v.literal("daytona"), v.literal("local")), runnerSnapshot: v.string(), executionSnapshot: v.string(), siteUrl: v.string(),
+    // "external": Convex still provisions the per-environment sandbox and credential, but the trusted
+    // runner process is started by an operator on a host that can reach Factory (RUNNER_LAUNCH_MODE).
+    launchMode: v.optional(v.union(v.literal("sandbox"), v.literal("external"))),
+  },
   returns: v.null(),
 }).handler(async (step, args) => {
   const environments = await step.runQuery(internal.workflows.getEnvironments, { investigationId: args.investigationId });
@@ -41,10 +46,12 @@ export const investigationWorkflow = workflow.define({
       investigationId: args.investigationId, environmentId: op.environmentId, sandboxOpId: op.sandboxOpId,
     });
     try {
-      await step.runAction(internal.execution.launchRunner, {
-        sandboxOpId: op.sandboxOpId, environmentId: op.environmentId, investigationId: args.investigationId,
-        credentialId: credential.credentialId, secret: credential.secret, convexSiteUrl: args.siteUrl,
-      });
+      if (args.launchMode !== "external") {
+        await step.runAction(internal.execution.launchRunner, {
+          sandboxOpId: op.sandboxOpId, environmentId: op.environmentId, investigationId: args.investigationId,
+          credentialId: credential.credentialId, secret: credential.secret, convexSiteUrl: args.siteUrl,
+        });
+      }
       await step.runMutation(internal.workflows.activateEnvironment, { environmentId: op.environmentId, sandboxOpId: op.sandboxOpId });
     } catch {
       await step.runMutation(internal.workflows.markEnvironmentError, { environmentId: op.environmentId, error: "runner_launch_failed" });
@@ -66,6 +73,7 @@ export const launch = internalAction({
         runnerSnapshot: process.env.DAYTONA_RUNNER_SNAPSHOT ?? "forksafe-runner-v1",
         executionSnapshot: process.env.DAYTONA_EXECUTION_SNAPSHOT ?? "forksafe-exec-v1",
         siteUrl,
+        launchMode: process.env.RUNNER_LAUNCH_MODE === "external" ? "external" as const : "sandbox" as const,
       },
       { startAsync: true },
     ));

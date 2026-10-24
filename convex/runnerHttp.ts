@@ -173,7 +173,9 @@ export function registerRunnerRoutes(router: HttpRouter): void {
         });
         return json(result);
       } catch (error) {
-        return json({ accepted: false, reason: errorCode(error) }, 409);
+        const code = errorCode(error);
+        console.log("runner/complete rejected", code, error instanceof Error ? error.message.slice(0, 300) : "");
+        return json({ accepted: false, reason: code }, 409);
       }
     }),
   });

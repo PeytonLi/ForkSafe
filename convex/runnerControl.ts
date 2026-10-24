@@ -147,6 +147,9 @@ const tokenUsage = v.object({
 });
 const sessionInput = v.object({
   id: v.string(),
+  // The runner posts the full AgentSession projection; ownership is re-derived from the credential.
+  investigationId: v.optional(v.string()),
+  environmentId: v.optional(v.string()),
   state: v.union(v.literal("created"), v.literal("streaming"), v.literal("idle"), v.literal("budget_exhausted"), v.literal("closed"), v.literal("error")),
   factorySession: v.optional(v.object({ provider: v.string(), id: v.string() })),
   model: v.optional(v.string()),
