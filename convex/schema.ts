@@ -25,6 +25,13 @@ const attemptState = v.union(
 
 export default defineSchema({
   ...authTables,
+  forgeRequests: defineTable({
+    idempotencyKey: v.string(), payload: v.string(), requestId: uuid,
+    parentInvestigationId: uuid, followUpInvestigationId: uuid,
+    requestedBy: v.string(), note: v.string(), extraEnvironments: v.number(),
+    installationId: v.string(), createdAtMs: v.number(),
+    result: v.object({ requestId: uuid, accepted: v.boolean(), state: v.literal("admitted") }),
+  }).index("by_idempotencyKey", ["idempotencyKey"]),
   readinessSnapshots: defineTable({
     key: v.string(),
     checkedAtMs: v.number(),
@@ -32,6 +39,7 @@ export default defineSchema({
     integrations: v.any(),
   }).index("by_key", ["key"]),
   investigations: defineTable({
+    parentInvestigationId: v.optional(uuid),
     appId: uuid,
     title: v.string(),
     state: v.union(
@@ -219,6 +227,7 @@ export default defineSchema({
   }).index("by_appId", ["appId"]).index("by_sandboxOp", ["sandboxOpId"]),
 
   artifacts: defineTable({
+    evidencePack: v.optional(v.boolean()),
     appId: uuid,
     kind: v.union(
       v.literal("trace"), v.literal("replay"), v.literal("controller_source"),
@@ -235,7 +244,7 @@ export default defineSchema({
     storageId: v.optional(v.id("_storage")),
     chunk: v.optional(v.object({ index: v.number(), total: v.number(), groupSha256: v.string() })),
     revokedAtMs: v.optional(v.number()),
-  }).index("by_appId", ["appId"]).index("by_sha_investigation", ["sha256", "investigationId"]),
+  }).index("by_appId", ["appId"]).index("by_sha_investigation", ["sha256", "investigationId"]).index("by_investigation", ["investigationId"]),
 
   outbox: defineTable({
     appId: uuid,

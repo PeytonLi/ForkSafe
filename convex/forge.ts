@@ -7,11 +7,9 @@ import {
 } from "@forksafe/contracts";
 import {
   FORGE_BACKEND_PATHS,
-  PanelData,
   PanelRequest,
   RecordReviewRequest,
   RecordReviewResponse,
-  ReviewContext as ReviewContextSchema,
   ReviewContextRequest,
   StartInvestigationRequest,
   StartInvestigationResponse,
@@ -22,10 +20,9 @@ import {
   validateReview,
   type ForgeInvocationContext,
 } from "../packages/integrations/atlassian/src/index.js";
-import { api } from "./_generated/api.js";
+import { api, internal } from "./_generated/api.js";
 import { httpAction } from "./_generated/server.js";
 import type { HttpRouter } from "convex/server";
-import { makeFunctionReference } from "convex/server";
 import {
   authenticateForgeRequest,
   authorizeForgeContext,
@@ -34,6 +31,7 @@ import {
 } from "./forgeLogic.js";
 import { SpacetimeClient, SpacetimeUnavailable, SpacetimeRejected } from "./dispatchers/spacetime.js";
 import type { ZodType } from "zod";
+import { FORGE_FEATURE_PATHS, MoreInvestigationRequest, MoreInvestigationResponse, PanelData, ReviewContext as ReviewContextSchema } from "./forgeProtocolExt.js";
 
 type ForgeRouteDependencies = {
   verifyToken?: (token: string, appId: string) => Promise<ForgeInvocationContext>;
@@ -42,7 +40,7 @@ type ForgeRouteDependencies = {
   newId?: () => string;
 };
 
-const getInvestigationRef = makeFunctionReference<"query">("dispatchers/jira.getInvestigation");
+const getInvestigationRef = internal.dispatchers.jira.getInvestigation;
 
 function json(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), {
@@ -66,8 +64,10 @@ export function registerForgeRoutes(http: HttpRouter, dependencies: ForgeRouteDe
         investigation: Record<string, any>;
         environments: Array<Record<string, any>>;
       } | null;
+      if (!investigation) return json({ error: "investigation_not_found" }, 404);
 
       try {
+        const evidence = await ctx.runQuery(internal.forgeData.evidence, { investigationId: investigation.investigation.id });
         const checkedAtMs = (dependencies.now ?? Date.now)();
         const health = await ctx.runQuery(api.health.get, {});
         const spacetimedb = (dependencies.spacetime ?? (() => new SpacetimeClient()))();
@@ -140,6 +140,7 @@ export function registerForgeRoutes(http: HttpRouter, dependencies: ForgeRouteDe
             } : null,
             passedCases: evaluation?.cases.filter((item) => item.status === "passed").length ?? 0,
             totalCases: evaluation?.cases.length ?? 0,
+            suites: suiteSummaries(candidate.id, evaluations),
           };
         });
         const underReview = investigation?.investigation.state === "awaiting_review"
@@ -173,6 +174,7 @@ export function registerForgeRoutes(http: HttpRouter, dependencies: ForgeRouteDe
             state: environment.state,
           })) : [],
           findingsCount,
+          findings: evidence.findings,
           candidates: candidateData,
           underReview,
           reviews: reviews.map((review) => ({
@@ -185,9 +187,8 @@ export function registerForgeRoutes(http: HttpRouter, dependencies: ForgeRouteDe
           })),
           requirements,
           links: {
-            ...(process.env.FORKSAFE_WEB_URL && investigation
-              ? { investigationUrl: new URL(`/investigations/${investigation.investigation.id}`, process.env.FORKSAFE_WEB_URL).toString() }
-              : {}),
+            ...webLinks(investigation.investigation.id),
+            ...(evidence.evidencePackUrl ? { evidencePackUrl: evidence.evidencePackUrl } : {}),
           },
           fetchedAtMs: checkedAtMs,
         });
@@ -221,7 +222,7 @@ export function registerForgeRoutes(http: HttpRouter, dependencies: ForgeRouteDe
         const snapshot = await ctx.runQuery(getInvestigationRef, { id: created.investigationId }) as {
           investigation: { state: string };
         } | null;
-        if (!snapshot) return json({ error: "investigation_unavailable" }, 503);
+        if (!snapshot) return json({ error: "investigation_not_found" }, 404);
         const response = StartInvestigationResponse.parse({
           investigationId: created.investigationId,
           state: snapshot.investigation.state,
@@ -257,10 +258,13 @@ export function registerForgeRoutes(http: HttpRouter, dependencies: ForgeRouteDe
           spacetime.getEvaluation(parsed.data.evaluationId),
         ]);
         if (!candidate || !evaluation) return json({ error: "review_context_not_found" }, 404);
+        if (candidate.investigationId !== snapshot.investigation.id || evaluation.investigationId !== snapshot.investigation.id || evaluation.candidateId !== candidate.id) return json({ error: "forbidden" }, 403);
+        const evidence = await ctx.runQuery(internal.forgeData.evidence, { investigationId: snapshot.investigation.id });
         const response = ReviewContextSchema.parse({
           investigation: snapshot.investigation,
           candidate,
           evaluation,
+          ...(evidence.evidencePackUrl ? { evidencePackUrl: evidence.evidencePackUrl } : {}),
         });
         return json(response);
       } catch {
@@ -341,6 +345,57 @@ export function registerForgeRoutes(http: HttpRouter, dependencies: ForgeRouteDe
       }
     }),
   });
+
+  http.route({
+    path: FORGE_FEATURE_PATHS.requests,
+    method: "POST",
+    handler: httpAction(async (ctx, request) => {
+      const auth = await authenticate(request, dependencies);
+      if (!auth.ok) return auth.response;
+      const parsed = await requestBody(request, MoreInvestigationRequest);
+      if (!parsed.ok) return parsed.response;
+      const authorization = authorizeForgeContext(auth.context, parsed.data, process.env.ATLASSIAN_PROJECT_KEY);
+      if (!authorization.ok) return json({ error: authorization.error }, authorization.status);
+      const identity = authorizeReviewIdentity(auth.context, { reviewerIdentity: parsed.data.requestedBy });
+      if (!identity.ok) return json({ error: identity.error }, identity.status);
+      try {
+        const snapshot = await ctx.runQuery(getInvestigationRef, { id: parsed.data.investigationId }) as { investigation: Investigation } | null;
+        if (!snapshot) return json({ error: "investigation_not_found" }, 404);
+        if (snapshot.investigation.jiraIssueKey !== parsed.data.issueKey) return json({ error: "forbidden" }, 403);
+        const parentAuthorization = authorizeForgeContext(auth.context, parsed.data, process.env.ATLASSIAN_PROJECT_KEY, snapshot.investigation);
+        if (!parentAuthorization.ok) return json({ error: parentAuthorization.error }, parentAuthorization.status);
+        const result = await ctx.runMutation(internal.investigations.requestMoreFromForge, {
+          request: parsed.data, installationId: auth.context.installationId, requestedBy: identity.reviewerIdentity,
+        });
+        if (result.error) return json({ error: result.error }, result.error === "request_conflict" ? 409 : result.error === "forbidden" ? 403 : 404);
+        return json(MoreInvestigationResponse.parse(result.result));
+      } catch {
+        return json({ error: "forge_backend_unavailable" }, 503);
+      }
+    }),
+  });
+}
+
+export function suiteSummaries(candidateId: string, evaluations: CandidateEvaluation[]) {
+  return (["public", "withheld"] as const).flatMap((suite) => {
+    const evaluation = evaluations.filter((e) => e.candidateId === candidateId && e.suite === suite).sort((a, b) => b.createdAtMs - a.createdAtMs)[0];
+    if (!evaluation) return [];
+    const failed = evaluation.cases.filter((item) => item.status === "failed" || item.status === "invalid");
+    return [{
+      evaluationId: evaluation.id, suite, status: evaluation.status, allRequiredPassed: evaluation.allRequiredPassed,
+      passedCases: evaluation.cases.filter((item) => item.status === "passed").length, failedCases: failed.length, totalCases: evaluation.cases.length,
+      ...(suite === "public" ? { failedCaseIds: failed.slice(0, 50).map((item) => item.caseId) } : {}),
+    }];
+  });
+}
+
+export function webLinks(investigationId: string) {
+  try {
+    const url = new URL(process.env.FORKSAFE_WEB_URL ?? "");
+    if (url.protocol !== "https:" || url.username || url.password) return {};
+    url.hash = `/investigations/${investigationId}/capture`;
+    return { webAppUrl: url.toString(), investigationUrl: url.toString() };
+  } catch { return {}; }
 }
 
 async function authenticate(

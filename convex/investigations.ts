@@ -6,6 +6,38 @@ import { readLimits } from "./lib/constants.js";
 import { countsTowardCapacity } from "./lib/reservations.js";
 import { hasPrivateAccess, isPublicInvestigation, requireInvestigationRead, requireWriteIdentity } from "./lib/webAccess.js";
 import { appId, assertUUID } from "./lib/validators.js";
+import { MoreInvestigationRequest } from "./forgeProtocolExt.js";
+
+export const requestMoreFromForge = internalMutation({
+  args: { request: v.any(), installationId: v.string(), requestedBy: v.string() },
+  handler: async (ctx, args) => {
+    const request = MoreInvestigationRequest.parse(args.request);
+    if (request.requestedBy !== args.requestedBy) return { error: "forbidden" as const };
+    const extraEnvironments = request.extraEnvironments ?? 1;
+    const payload = JSON.stringify({ ...request, extraEnvironments, installationId: args.installationId });
+    const existing = await ctx.db.query("forgeRequests").withIndex("by_idempotencyKey", (q) => q.eq("idempotencyKey", request.idempotencyKey)).unique();
+    if (existing) return existing.payload === payload ? { result: existing.result } : { error: "request_conflict" as const };
+    const parent = await ctx.db.query("investigations").withIndex("by_appId", (q) => q.eq("appId", request.investigationId)).unique();
+    if (!parent) return { error: "investigation_not_found" as const };
+    if (parent.jiraIssueKey !== request.issueKey) return { error: "forbidden" as const };
+    const now = Date.now();
+    const followUpInvestigationId = appId();
+    const requestId = appId();
+    await ctx.db.insert("investigations", {
+      appId: followUpInvestigationId, parentInvestigationId: parent.appId,
+      title: `Follow-up: ${parent.title}`.slice(0, 200), state: "admitted", cancelStatus: "none", cancelEpoch: 0, version: 1,
+      requestedEnvironments: extraEnvironments, baselineCase: parent.baselineCase, baselineExperimentId: parent.baselineExperimentId,
+      ...(parent.jiraIssueKey ? { jiraIssueKey: parent.jiraIssueKey } : {}), budget: parent.budget,
+      idempotencyKey: `forge-request:${request.idempotencyKey}`, createdAtMs: now, updatedAtMs: now,
+    });
+    const result = { requestId, accepted: true, state: "admitted" as const };
+    await ctx.db.insert("forgeRequests", {
+      idempotencyKey: request.idempotencyKey, payload, requestId, parentInvestigationId: parent.appId, followUpInvestigationId,
+      requestedBy: args.requestedBy, note: request.note, extraEnvironments, installationId: args.installationId, createdAtMs: now, result,
+    });
+    return { result };
+  },
+});
 
 const simCase = v.object({
   caseId: v.string(),
