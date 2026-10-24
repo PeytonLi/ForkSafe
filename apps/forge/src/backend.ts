@@ -4,6 +4,7 @@ import panelFixture from "./fixtures/panel.json" with { type: "json" };
 import reviewContextFixture from "./fixtures/review-context.json" with { type: "json" };
 import {
   FORGE_BACKEND_PATHS,
+  FORGE_FEATURE_PATHS,
   MoreInvestigationRequest,
   MoreInvestigationResponse,
   PanelData,
@@ -94,7 +95,7 @@ export function remoteBackend(): ForkSafeBackend {
     async requestMoreInvestigation(req) {
       try {
         return await invokeBackend(
-          FORGE_BACKEND_PATHS.requests,
+          FORGE_FEATURE_PATHS.requests,
           MoreInvestigationRequest.parse(req),
           MoreInvestigationResponse,
         );

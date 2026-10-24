@@ -1,5 +1,6 @@
 import {
   FORGE_BACKEND_PATHS,
+  FORGE_FEATURE_PATHS,
   MoreInvestigationRequest,
   PanelData,
 } from "../src/forge-protocol.js";
@@ -21,18 +22,34 @@ const oldConvexPanel = {
 };
 
 describe("Forge protocol", () => {
-  it("adds the request route without changing the existing route list", () => {
-    expect(FORGE_BACKEND_PATHS.requests).toBe("/forge/v1/requests");
-    expect(Object.values(FORGE_BACKEND_PATHS)).toEqual([
-      "/forge/v1/panel",
-      "/forge/v1/investigations",
-      "/forge/v1/review-context",
-      "/forge/v1/reviews",
-    ]);
+  it("keeps backend routes stable and exposes requests as a feature path", () => {
+    expect(FORGE_BACKEND_PATHS).toEqual({
+      panel: "/forge/v1/panel",
+      start: "/forge/v1/investigations",
+      reviewContext: "/forge/v1/review-context",
+      review: "/forge/v1/reviews",
+    });
+    expect(FORGE_FEATURE_PATHS).toEqual({
+      requests: "/forge/v1/requests",
+    });
   });
 
   it("continues to parse the existing Convex panel shape", () => {
     expect(PanelData.parse(oldConvexPanel)).toEqual(oldConvexPanel);
+  });
+
+  it("allows legacy HTTP investigation and report URLs", () => {
+    const panel = PanelData.parse({
+      ...oldConvexPanel,
+      links: {
+        investigationUrl: "http://localhost:3000/investigations/123",
+        reportUrl: "http://localhost:3000/reports/123",
+      },
+    });
+    expect(panel.links.investigationUrl).toBe(
+      "http://localhost:3000/investigations/123",
+    );
+    expect(panel.links.reportUrl).toBe("http://localhost:3000/reports/123");
   });
 
   it("rejects non-HTTPS evidence URLs", () => {
@@ -40,6 +57,12 @@ describe("Forge protocol", () => {
       PanelData.parse({
         ...oldConvexPanel,
         links: { evidencePackUrl: "http://example.invalid/evidence" },
+      }),
+    ).toThrow();
+    expect(() =>
+      PanelData.parse({
+        ...oldConvexPanel,
+        links: { webAppUrl: "http://example.invalid/app" },
       }),
     ).toThrow();
   });

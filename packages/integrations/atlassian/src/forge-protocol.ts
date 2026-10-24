@@ -21,23 +21,16 @@ import {
 } from "@forksafe/contracts";
 import { z } from "zod";
 
-const existingBackendPaths = {
+export const FORGE_BACKEND_PATHS = {
   panel: "/forge/v1/panel",
   start: "/forge/v1/investigations",
   reviewContext: "/forge/v1/review-context",
   review: "/forge/v1/reviews",
 } as const;
 
-export const FORGE_BACKEND_PATHS = Object.defineProperty(
-  existingBackendPaths,
-  "requests",
-  {
-    value: "/forge/v1/requests",
-    enumerable: false,
-  },
-) as typeof existingBackendPaths & {
-  readonly requests: "/forge/v1/requests";
-};
+export const FORGE_FEATURE_PATHS = {
+  requests: "/forge/v1/requests",
+} as const;
 
 export const PanelRequest = z.object({
   issueKey: z.string().min(1),
@@ -143,8 +136,8 @@ export const PanelData = z.object({
     })
     .nullable(),
   links: z.object({
-    investigationUrl: HttpsUrl.optional(),
-    reportUrl: HttpsUrl.optional(),
+    investigationUrl: z.string().url().optional(),
+    reportUrl: z.string().url().optional(),
     webAppUrl: HttpsUrl.optional(),
     evidencePackUrl: HttpsUrl.optional(),
   }),
