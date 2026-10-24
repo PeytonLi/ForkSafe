@@ -4,7 +4,7 @@ import {
   InvestigationEnvironment,
   OperationId,
 } from "@forksafe/contracts";
-import { AtlassianHttpError, JiraClient, JiraSyncInput, basicAuthTransport, syncInvestigationToJira } from "../../packages/integrations/atlassian/src/index.js";
+import { AtlassianHttpError, JiraClient, JiraSyncInput, basicAuthTransport, investigationIdFromLabel, syncInvestigationToJira } from "../../packages/integrations/atlassian/src/index.js";
 import { v } from "convex/values";
 import { makeFunctionReference } from "convex/server";
 import { ZodError } from "zod";
@@ -146,7 +146,81 @@ export async function deliverJiraPayload(
   return { input, result: await syncInvestigationToJira(deps.client, input) };
 }
 
+type JiraIssueLinkArgs = { investigationId: string; jiraIssueKey: string };
+type JiraIssueLinkResult =
+  | { linked: true }
+  | { linked: false; reason: "already_linked" | "conflict" | "missing" };
+type LinkJiraIssue = (args: JiraIssueLinkArgs) => Promise<JiraIssueLinkResult>;
+
+export async function deliverAndLinkJiraPayload(
+  payload: unknown,
+  deps: Parameters<typeof deliverJiraPayload>[1] & {
+    linkJiraIssue: LinkJiraIssue;
+    log?: (event: "jira:link_failed") => void;
+  },
+): Promise<Awaited<ReturnType<typeof deliverJiraPayload>>> {
+  const delivery = await deliverJiraPayload(payload, deps);
+  if ("remoteLinked" in delivery) return delivery;
+  const issueKey = (delivery.result as { issueKey?: unknown } | null)?.issueKey;
+  if (typeof issueKey !== "string") return delivery;
+  try {
+    const linked = await deps.linkJiraIssue({
+      investigationId: delivery.input.investigation.id,
+      jiraIssueKey: issueKey,
+    });
+    if (!linked.linked && linked.reason !== "already_linked") {
+      (deps.log ?? console.log)("jira:link_failed");
+    }
+  } catch {
+    (deps.log ?? console.log)("jira:link_failed");
+  }
+  return delivery;
+}
+
 export const JIRA_RUN_LABEL = "forksafe-run";
+
+export type JiraIssueLinkBackfillCounts = {
+  scanned: number;
+  linked: number;
+  alreadyLinked: number;
+  conflicts: number;
+  missing: number;
+};
+
+export async function backfillIssueLinks(
+  client: Pick<JiraClient, "searchJql">,
+  projectKey: string,
+  linkJiraIssue: LinkJiraIssue,
+): Promise<JiraIssueLinkBackfillCounts> {
+  const issues = await client.searchJql(
+    `project = "${projectKey}" AND labels = "${JIRA_RUN_LABEL}" ORDER BY created ASC`,
+    ["labels"],
+    1000,
+  );
+  const counts: JiraIssueLinkBackfillCounts = {
+    scanned: 0,
+    linked: 0,
+    alreadyLinked: 0,
+    conflicts: 0,
+    missing: 0,
+  };
+  for (const issue of issues) {
+    counts.scanned += 1;
+    const investigationId = issue.fields?.labels
+      ?.map(investigationIdFromLabel)
+      .find((id): id is string => id !== undefined);
+    if (!investigationId) {
+      counts.missing += 1;
+      continue;
+    }
+    const result = await linkJiraIssue({ investigationId, jiraIssueKey: issue.key });
+    if (result.linked) counts.linked += 1;
+    else if (result.reason === "already_linked") counts.alreadyLinked += 1;
+    else if (result.reason === "conflict") counts.conflicts += 1;
+    else counts.missing += 1;
+  }
+  return counts;
+}
 
 /** Per-candidate verdicts for the issue body. Withheld suites contribute only
  *  their overall status: no case ids, counts, or failure detail. */
@@ -278,12 +352,14 @@ export const dispatch = internalAction({
     const key = jiraIdempotencyKey(args.payload);
     try {
       if (!key) throw new TypeError("jira_idempotency_key_missing");
-      await deliverJiraPayload(args.payload, {
+      await deliverAndLinkJiraPayload(args.payload, {
         client,
         spacetime,
         snapshot,
         projectKey: env.ATLASSIAN_PROJECT_KEY,
         siteUrl: env.ATLASSIAN_SITE_URL,
+        linkJiraIssue: (linkArgs) => ctx.runMutation(internal.investigations.linkJiraIssue, linkArgs),
+        log: (event) => console.log(event),
         ...(env.FORKSAFE_WEB_URL ? { webUrl: env.FORKSAFE_WEB_URL } : {}),
         ...(env.JIRA_READY_FOR_REVIEW_STATUSES ? {
           readyStatuses: env.JIRA_READY_FOR_REVIEW_STATUSES.split(",")
@@ -304,6 +380,26 @@ export const dispatch = internalAction({
       }
       return { delivered: false, mode: "live", reason: failure.code };
     }
+  },
+});
+
+export const backfillJiraIssueLinks = internalAction({
+  args: {},
+  handler: async (ctx): Promise<JiraIssueLinkBackfillCounts> => {
+    const env = process.env;
+    if (env.ATLASSIAN_MODE !== "cloud" || !env.ATLASSIAN_SITE_URL || !env.ATLASSIAN_EMAIL || !env.ATLASSIAN_API_TOKEN || !env.ATLASSIAN_PROJECT_KEY) {
+      throw new Error("atlassian_not_configured");
+    }
+    const client = new JiraClient(basicAuthTransport({
+      siteUrl: env.ATLASSIAN_SITE_URL,
+      email: env.ATLASSIAN_EMAIL,
+      apiToken: env.ATLASSIAN_API_TOKEN,
+    }));
+    return await backfillIssueLinks(
+      client,
+      env.ATLASSIAN_PROJECT_KEY,
+      (linkArgs) => ctx.runMutation(internal.investigations.linkJiraIssue, linkArgs),
+    );
   },
 });
 
