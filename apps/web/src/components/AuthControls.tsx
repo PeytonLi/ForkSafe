@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { useClient } from "../hooks";
 import { useBrowserAccess } from "../services/browserAccess";
 import { Icon } from "./Icon";
@@ -38,6 +38,23 @@ export function AuthControls({ labelClassName = "" }: { labelClassName?: string 
     window.addEventListener("resize", update);
     return () => window.removeEventListener("resize", update);
   }, [access.open, access.authenticated]);
+  useEffect(() => {
+    if (!access.open) return;
+    const onPointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && accountRef.current?.contains(target)) return;
+      access.close();
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") access.close();
+    };
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [access.open, access.close]);
   if (client.source.kind === "fixture") return null;
   const submitPassword = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -63,7 +80,6 @@ export function AuthControls({ labelClassName = "" }: { labelClassName?: string 
   const pendingInvite = access.authenticated && access.verified && !access.accessGranted;
   const formStyle = place ? { left: place.left, bottom: place.bottom } : { visibility: "hidden" as const };
   return <section aria-label="Account" className={styles.account} ref={accountRef}>
-    {access.open && <button type="button" className={styles.backdrop} aria-label="Close sign in" onClick={access.close} />}
     {access.authenticated ? <div className={styles.row}>
         <Icon name="user" className={styles.icon} />
         <span data-testid="signed-in" className={`${styles.status} ${labelClassName}`}>
