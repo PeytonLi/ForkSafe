@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { useClient } from "../hooks";
 import { useBrowserAccess } from "../services/browserAccess";
 import { Icon } from "./Icon";
@@ -7,9 +7,37 @@ import styles from "./AuthControls.module.css";
 export function AuthControls({ labelClassName = "" }: { labelClassName?: string }) {
   const client = useClient();
   const access = useBrowserAccess();
+  const accountRef = useRef<HTMLElement>(null);
   const [signUp, setSignUp] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [place, setPlace] = useState<{ left: number; bottom: number } | null>(null);
+  useLayoutEffect(() => {
+    if (!access.open) return;
+    const node = accountRef.current;
+    if (!node) return;
+    const update = () => {
+      const rect = node.getBoundingClientRect();
+      let edge = rect.right;
+      let parent = node.parentElement;
+      while (parent && parent !== document.body && parent !== document.documentElement) {
+        const style = getComputedStyle(parent);
+        if (/(auto|hidden|clip|scroll)/.test(`${style.overflow}${style.overflowX}${style.overflowY}`)) {
+          edge = parent.getBoundingClientRect().right;
+          break;
+        }
+        parent = parent.parentElement;
+      }
+      const width = Math.min(320, window.innerWidth - 24);
+      setPlace({
+        left: Math.max(12, Math.min(edge + 12, window.innerWidth - 12 - width)),
+        bottom: Math.max(12, window.innerHeight - rect.bottom),
+      });
+    };
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, [access.open, access.authenticated]);
   if (client.source.kind === "fixture") return null;
   const submitPassword = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -33,7 +61,9 @@ export function AuthControls({ labelClassName = "" }: { labelClassName?: string 
       .finally(() => setBusy(false));
   };
   const pendingInvite = access.authenticated && access.verified && !access.accessGranted;
-  return <section aria-label="Account" className={styles.account}>
+  const formStyle = place ? { left: place.left, bottom: place.bottom } : { visibility: "hidden" as const };
+  return <section aria-label="Account" className={styles.account} ref={accountRef}>
+    {access.open && <button type="button" className={styles.backdrop} aria-label="Close sign in" onClick={access.close} />}
     {access.authenticated ? <div className={styles.row}>
         <Icon name="user" className={styles.icon} />
         <span data-testid="signed-in" className={`${styles.status} ${labelClassName}`}>
@@ -43,7 +73,7 @@ export function AuthControls({ labelClassName = "" }: { labelClassName?: string 
         <button type="button" className={`${styles.quiet} ${labelClassName}`} onClick={() => { void access.signOut().catch(() => setError("Sign out failed. Please retry.")); }}>Sign out</button>
       </div>
       : <button type="button" className={styles.signIn} onClick={access.showSignIn}><Icon name="user" className={styles.icon} /><span className={labelClassName}>Sign in</span></button>}
-    {access.open && pendingInvite && <form onSubmit={submitInvite} aria-label="Invite code" className={styles.form}>
+    {access.open && pendingInvite && <form onSubmit={submitInvite} aria-label="Invite code" className={styles.form} style={formStyle}>
       <h2>Enter invite code</h2>
       <p className={styles.note}>{access.email ? `${access.email} is signed in with Google.` : "Your Google account is signed in."} The invite lets this account open private investigations.</p>
       <label>Invite code <input name="inviteCode" type="password" autoComplete="off" required /></label>
@@ -52,7 +82,7 @@ export function AuthControls({ labelClassName = "" }: { labelClassName?: string 
         <button type="button" onClick={access.close}>Close</button>
       </div>
     </form>}
-    {access.open && !access.authenticated && <form onSubmit={submitPassword} aria-label={signUp ? "Sign up" : "Sign in"} className={styles.form}>
+    {access.open && !access.authenticated && <form onSubmit={submitPassword} aria-label={signUp ? "Sign up" : "Sign in"} className={styles.form} style={formStyle}>
       <h2>{signUp ? "Sign up" : "Sign in"}</h2>
       <button type="button" className="primary" disabled={busy} onClick={continueWithGoogle}>{busy ? "Please wait…" : "Continue with Google"}</button>
       <p className={styles.divider}>or use email</p>
