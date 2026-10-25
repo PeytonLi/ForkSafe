@@ -3,7 +3,6 @@ import type { AsyncState, Route } from "../hooks";
 import { useClient, useIndicator } from "../hooks";
 import type { InvestigationListItem } from "../services";
 import { TABS, activeSection } from "../sections";
-import { AuthControls } from "./AuthControls";
 import { BrandMark, Icon, SECTION_ICONS } from "./Icon";
 import { human, stateTone } from "./tone";
 import pkg from "../../package.json";
@@ -184,7 +183,6 @@ export function Sidebar({ route, go, investigations, collapsed, onToggleCollapse
       </nav>
 
       <footer className={styles.footer}>
-        <AuthControls labelClassName={styles.label} />
         <p className={`${styles.meta} ${styles.label}`}>
           <span>v{pkg.version} · {client.source.kind === "fixture" ? "Recorded examples" : "Live workspace"}</span>
           <a href="https://github.com/PeytonLi/ForkSafe" target="_blank" rel="noreferrer">Source<Icon name="external" size={12} /></a>
