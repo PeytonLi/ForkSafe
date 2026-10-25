@@ -29,10 +29,13 @@ function storedRole(): MemberRole {
   }
 }
 
-type Viewer = { subject: string; email: string | null; accessGranted: boolean; memberRole?: MemberRole } | null;
+type WorkspaceInfo = { id: string; name: string };
+type Viewer = { subject: string; email: string | null; accessGranted: boolean; memberRole?: MemberRole; workspace: WorkspaceInfo | null } | null;
 const viewerQuery = makeFunctionReference<"query", {}, Viewer>("auth:viewer");
 const redeemInviteMutation = makeFunctionReference<"mutation", { inviteCode: string }, { ok: boolean }>("auth:redeemInvite");
 const setMemberRoleMutation = makeFunctionReference<"mutation", { role: MemberRole; email?: string }, { memberRole: MemberRole }>("auth:setMemberRole");
+const ensureWorkspaceMutation = makeFunctionReference<"mutation", {}, WorkspaceInfo>("workspaces:ensure");
+const createInviteMutation = makeFunctionReference<"mutation", {}, { code: string; workspaceName: string }>("workspaces:createInvite");
 
 type AccessValue = {
   canWrite: boolean;
@@ -45,6 +48,9 @@ type AccessValue = {
   verified: boolean;
   accessGranted: boolean;
   email: string | null;
+  workspace: { id: string; name: string } | null;
+  ensureWorkspace: () => Promise<void>;
+  createInvite: () => Promise<string>;
   open: boolean;
   showSignIn: () => void;
   close: () => void;
@@ -59,6 +65,9 @@ const signedOut = {
   verified: false,
   accessGranted: true,
   email: null as string | null,
+  workspace: null,
+  ensureWorkspace: async () => {},
+  createInvite: async () => "",
   open: false,
   showSignIn: () => {},
   close: () => {},
@@ -91,6 +100,8 @@ function Session({ children }: { children: ReactNode }) {
   const viewer = useQuery(viewerQuery);
   const redeem = useMutation(redeemInviteMutation);
   const setMemberRole = useMutation(setMemberRoleMutation);
+  const ensure = useMutation(ensureWorkspaceMutation);
+  const createInvite = useMutation(createInviteMutation);
   const actions = useAuthActions();
   const [open, setOpen] = useState(false);
   const [epoch, setEpoch] = useState(0);
@@ -101,8 +112,9 @@ function Session({ children }: { children: ReactNode }) {
     granted.current = viewer.accessGranted;
   }, [viewer?.accessGranted]);
   useEffect(() => {
-    if (isAuthenticated && viewer?.accessGranted === false) setOpen(true);
-  }, [isAuthenticated, viewer?.accessGranted]);
+    if (!isAuthenticated || !viewer?.email || viewer.workspace) return;
+    void ensure();
+  }, [isAuthenticated, viewer?.email, viewer?.workspace, ensure]);
   const accessGranted = viewer?.accessGranted === true;
   const canWrite = mayWrite("convex", isAuthenticated, accessGranted);
   const role = asRole(viewer?.memberRole);
@@ -116,6 +128,9 @@ function Session({ children }: { children: ReactNode }) {
     verified: !!viewer,
     accessGranted,
     email: viewer?.email ?? null,
+    workspace: viewer?.workspace ?? null,
+    ensureWorkspace: async () => { await ensure(); },
+    createInvite: async () => (await createInvite()).code,
     open,
     showSignIn: () => setOpen(true),
     close: () => setOpen(false),

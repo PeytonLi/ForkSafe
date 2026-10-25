@@ -5,7 +5,8 @@ import { internal } from "./_generated/api.js";
 import { mutation, query, internalMutation, internalQuery, type MutationCtx } from "./_generated/server.js";
 import { readLimits } from "./lib/constants.js";
 import { countsTowardCapacity } from "./lib/reservations.js";
-import { hasPrivateAccess, isPublicInvestigation, requireInvestigationRead, requireOperateIdentity } from "./lib/webAccess.js";
+import { accessGrantedForUser, hasPrivateAccess, isPublicInvestigation, requireInvestigationRead, requireOperateIdentity } from "./lib/webAccess.js";
+import { ensurePersonalWorkspace, memberships } from "./lib/workspaces.js";
 import { appId, assertUUID } from "./lib/validators.js";
 import { webFailureKinds } from "./lib/webFailureKinds.js";
 import { MoreInvestigationRequest } from "./forgeProtocolExt.js";
@@ -451,10 +452,21 @@ export const list = query({
   args: { serviceToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
     const privateAccess = await hasPrivateAccess(ctx, args.serviceToken);
+    const identity = await ctx.auth.getUserIdentity();
+    const service = !identity && privateAccess;
+    const userId = identity ? ctx.db.normalizeId("users", identity.subject.split("|")[0] ?? "") : null;
+    const user = userId ? await ctx.db.get(userId) : null;
+    const mine = userId ? new Set((await memberships(ctx, userId)).map((member: { workspaceId: string }) => member.workspaceId)) : new Set<string>();
     const rows = await ctx.db.query("investigations").order("desc").take(100);
-    return rows.map((row) => privateAccess || isPublicInvestigation(row.appId)
-      ? { id: row.appId, title: row.title, state: row.state, requestedEnvironments: row.requestedEnvironments, updatedAtMs: row.updatedAtMs }
-      : { id: row.appId, title: "Restricted investigation", state: "restricted" as const });
+    const full = (row: typeof rows[number]) => ({ id: row.appId, title: row.title, state: row.state, requestedEnvironments: row.requestedEnvironments, updatedAtMs: row.updatedAtMs });
+    const listed: Array<{ id: string; title: string; state: string; requestedEnvironments?: number; updatedAtMs?: number }> = [];
+    for (const row of rows) {
+      if (isPublicInvestigation(row.appId) || service) listed.push(full(row));
+      else if (row.workspaceId) { if (userId && mine.has(row.workspaceId)) listed.push(full(row)); }
+      else if (privateAccess && (!userId || !user || accessGrantedForUser(user))) listed.push(full(row));
+      else listed.push({ id: row.appId, title: "Restricted investigation", state: "restricted" });
+    }
+    return listed;
   },
 });
 
@@ -567,6 +579,14 @@ export const capture = mutation({
       baselineExperimentId,
       budget: { wallTimeMs: 600_000, maxExperimentsPerEnv: 20, maxCandidatesPerEnv: 2, maxFinalCandidates: 3 },
       idempotencyKey, captureStatus: "pending", autoStart: args.autoStart ?? true,
+      ...(await (async () => {
+        const identity = await ctx.auth.getUserIdentity();
+        const userId = identity ? ctx.db.normalizeId("users", identity.subject.split("|")[0] ?? "") : null;
+        const user = userId ? await ctx.db.get(userId) : null;
+        if (!user) return {};
+        const workspace = await ensurePersonalWorkspace(ctx, user);
+        return workspace ? { workspaceId: workspace.appId } : {};
+      })()),
       taskFamily,
       controllerSha256: useApproved ? current!.controllerSha256 : baseline.sha256,
       controllerVersion: useApproved ? current!.version : 1,

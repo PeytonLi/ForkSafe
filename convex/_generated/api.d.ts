@@ -77,6 +77,7 @@ import type * as web_elasticAgent from "../web/elasticAgent.js";
 import type * as web_health from "../web/health.js";
 import type * as web_timeline from "../web/timeline.js";
 import type * as web_live from "../web/live.js";
+import type * as workspaces from "../workspaces.js";
 import type * as workers from "../workers.js";
 import type * as workflows from "../workflows.js";
 
@@ -156,6 +157,7 @@ declare const fullApi: ApiFromModules<{
   "web/health": typeof web_health;
   "web/timeline": typeof web_timeline;
   "web/live": typeof web_live;
+  workspaces: typeof workspaces;
   workers: typeof workers;
   workflows: typeof workflows;
 }>;
