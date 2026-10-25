@@ -1,5 +1,6 @@
 import {
   IntegrationReadiness,
+  describeScene,
   type CandidateEvaluation,
   type ControllerCandidate,
   type HumanReview,
@@ -32,6 +33,7 @@ import {
 import { SpacetimeClient, SpacetimeUnavailable, SpacetimeRejected } from "./dispatchers/spacetime.js";
 import type { ZodType } from "zod";
 import { FORGE_FEATURE_PATHS, MoreInvestigationRequest, MoreInvestigationResponse, PanelData, ReviewContext as ReviewContextSchema } from "./forgeProtocolExt.js";
+import { appId as newAppId } from "./lib/validators.js";
 
 type ForgeRouteDependencies = {
   verifyToken?: (token: string, appId: string) => Promise<ForgeInvocationContext>;
@@ -215,11 +217,23 @@ export function registerForgeRoutes(http: HttpRouter, dependencies: ForgeRouteDe
       if (!authorization.ok) return json({ error: authorization.error }, authorization.status);
       const serviceToken = process.env.INTEGRATION_SHARED_SECRET;
       if (!serviceToken) return json({ error: "forge_not_configured" }, 503);
+      const described = describeScene(parsed.data.title);
+      const baselineCase = described.status === "matched"
+        ? {
+            caseId: (dependencies.newId ?? newAppId)(),
+            suite: "original" as const,
+            seed: 1,
+            sceneOverrides: described.overrides,
+            taskFamily: described.taskFamily,
+            description: described.explanation,
+          }
+        : undefined;
       try {
         const created = await ctx.runMutation(api.investigations.create, {
           title: parsed.data.title,
           requestedEnvironments: parsed.data.requestedEnvironments,
           jiraIssueKey: parsed.data.issueKey,
+          ...(baselineCase ? { baselineCase } : {}),
           idempotencyKey: `forge:${auth.context.installationId}:${parsed.data.issueId}`,
           serviceToken,
         });
