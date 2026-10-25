@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
-import { DEFAULT_TASK_FAMILY, TASK_FAMILY_SPECS, isTaskFamily, validateSceneOverrides } from "@forksafe/contracts";
+import { DEFAULT_TASK_FAMILY, TASK_FAMILY_SPECS, isTaskFamily, sceneVariantFor, validateSceneOverrides } from "@forksafe/contracts";
 import { internal } from "./_generated/api.js";
 import { mutation, query, internalMutation, internalQuery, type MutationCtx } from "./_generated/server.js";
 import { readLimits } from "./lib/constants.js";
@@ -153,10 +153,12 @@ async function startHandler(ctx: MutationCtx, args: { investigationId: string; e
       const jobId = appId();
       jobIds.push(jobId);
       const operationId = appId();
+      const sceneVariant = sceneVariantFor(index, investigation.baselineCase);
       await ctx.db.insert("environments", {
         appId: environmentId,
         investigationId: investigation.appId,
         index,
+        sceneVariant,
         state: "provisioning",
         budgets: {
           maxExperiments: investigation.budget.maxExperimentsPerEnv,
@@ -186,7 +188,7 @@ async function startHandler(ctx: MutationCtx, args: { investigationId: string; e
         environmentId,
         epoch: 0,
         idempotencyKey: `${investigation.appId}:factory:${index}`,
-        payload: { environmentIndex: index, priorHints },
+        payload: { environmentIndex: index, priorHints, simCase: sceneVariant },
         attemptsUsed: 0,
         maxAttempts: 2,
         operationId,
@@ -478,6 +480,7 @@ export const workspace = query({
       investigation: toInvestigation(investigation),
       environments: environments.sort((a, b) => a.index - b.index).map((row) => ({
         id: row.appId, investigationId: id, index: row.index, state: row.state,
+        ...(row.sceneVariant ? { sceneVariant: row.sceneVariant } : {}),
         ...(row.daytonaSandbox ? { daytonaSandbox: row.daytonaSandbox } : {}), budgets: row.budgets,
         ...(row.startedAtMs !== undefined ? { startedAtMs: row.startedAtMs } : {}), ...(row.closedAtMs !== undefined ? { closedAtMs: row.closedAtMs } : {}),
       })),
@@ -580,17 +583,22 @@ export const getByAppId = internalQuery({
 });
 
 export const setCapture = internalMutation({
-  args: { investigationId: v.string(), captureStatus: v.union(v.literal("running"), v.literal("recorded"), v.literal("failed")), error: v.optional(v.string()) },
+  args: {
+    investigationId: v.string(), captureStatus: v.union(v.literal("running"), v.literal("recorded"), v.literal("failed")),
+    error: v.optional(v.string()), promote: v.optional(v.boolean()),
+  },
   handler: async (ctx, args) => {
     const investigation = await ctx.db.query("investigations").withIndex("by_appId", (q) => q.eq("appId", args.investigationId)).unique();
     if (!investigation) throw new ConvexError("investigation_not_found");
     const now = Date.now();
+    const promote = args.promote ?? true;
     await ctx.db.patch(investigation._id, {
       captureStatus: args.captureStatus, updatedAtMs: now, version: investigation.version + 1,
       // A late/duplicate "recorded" must not pull an already-started investigation back to admitted.
-      ...(args.captureStatus === "recorded" && investigation.retryOfInvestigationId
+      // promote defaults true. A solved baseline passes false and stays in its current state.
+      ...(args.captureStatus === "recorded" && promote && investigation.retryOfInvestigationId
         ? { state: "completed" as const, finishedAtMs: now }
-        : args.captureStatus === "recorded" && ["created", "capturing", "admitted"].includes(investigation.state)
+        : args.captureStatus === "recorded" && promote && ["created", "capturing", "admitted"].includes(investigation.state)
           ? { state: "admitted" as const }
           : {}),
       ...(args.captureStatus === "failed" ? { state: "failed" as const, lastError: args.error ?? "capture_failed", finishedAtMs: now } : {}),

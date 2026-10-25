@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { action } from "./_generated/server.js";
 import { internal } from "./_generated/api.js";
-import { isTaskFamily } from "@forksafe/contracts";
+import { isTaskFamily, validateSceneOverrides } from "@forksafe/contracts";
 import { requireWriteIdentity } from "./lib/webAccess.js";
 import type { FailureSearchResult } from "./lib/sceneSearch.js";
 import { appId } from "./lib/validators.js";
@@ -15,9 +15,20 @@ type FindFailureResponse = FailureSearchResult | {
 };
 
 export const findFailure = action({
-  args: { taskFamily: v.string(), serviceToken: v.optional(v.string()) },
+  args: {
+    taskFamily: v.string(),
+    serviceToken: v.optional(v.string()),
+    sceneOverrides: v.optional(v.record(v.string(), v.number())),
+    seed: v.optional(v.number()),
+  },
   handler: async (ctx, args): Promise<FindFailureResponse> => {
     await requireWriteIdentity(ctx, args.serviceToken);
+    if (args.sceneOverrides !== undefined) {
+      const validation = validateSceneOverrides(args.taskFamily, args.sceneOverrides);
+      if (!validation.ok) {
+        return { mode: "live" as const, found: false as const, samples: 0, failures: 0, reason: validation.reason };
+      }
+    }
     if (!isTaskFamily(args.taskFamily)) {
       return { mode: "live" as const, found: false as const, samples: 0, failures: 0, reason: `Unknown task "${args.taskFamily}".` };
     }
@@ -56,8 +67,9 @@ export const findFailure = action({
       return await ctx.runAction(internal.execution.runFuzz, {
         searchId,
         taskFamily: args.taskFamily,
-        seed: 1,
+        seed: args.seed ?? 1,
         controllerSource: source.source,
+        ...(args.sceneOverrides !== undefined ? { centerOverrides: args.sceneOverrides } : {}),
       });
     } catch (error) {
       const reason = error instanceof ConvexError ? String(error.data) : "Failure search could not run.";
