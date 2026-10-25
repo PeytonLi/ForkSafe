@@ -83,7 +83,9 @@ test("browser story: readiness, fixture investigation, replay scrub, review", as
     await page.getByRole("tab", { name: "Environments" }).click();
   }
   await expect(page.getByTestId("env-tile-1")).toBeVisible();
+  await page.getByRole("tab", { name: "Env 3" }).click();
   await expect(page.getByTestId("env-tile-3")).toBeVisible();
+  await page.getByRole("tab", { name: "Env 1" }).click();
   await page.getByTestId("env-tile-1").getByRole("button", { name: /^Timeline/ }).click();
   await expect(page.getByTestId("env-tile-1").getByRole("listitem").first()).toBeVisible();
   await expectNoHorizontalOverflow(page);
