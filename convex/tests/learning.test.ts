@@ -17,7 +17,7 @@ const approvedSha = "c".repeat(64);
 const simCase = { caseId: "seed-1042", suite: "original" as const, seed: 1042, sceneOverrides: { dividerHeight: 0.15 } };
 const budget = { wallTimeMs: 60_000, maxExperimentsPerEnv: 1, maxCandidatesPerEnv: 1, maxFinalCandidates: 1 };
 
-async function seedInvestigation(t: ReturnType<typeof convexTest>, state: "awaiting_review" | "completed" = "awaiting_review") {
+async function seedInvestigation(t: ReturnType<typeof convexTest>, state: "awaiting_review" | "completed" | "capturing" = "awaiting_review") {
   const storageId = await t.run((ctx) => ctx.storage.store(new Blob(["baseline"])));
   const simulatorStorageId = await t.run((ctx) => ctx.storage.store(new Blob(["simulator"])));
   await t.run(async (ctx) => {
@@ -179,6 +179,13 @@ describe("learning loop", () => {
       });
     });
     await t.mutation(internal.investigations.setCapture, { investigationId, captureStatus: "recorded" });
+    expect(await t.run((ctx) => ctx.db.query("investigations").first())).toMatchObject({ state: "completed", captureStatus: "recorded" });
+  });
+
+  it("completes the investigation when the recorded baseline did not fail", async () => {
+    const t = convexTest(schema, modules);
+    await seedInvestigation(t, "capturing");
+    await t.mutation(internal.investigations.setCapture, { investigationId, captureStatus: "recorded", promote: false });
     expect(await t.run((ctx) => ctx.db.query("investigations").first())).toMatchObject({ state: "completed", captureStatus: "recorded" });
   });
 
