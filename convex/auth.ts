@@ -1,9 +1,10 @@
 import Auth0 from "./node_modules/@auth/core/providers/auth0.js";
 import { Password } from "@convex-dev/auth/providers/Password";
 import { convexAuth } from "@convex-dev/auth/server";
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { internalQuery, mutation, query } from "./_generated/server.js";
 import { UnauthorizedError } from "./lib/auth.js";
+import { roleOf } from "./lib/memberRole.js";
 import { accessGrantedForUser, identityHasAccess, newOAuthAccountNeedsInvite, validateInvite } from "./lib/webAccess.js";
 
 export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
@@ -50,7 +51,35 @@ export const viewer = query({
       subject: identity.subject,
       email: user?.email ?? null,
       accessGranted: accessGrantedForUser(user),
+      memberRole: roleOf(user),
     };
+  },
+});
+
+const memberRoleArg = v.union(v.literal("lead"), v.literal("operator"), v.literal("reviewer"));
+
+/** A lead with access assigns seats. A caller cannot widen their own seat, and the last lead stays a lead. */
+export const setMemberRole = mutation({
+  args: { role: memberRoleArg, email: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new UnauthorizedError();
+    const userId = ctx.db.normalizeId("users", identity.subject.split("|")[0] ?? "");
+    const caller = userId ? await ctx.db.get(userId) : null;
+    if (!caller || !accessGrantedForUser(caller) || roleOf(caller) !== "lead") throw new UnauthorizedError();
+    const requested = args.email?.trim().toLowerCase() ?? "";
+    const own = caller.email?.trim().toLowerCase() ?? "";
+    const target = requested === "" || requested === own
+      ? caller
+      : await ctx.db.query("users").withIndex("email", (q) => q.eq("email", requested)).unique();
+    if (!target) throw new ConvexError("No account with that email");
+    if (roleOf(target) === "lead" && args.role !== "lead") {
+      const users = await ctx.db.query("users").collect();
+      const leads = users.filter((user) => accessGrantedForUser(user) && roleOf(user) === "lead").length;
+      if (leads <= 1) throw new ConvexError("The last lead cannot leave that seat.");
+    }
+    await ctx.db.patch(target._id, { memberRole: args.role });
+    return { memberRole: args.role };
   },
 });
 

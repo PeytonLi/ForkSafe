@@ -19,6 +19,7 @@ export function LearningPanel({ workspace }: { workspace: InvestigationWorkspace
 
   const retry = async () => {
     if (!access.canWrite) { access.showSignIn(); return; }
+    if (access.canOperate === false) return;
     setBusy(true);
     setError(null);
     try {
@@ -62,8 +63,8 @@ export function LearningPanel({ workspace }: { workspace: InvestigationWorkspace
           <section className={styles.card} aria-labelledby="retry-heading">
             <h3 id="retry-heading">Try the fix on this exact scene</h3>
             {view.retry.available ? (
-              <button type="button" data-testid="retry-improved" disabled={busy} onClick={retry}>
-                {!access.canWrite ? "Sign in to retry" : busy ? "Starting retry…" : "Retry with improved controller"}
+              <button type="button" data-testid="retry-improved" disabled={busy || access.canOperate === false} onClick={retry}>
+                {!access.canWrite ? "Sign in to retry" : access.canOperate === false ? "Operator seat required" : busy ? "Starting retry…" : "Retry with improved controller"}
               </button>
             ) : <p className={styles.muted} data-testid="retry-unavailable">{view.retry.reason}</p>}
             {error && <p role="alert" className={styles.error}>{error}</p>}

@@ -193,6 +193,7 @@ export const EvidenceAnswerSchema = z.object({
     docType: z.enum(["finding", "evidence", "experiment_result"]),
     summary: z.string(),
     environmentId: z.string().optional(),
+    tSec: z.number().nonnegative().optional(),
   })),
   withheld: z.array(z.object({ id: z.string().min(1), reason: z.string() })),
 });

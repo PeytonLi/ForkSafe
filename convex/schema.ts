@@ -41,6 +41,9 @@ export default defineSchema({
     accessGranted: v.optional(v.boolean()),
     inviteFailures: v.optional(v.number()),
     inviteFailureWindowStartMs: v.optional(v.number()),
+    // Absent means lead: the account can operate and review. Existing accounts
+    // stay leads so this field does not take access away.
+    memberRole: v.optional(v.union(v.literal("lead"), v.literal("operator"), v.literal("reviewer"))),
   }).index("email", ["email"]).index("phone", ["phone"]),
   forgeRequests: defineTable({
     idempotencyKey: v.string(), payload: v.string(), requestId: uuid,
@@ -652,4 +655,26 @@ export default defineSchema({
     revisionHeadId: v.optional(uuid), tokenUsage: v.optional(v.any()), createdAtMs: v.number(),
   }).index("by_session_turn", ["sessionId", "turnIndex"])
     .index("by_environment_job", ["environmentId", "jobId"]),
+
+  /** One starting hypothesis pinned to a single environment. It does not change scores. */
+  environmentHypotheses: defineTable({
+    investigationId: uuid,
+    environmentId: uuid,
+    hypothesis: v.string(),
+    updatedAtMs: v.number(),
+    updatedBy: v.string(),
+  }).index("by_environment", ["environmentId"]).index("by_investigation", ["investigationId"]),
+
+  /** An extra case a person asked to score later. Status stays pending until a real physics run exists. */
+  challengeRequests: defineTable({
+    investigationId: uuid,
+    candidateId: uuid,
+    caseId: v.string(),
+    seed: v.number(),
+    sceneOverrides: v.record(v.string(), v.number()),
+    note: v.string(),
+    requestedBy: v.string(),
+    createdAtMs: v.number(),
+    status: v.literal("pending_physics"),
+  }).index("by_investigation", ["investigationId"]).index("by_candidate", ["candidateId"]),
 });

@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api.js";
 import { action, internalMutation, internalQuery } from "./_generated/server.js";
-import { requireWriteIdentity } from "./lib/webAccess.js";
+import { requireReviewIdentity } from "./lib/webAccess.js";
 import { appId, assertUUID } from "./lib/validators.js";
 import { promoteOnApproval } from "./learning.js";
 
@@ -69,7 +69,7 @@ export const record = action({
     decision, notes: v.optional(v.string()), idempotencyKey: v.optional(v.string()), serviceToken: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<Record<string, unknown>> => {
-    const reviewerIdentity = await requireWriteIdentity(ctx, args.serviceToken);
+    const reviewerIdentity = await requireReviewIdentity(ctx, args.serviceToken);
     for (const [name, value] of [["investigationId", args.investigationId], ["candidateId", args.candidateId], ["evaluationId", args.evaluationId]] as const) assertUUID(value, name);
     if (!/^[0-9a-f]{64}$/.test(args.controllerSha256)) throw new ConvexError("controllerSha256 must be lowercase sha256");
     if (args.notes && args.notes.length > 4000) throw new ConvexError("notes too long");

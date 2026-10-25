@@ -1,8 +1,10 @@
 import { useState } from "react";
-import { fmtDuration, shortSha, useCompact } from "../hooks";
+import { fmtDuration, shortId, shortSha, useCompact, useLoad } from "../hooks";
 import type { InvestigationWorkspace } from "../services";
 import { Badge } from "./Panel";
 import { EnvLiveSlot } from "./EnvLiveSlot";
+import { environmentExchange } from "./environmentExchange";
+import { HypothesisEditor } from "./HypothesisEditor";
 import { SegThumb } from "./SegThumb";
 import { human, stateTone } from "./tone";
 import styles from "./EnvironmentGrid.module.css";
@@ -14,6 +16,8 @@ export function EnvironmentGrid({ workspace: w }: { workspace: InvestigationWork
   const [showAll, setShowAll] = useState(false);
   const [selectedLiveEnv, setSelectedLiveEnv] = useState(w.environments[0]?.id);
   const compact = useCompact();
+  const findingsState = useLoad((c) => c.listFindings(w.investigation.id), [w.investigation.id], w.investigation.id);
+  const findings = findingsState.data ?? [];
   if (!w.environments.length)
     return <p className={styles.empty} data-testid="empty-state">No environments have been provisioned for this investigation yet.</p>;
   const selected = w.environments.find((e) => e.id === selectedLiveEnv) ?? w.environments[0]!;
@@ -50,6 +54,8 @@ export function EnvironmentGrid({ workspace: w }: { workspace: InvestigationWork
         const maxSessions = e.budgets.maxFactorySessions;
         const usedSessions = Math.min(sessions.length, maxSessions);
         const experimentCount = Math.min(exps.length, e.budgets.maxExperiments);
+        const exchange = environmentExchange(e.id, w, findings);
+        const shownFindings = exchange.authored.slice(0, 3);
         return (
           <article key={e.id} className={styles.tile} data-testid={`env-tile-${e.index + 1}`} aria-labelledby={`env-${e.id}`}>
             <header className={styles.tileHead}>
@@ -70,6 +76,31 @@ export function EnvironmentGrid({ workspace: w }: { workspace: InvestigationWork
                 });
               }}
             />
+            <HypothesisEditor investigationId={w.investigation.id} environmentId={e.id} initial="" />
+            {shownFindings.length > 0 && (
+              <section className={styles.exchange} aria-label={`Findings from Env ${e.index + 1}`}>
+                <h4>Findings from this environment</h4>
+                <ul className={styles.findings}>
+                  {shownFindings.map((finding) => {
+                    const cites = exchange.citedBy.filter((cite) => cite.findingId === finding.id);
+                    return (
+                      <li key={finding.id} className={styles.finding}>
+                        <p>{finding.summary}</p>
+                        {cites.length > 0 && (
+                          <ul className={styles.cites}>
+                            {cites.map((cite) => (
+                              <li key={`${cite.candidateId}:${cite.findingId}`}>
+                                Env {cite.environmentIndex + 1} used this <code>{shortId(cite.findingId)}</code>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            )}
             <dl className={styles.stats}>
               <dt>Agents</dt>
               <dd>{activeAgents} active / {sessions.length}</dd>

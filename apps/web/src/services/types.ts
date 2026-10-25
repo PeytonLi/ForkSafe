@@ -149,6 +149,8 @@ export interface EvidenceCitation {
   docType: "finding" | "evidence" | "experiment_result";
   summary: string;
   environmentId?: string;
+  /** Simulation time recorded on an evidence locator. Absent when the evidence has none. */
+  tSec?: number;
 }
 
 /** Answer from the Elastic evidence agent, scoped to one investigation. */
