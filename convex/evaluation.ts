@@ -1,9 +1,8 @@
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api.js";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server.js";
-import withheldManifest from "../evaluation/withheld/manifest.json";
 import { MAX_FINALISTS } from "./lib/constants.js";
-import { publicCasesFor, withheldApplies } from "./lib/evaluationCases.js";
+import { publicCasesFor, withheldApplies, withheldCasesFor } from "./lib/evaluationCases.js";
 import { caseStatus, classifyExperiment, median, rankCandidates } from "./lib/experimentStatus.js";
 import { loadTrustedKeys, verifySignedEvaluation } from "./lib/signedEvaluation.js";
 import { byAppId, claimJob, completeJob, heartbeatAttempt, recordStageRow } from "./lib/jobOps.js";
@@ -15,8 +14,6 @@ import { evaluatorBackend } from "./lib/evaluatorBackend.js";
  *  Convex-owned lease with its own environment-independent grant. Withheld
  *  cases never leave this module: agents only ever see case ids. */
 
-type ManifestCase = { caseId: string; suite: "public" | "withheld" | "original"; seed: number; sceneOverrides: Record<string, number>; taskFamily?: string; description?: string; execution?: "signed" | "direct" };
-const withheldCases: ManifestCase[] = (withheldManifest as { cases: ManifestCase[] }).cases;
 const EVALUATOR_WORKER = "convex-evaluator";
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const MAX_EVALUATION_RECONCILES = 10;
@@ -243,7 +240,7 @@ export const advance = internalMutation({
         await scheduleReviewIssue(ctx, args.investigationId);
         return { action: "awaiting_review_no_finalists" };
       }
-      if (!withheldApplies(investigation.taskFamily)) {
+      if (!withheldApplies(investigation)) {
         for (const finalist of finalists) {
           const candidate = candidates.find((item) => item.appId === finalist.id);
           if (candidate) await ctx.db.patch(candidate._id, { status: "evaluated", updatedAtMs: now });
@@ -355,7 +352,7 @@ export const evaluateNext = internalAction({
     const trustedKeys = backend === "v3" ? loadTrustedKeys(process.env) : null;
     try {
       const investigation = await ctx.runQuery(internal.investigations.getByAppId, { investigationId: args.investigationId });
-      const manifestCases = suite === "public" ? publicCasesFor(investigation ?? {}) : withheldCases;
+      const manifestCases = suite === "public" ? publicCasesFor(investigation ?? {}) : withheldCasesFor(investigation ?? {});
       for (const manifestCase of manifestCases) {
         const beat = await ctx.runMutation(internal.evaluation.heartbeatEvaluation, { jobId, attemptId: claimed.attemptId, epoch: claimed.epoch });
         if (!beat.ok) { fenced = true; break; }

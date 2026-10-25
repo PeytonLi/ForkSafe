@@ -1,0 +1,9 @@
+{
+  "title": "Cube released beside the open bin",
+  "taskFamily": "bin_drop",
+  "seed": 7,
+  "sceneOverrides": {
+    "binWidth": 0.12,
+    "binDx": 0.03
+  }
+}

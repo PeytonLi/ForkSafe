@@ -7,8 +7,10 @@ describe("scene resolver", () => {
   it("mirrors the simulator base configs", () => {
     const divider = JSON.parse(readFileSync(fileURLToPath(new URL("../../../services/simulator/scene_config.json", import.meta.url)), "utf8"));
     const pushGap = JSON.parse(readFileSync(fileURLToPath(new URL("../../../services/simulator/scene_configs/push_gap.json", import.meta.url)), "utf8"));
+    const binDrop = JSON.parse(readFileSync(fileURLToPath(new URL("../../../services/simulator/scene_configs/bin_drop.json", import.meta.url)), "utf8"));
     expect(BASE_SCENES.divider_pick_place).toEqual(divider);
     expect(BASE_SCENES.push_through_gap).toEqual(pushGap);
+    expect(BASE_SCENES.bin_drop).toEqual(binDrop);
   });
 
   it("resolves delta overrides for the divider scene", () => {

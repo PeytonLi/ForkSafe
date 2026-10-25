@@ -97,7 +97,7 @@ export const FailureSearch = z.union([
   z.object({
     mode: z.enum(["live", "local", "fixture", "blocked", "not_implemented"]),
     found: z.literal(true),
-    taskFamily: z.enum(["divider_pick_place", "push_through_gap"]),
+    taskFamily: z.enum(["divider_pick_place", "push_through_gap", "bin_drop"]),
     caseId: z.string(),
     sceneOverrides: z.record(z.string(), z.number()),
     seed: z.number().int().nonnegative(),

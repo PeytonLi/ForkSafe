@@ -8,6 +8,9 @@ export type SceneOverrideKey =
   | "dividerHeight"
   | "gapDx"
   | "gapWidth"
+  | "binDx"
+  | "binDy"
+  | "binWidth"
   | "speedScale";
 
 export const TASK_FAMILY_SPECS = {
@@ -24,6 +27,12 @@ export const TASK_FAMILY_SPECS = {
     description: "The robot slides a cube through an opening in a wall to the target.",
     baseCaseId: "push-gap-aligned",
     overrideKeys: ["cubeDx", "cubeDy", "targetDx", "targetDy", "gapDx", "gapWidth", "speedScale"],
+  },
+  bin_drop: {
+    title: "Drop into an open bin",
+    description: "The robot lifts a cube and drops it inside a low open bin.",
+    baseCaseId: "bin-drop-center",
+    overrideKeys: ["cubeDx", "cubeDy", "binDx", "binDy", "binWidth", "speedScale"],
   },
 } as const satisfies Record<string, {
   title: string;
@@ -56,6 +65,9 @@ export const SCENE_OVERRIDE_RANGES: Record<SceneOverrideKey, {
   gapDx: { min: -0.10, max: 0.10, step: 0.005, label: "Move gap along the wall", unit: "m" },
   dividerHeight: { min: 0.02, max: 0.25, step: 0.005, label: "Divider height", unit: "m" },
   gapWidth: { min: 0.05, max: 0.20, step: 0.005, label: "Gap width", unit: "m" },
+  binDx: { min: -0.10, max: 0.10, step: 0.005, label: "Move bin away from robot", unit: "m" },
+  binDy: { min: -0.10, max: 0.10, step: 0.005, label: "Move bin sideways", unit: "m" },
+  binWidth: { min: 0.08, max: 0.20, step: 0.005, label: "Bin opening", unit: "m" },
   speedScale: { min: 0.5, max: 2.0, step: 0.05, label: "Robot speed", unit: "×" },
 };
 

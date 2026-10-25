@@ -25,6 +25,12 @@ export const BASE_SCENES = {
     wallHeight: 0.04,
     wallSpanX: [0.2, 0.9],
   },
+  bin_drop: {
+    cubeStart: [0.42, -0.22, 0.02],
+    target: [0.62, 0.16, 0.02],
+    binCenter: [0.62, 0.16],
+    binWidth: 0.14,
+  },
 } as const;
 
 export type DividerScene = {
@@ -50,7 +56,16 @@ export type PushGapScene = {
   speedScale: number;
 };
 
-export type ResolvedScene = DividerScene | PushGapScene;
+export type BinDropScene = {
+  kind: "bin_drop";
+  cubeStart: [number, number, number];
+  target: [number, number, number];
+  binCenter: [number, number];
+  binWidth: number;
+  speedScale: number;
+};
+
+export type ResolvedScene = DividerScene | PushGapScene | BinDropScene;
 
 const copy3 = (value: readonly number[]): [number, number, number] => [value[0]!, value[1]!, value[2]!];
 const copy2 = (value: readonly number[]): [number, number] => [value[0]!, value[1]!];
@@ -62,6 +77,7 @@ export function defaultOverride(taskFamily: TaskFamily): Record<string, number> 
     const defaults: Partial<Record<SceneOverrideKey, number>> = {
       dividerHeight: BASE_SCENES.divider_pick_place.dividerHeight,
       gapWidth: BASE_SCENES.push_through_gap.gapWidth,
+      binWidth: BASE_SCENES.bin_drop.binWidth,
       speedScale: 1,
     };
     return [key, defaults[key] ?? 0];
@@ -82,12 +98,13 @@ export function resolveScene(
   overrides: Record<string, number> = {},
 ): ResolvedScene {
   const family = isTaskFamily(taskFamily) ? taskFamily : DEFAULT_TASK_FAMILY;
-  const cubeStart: [number, number, number] = family === "divider_pick_place"
-    ? copy3(BASE_SCENES.divider_pick_place.cubeStart)
-    : copy3(BASE_SCENES.push_through_gap.cubeStart);
-  const target: [number, number, number] = family === "divider_pick_place"
-    ? copy3(BASE_SCENES.divider_pick_place.target)
-    : copy3(BASE_SCENES.push_through_gap.target);
+  const base = family === "bin_drop"
+    ? BASE_SCENES.bin_drop
+    : family === "divider_pick_place"
+      ? BASE_SCENES.divider_pick_place
+      : BASE_SCENES.push_through_gap;
+  const cubeStart = copy3(base.cubeStart);
+  const target = copy3(base.target);
   cubeStart[0] += valueFor(overrides, "cubeDx", 0);
   cubeStart[1] += valueFor(overrides, "cubeDy", 0);
   target[0] += valueFor(overrides, "targetDx", 0);
@@ -96,6 +113,22 @@ export function resolveScene(
   cubeStart[1] = valueFor(overrides, "cube_start_y", cubeStart[1]);
   target[0] = valueFor(overrides, "target_x", target[0]);
   target[1] = valueFor(overrides, "target_y", target[1]);
+
+  if (family === "bin_drop") {
+    const binCenter = copy2(BASE_SCENES.bin_drop.binCenter);
+    binCenter[0] += valueFor(overrides, "binDx", 0);
+    binCenter[1] += valueFor(overrides, "binDy", 0);
+    target[0] = binCenter[0];
+    target[1] = binCenter[1];
+    return {
+      kind: family,
+      cubeStart,
+      target,
+      binCenter,
+      binWidth: valueFor(overrides, "binWidth", BASE_SCENES.bin_drop.binWidth),
+      speedScale: valueFor(overrides, "speedScale", 1),
+    };
+  }
 
   if (family === "divider_pick_place") {
     const dividerCenter = copy2(BASE_SCENES.divider_pick_place.dividerCenter);
