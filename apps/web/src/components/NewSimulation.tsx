@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { DescribeOutcome } from "@forksafe/contracts";
-import { compileScenePrompt, DEFAULT_TASK_FAMILY, SCENE_OVERRIDE_RANGES, TASK_FAMILIES, TASK_FAMILY_SPECS, isTaskFamily, validateSceneOverrides, type SceneOverrideKey, type ScenePromptResult, type TaskFamily } from "@forksafe/contracts";
+import { compileScenePrompt, DEFAULT_TASK_FAMILY, SCENE_OVERRIDE_RANGES, sceneOverrideRange, TASK_FAMILIES, TASK_FAMILY_SPECS, isTaskFamily, validateSceneOverrides, type SceneOverrideKey, type ScenePromptResult, type TaskFamily } from "@forksafe/contracts";
 import type { ImportedFailure } from "../../../../packages/contracts/src/importedFailure.js";
 import { changedOverrides, defaultOverride } from "../scene";
 import { useClient } from "../hooks";
@@ -273,7 +273,7 @@ export function NewSimulation({ onAccepted }: { onAccepted: (investigationId: st
                   <div className={styles.promptResult} data-testid="scene-prompt-result" aria-live="polite">
                     {scenePromptResult.applied.map((item, index) => (
                       <p className={styles.promptApplied} role="status" key={`${item.key}-${index}`}>
-                        {item.label}: {formatPromptValue(item.key, item.value)}
+                        {item.label}: {formatPromptValue(taskFamily, item.key, item.value)}
                       </p>
                     ))}
                     {scenePromptResult.refusals.map((refusal) => (
@@ -353,9 +353,11 @@ export function NewSimulation({ onAccepted }: { onAccepted: (investigationId: st
   );
 }
 
-function formatPromptValue(key: string, value: number): string {
-  if (!(key in SCENE_OVERRIDE_RANGES)) return String(value);
-  const range = SCENE_OVERRIDE_RANGES[key as SceneOverrideKey];
+function formatPromptValue(taskFamily: TaskFamily, key: string, value: number): string {
+  const range = Object.prototype.hasOwnProperty.call(SCENE_OVERRIDE_RANGES, key)
+    ? sceneOverrideRange(taskFamily, key as SceneOverrideKey)
+    : undefined;
+  if (!range) return String(value);
   const digits = range.unit === "×" ? 2 : 3;
   return `${value.toFixed(digits)} ${range.unit}`;
 }

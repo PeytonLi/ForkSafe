@@ -5,6 +5,11 @@ simulator requests, controller artifacts, and public API responses must not
 reveal withheld scene overrides. Only frozen finalists are eligible for a
 withheld evaluation.
 
+The toss task family uses its own public manifest and
+`evaluation/toss_bin/suites.lock.json`. Its evaluator lock binds the toss
+public and withheld manifest hashes independently of the divider suite lock.
+Case `taskFamily` values must agree with the evaluator's selected family.
+
 ## Withheld evaluation delivery
 
 Convex stores the withheld manifest in protected file storage and pins its
@@ -27,6 +32,10 @@ Generate a rotated manifest outside the repository with:
 ```sh
 python evaluation/build_suites.py --withheld-out /secure/path/withheld-manifest.json
 ```
+
+For toss cases, use `python evaluation/toss_bin/build_suites.py` with its
+`--withheld-out` option. The selected evaluator family determines which lock
+and public manifest are read.
 
 The command prints its SHA-256 for updating the manifest lock. The normal
 `python evaluation/build_suites.py` behavior remains unchanged.

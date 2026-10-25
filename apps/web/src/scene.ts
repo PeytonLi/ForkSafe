@@ -2,6 +2,7 @@ import {
   DEFAULT_TASK_FAMILY,
   TASK_FAMILY_SPECS,
   isTaskFamily,
+  TOSS_BIN_DEFAULTS,
   validateSceneOverrides,
   type SceneOverrideKey,
   type TaskFamily,
@@ -30,6 +31,12 @@ export const BASE_SCENES = {
     target: [0.62, 0.16, 0.02],
     binCenter: [0.62, 0.16],
     binWidth: 0.14,
+  },
+  toss_into_bin: {
+    cubeStart: TOSS_BIN_DEFAULTS.objectStart,
+    target: [0.95, 0, 0.01],
+    binCenter: TOSS_BIN_DEFAULTS.binCenter,
+    binWallHeight: TOSS_BIN_DEFAULTS.binWallHeight,
   },
 } as const;
 
@@ -65,7 +72,16 @@ export type BinDropScene = {
   speedScale: number;
 };
 
-export type ResolvedScene = DividerScene | PushGapScene | BinDropScene;
+export type TossBinScene = {
+  kind: "toss_into_bin";
+  cubeStart: [number, number, number];
+  target: [number, number, number];
+  binCenter: [number, number];
+  binWallHeight: number;
+  speedScale: number;
+};
+
+export type ResolvedScene = DividerScene | PushGapScene | BinDropScene | TossBinScene;
 
 const copy3 = (value: readonly number[]): [number, number, number] => [value[0]!, value[1]!, value[2]!];
 const copy2 = (value: readonly number[]): [number, number] => [value[0]!, value[1]!];
@@ -78,6 +94,8 @@ export function defaultOverride(taskFamily: TaskFamily): Record<string, number> 
       dividerHeight: BASE_SCENES.divider_pick_place.dividerHeight,
       gapWidth: BASE_SCENES.push_through_gap.gapWidth,
       binWidth: BASE_SCENES.bin_drop.binWidth,
+      binWallHeight: TOSS_BIN_DEFAULTS.binWallHeight,
+      objectMass: TOSS_BIN_DEFAULTS.objectMass,
       speedScale: 1,
     };
     return [key, defaults[key] ?? 0];
@@ -98,6 +116,22 @@ export function resolveScene(
   overrides: Record<string, number> = {},
 ): ResolvedScene {
   const family = isTaskFamily(taskFamily) ? taskFamily : DEFAULT_TASK_FAMILY;
+  if (family === "toss_into_bin") {
+    const cubeStart = copy3(BASE_SCENES.toss_into_bin.cubeStart);
+    cubeStart[0] += valueFor(overrides, "objectDx", 0);
+    cubeStart[1] += valueFor(overrides, "objectDy", 0);
+    const binCenter = copy2(BASE_SCENES.toss_into_bin.binCenter);
+    binCenter[0] += valueFor(overrides, "binDx", 0);
+    binCenter[1] += valueFor(overrides, "binDy", 0);
+    return {
+      kind: family,
+      cubeStart,
+      target: [binCenter[0], binCenter[1], 0.01],
+      binCenter,
+      binWallHeight: valueFor(overrides, "binWallHeight", BASE_SCENES.toss_into_bin.binWallHeight),
+      speedScale: valueFor(overrides, "speedScale", 1),
+    };
+  }
   const base = family === "bin_drop"
     ? BASE_SCENES.bin_drop
     : family === "divider_pick_place"

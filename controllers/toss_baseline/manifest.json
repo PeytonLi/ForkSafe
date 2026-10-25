@@ -1,0 +1,7 @@
+{
+  "version": "1",
+  "suiteId": "toss-bin-public",
+  "taskFamily": "toss_into_bin",
+  "controller": "task_controller.py",
+  "description": "Fixed-speed throwing baseline for the toss-into-bin task."
+}

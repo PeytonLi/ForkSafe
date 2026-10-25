@@ -22,6 +22,7 @@ from simulator.skills import CONTROL_PERIOD, SkillExecutor
 SIMULATOR_ROOT = Path(__file__).resolve().parents[2]
 PUBLIC_MANIFEST = SIMULATOR_ROOT / "evaluation/public/manifest.json"
 PUSH_GAP_MANIFEST = SIMULATOR_ROOT / "evaluation/push_gap/manifest.json"
+TOSS_BIN_MANIFEST = SIMULATOR_ROOT / "evaluation/toss_bin/public/manifest.json"
 FAILURE_KINDS = {
     "forbidden_contact",
     "joint_limit",
@@ -32,6 +33,10 @@ FAILURE_KINDS = {
     "engine_error",
     "missing_artifact",
     "invalid_run",
+    "dropped_early",
+    "bounced_out",
+    "missed_bin_short",
+    "missed_bin_long",
 }
 
 
@@ -115,6 +120,10 @@ def _resolve_case(case_id: str) -> SimCase:
     for case in push_manifest["cases"]:
         if case["caseId"] == case_id:
             return SimCase.model_validate(case)
+    toss_manifest = json.loads(TOSS_BIN_MANIFEST.read_text())
+    for case in toss_manifest["cases"]:
+        if case["caseId"] == case_id:
+            return SimCase.model_validate(case)
     raise ValueError(f"caseId is not in the public manifest: {case_id}")
 
 
@@ -151,6 +160,36 @@ def _body_name(model: mujoco.MjModel, body_id: int) -> str:
 
 
 def _contact_pairs(scene: BuiltScene) -> tuple[set[tuple[int, int]], set[tuple[int, int]]]:
+    if scene.task_family == "toss_into_bin":
+        bin_names = (
+            "bin_floor",
+            "bin_wall_px",
+            "bin_wall_nx",
+            "bin_wall_py",
+            "bin_wall_ny",
+        )
+        forbidden = {
+            tuple(sorted((robot_geom, scene.geom_ids[name])))
+            for robot_geom in scene.robot_geom_ids
+            for name in bin_names
+        }
+        hand_body = mujoco.mj_name2id(scene.model, mujoco.mjtObj.mjOBJ_BODY, "hand")
+        finger_bodies = {
+            mujoco.mj_name2id(scene.model, mujoco.mjtObj.mjOBJ_BODY, "left_finger"),
+            mujoco.mj_name2id(scene.model, mujoco.mjtObj.mjOBJ_BODY, "right_finger"),
+        }
+        allowed = {
+            tuple(sorted((scene.cube_geom_id, scene.geom_ids[name])))
+            for name in ("floor", *bin_names)
+        }
+        link0 = mujoco.mj_name2id(scene.model, mujoco.mjtObj.mjOBJ_BODY, "link0")
+        for geom_id in range(scene.model.ngeom):
+            body_id = int(scene.model.geom_bodyid[geom_id])
+            if body_id == link0:
+                allowed.add(tuple(sorted((geom_id, scene.geom_ids["floor"]))))
+            if body_id == hand_body or body_id in finger_bodies:
+                allowed.add(tuple(sorted((geom_id, scene.cube_geom_id))))
+        return allowed, forbidden
     barrier_names = {
         name
         for name in scene.geom_ids
@@ -214,6 +253,17 @@ def _contacts(scene: BuiltScene, data: mujoco.MjData) -> list[dict[str, Any]]:
 
 
 def _controller_scene(scene: BuiltScene, data: mujoco.MjData) -> dict[str, Any]:
+    if scene.task_family == "toss_into_bin":
+        return {
+            "taskFamily": scene.task_family,
+            "objectPos": data.xpos[scene.cube_body_id].copy().tolist(),
+            "binCenter": list(scene.config["binCenter"]),
+            "binHalfExtents": list(scene.config["binHalfExtents"]),
+            "binWallHeight": float(scene.config["binWallHeight"]),
+            "binWallHalfThickness": float(scene.config["binWallHalfThickness"]),
+            "objectHalfSize": float(scene.config["objectHalfSize"]),
+            "objectMass": float(scene.config["objectMass"]),
+        }
     target = scene.config["target"]
     if scene.task_family == "push_through_gap":
         return {
@@ -371,6 +421,10 @@ class RunSession:
         session.counters: dict[tuple[int, int], int] = {}
         session.failure: tuple[str, float, str] | None = None
         session.settled_since: float | None = None
+        session.toss_release: dict[str, Any] | None = None
+        session.toss_touchdown: dict[str, Any] | None = None
+        session.toss_was_inside = False
+        session.toss_rest_since: float | None = None
         session.idle_since: float | None = None
         session.plan_finished_since: float | None = None
         session.completed = False
@@ -432,6 +486,22 @@ class RunSession:
         if self.step_count % self.control_steps == 0:
             try:
                 self.executor.tick(float(self.data.time))
+                if self.scene.task_family == "toss_into_bin" and self.toss_release is None:
+                    detach = next(
+                        (
+                            event
+                            for event in self.executor.attachment_events
+                            if not event["attached"]
+                        ),
+                        None,
+                    )
+                    if detach is not None:
+                        self.toss_release = {
+                            "tSec": float(detach["tSec"]),
+                            "pos": list(detach["releasePos"]),
+                            "tcpSpeedMps": float(detach["tcpSpeedMps"]),
+                            "mode": detach["releaseMode"],
+                        }
                 self.executor.maybe_attach(float(self.data.time))
             except Exception as exc:  # noqa: BLE001
                 self.executor.error = (
@@ -502,30 +572,35 @@ class RunSession:
             return False
 
         cube_position = self.data.xpos[self.scene.cube_body_id]
-        target = np.asarray(self.scene.config["target"], dtype=float)
         cube_joint = mujoco.mj_name2id(
             self.scene.model, mujoco.mjtObj.mjOBJ_JOINT, "cube_free"
         )
         cube_dof = int(self.scene.model.jnt_dofadr[cube_joint])
         cube_speed = float(np.linalg.norm(self.data.qvel[cube_dof : cube_dof + 3]))
-        settled = (
-            not self.executor.attached
-            and float(np.linalg.norm(cube_position - target)) <= 0.03
-            and cube_speed < 0.01
-            and abs(float(cube_position[2]) - 0.02) <= 0.005
-        )
-        if settled:
-            if self.settled_since is None:
-                self.settled_since = float(self.data.time)
-            elif self.data.time - self.settled_since >= 0.5:
-                if self.step_count % self.sample_steps == 0:
-                    self.frames.append(_frame(self.scene, self.data, self.executor))
-                self.completed = True
-                self.completion_time = float(self.data.time)
-                self.finished = True
+        if self.scene.task_family == "toss_into_bin":
+            self._update_toss_judgment(cube_position, cube_speed)
+            if self.finished:
                 return False
         else:
-            self.settled_since = None
+            target = np.asarray(self.scene.config["target"], dtype=float)
+            settled = (
+                not self.executor.attached
+                and float(np.linalg.norm(cube_position - target)) <= 0.03
+                and cube_speed < 0.01
+                and abs(float(cube_position[2]) - 0.02) <= 0.005
+            )
+            if settled:
+                if self.settled_since is None:
+                    self.settled_since = float(self.data.time)
+                elif self.data.time - self.settled_since >= 0.5:
+                    if self.step_count % self.sample_steps == 0:
+                        self.frames.append(_frame(self.scene, self.data, self.executor))
+                    self.completed = True
+                    self.completion_time = float(self.data.time)
+                    self.finished = True
+                    return False
+            else:
+                self.settled_since = None
 
         if self.executor.current_skill is None:
             if self.plan_finished_since is None:
@@ -565,6 +640,112 @@ class RunSession:
     def run_to_end(self) -> None:
         while self.step():
             pass
+
+    def _update_toss_judgment(
+        self, cube_position: np.ndarray, cube_speed: float
+    ) -> None:
+        if self.toss_release is None:
+            return
+        bin_center = np.asarray(self.scene.config["binCenter"], dtype=float)
+        half_x, half_y = (
+            float(value) - float(self.scene.config["binWallHalfThickness"])
+            for value in self.scene.config["binHalfExtents"]
+        )
+        wall_height = float(self.scene.config["binWallHeight"])
+        inside = (
+            abs(float(cube_position[0] - bin_center[0])) <= half_x
+            and abs(float(cube_position[1] - bin_center[1])) <= half_y
+            and float(cube_position[2]) < wall_height
+        )
+        self.toss_was_inside = self.toss_was_inside or inside
+
+        if self.toss_touchdown is None:
+            bin_geom_ids = {
+                self.scene.geom_ids[name]
+                for name in (
+                    "bin_floor",
+                    "bin_wall_px",
+                    "bin_wall_nx",
+                    "bin_wall_py",
+                    "bin_wall_ny",
+                )
+            }
+            for contact in self.data.contact[: self.data.ncon]:
+                pair = {int(contact.geom1), int(contact.geom2)}
+                if self.scene.cube_geom_id in pair and (
+                    self.scene.geom_ids["floor"] in pair
+                    or bool(pair & bin_geom_ids)
+                ):
+                    self.toss_touchdown = {
+                        "tSec": float(self.data.time),
+                        "pos": [float(cube_position[0]), float(cube_position[1])],
+                    }
+                    break
+
+        settled = not self.executor.attached and cube_speed < 0.01
+        if not settled:
+            self.toss_rest_since = None
+            return
+        if self.toss_rest_since is None:
+            self.toss_rest_since = float(self.data.time)
+            return
+        if self.data.time - self.toss_rest_since < 0.5:
+            return
+        if inside:
+            if self.step_count % self.sample_steps == 0:
+                self.frames.append(_frame(self.scene, self.data, self.executor))
+            self.completed = True
+            self.completion_time = float(self.data.time)
+            self.finished = True
+            return
+
+        release_speed = float(self.toss_release["tcpSpeedMps"])
+        if release_speed < 0.15 or self.toss_release["mode"] == "open_gripper":
+            kind = "dropped_early"
+            detail = (
+                f"cube came to rest outside the bin without a throw "
+                f"(release speed {release_speed:.2f} m/s; bin at "
+                f"x={bin_center[0]:.2f}, y={bin_center[1]:.2f}; "
+                f"rest x={cube_position[0]:.2f}, y={cube_position[1]:.2f})"
+            )
+        elif self.toss_was_inside:
+            kind = "bounced_out"
+            detail = (
+                f"cube entered the bin interior then came to rest outside "
+                f"(bin at x={bin_center[0]:.2f}, y={bin_center[1]:.2f}; "
+                f"rest x={cube_position[0]:.2f}, y={cube_position[1]:.2f})"
+            )
+        else:
+            touchdown = self.toss_touchdown or {
+                "tSec": float(self.toss_rest_since),
+                "pos": [float(cube_position[0]), float(cube_position[1])],
+            }
+            release = np.asarray(self.toss_release["pos"][:2], dtype=float)
+            direction = bin_center - release
+            distance = float(np.linalg.norm(direction))
+            projection = float(
+                np.dot(np.asarray(touchdown["pos"], dtype=float) - release, direction)
+                / max(distance, 1e-9)
+            )
+            is_short = projection < distance
+            kind = "missed_bin_short" if is_short else "missed_bin_long"
+            missed_by = abs(distance - projection)
+            direction_word = "short" if is_short else "long"
+            detail = (
+                f"touchdown {missed_by:.2f} m {direction_word} of bin center "
+                f"(bin at x={bin_center[0]:.2f}, y={bin_center[1]:.2f}; "
+                f"touchdown x={touchdown['pos'][0]:.2f}, "
+                f"y={touchdown['pos'][1]:.2f}; release speed {release_speed:.2f} m/s)"
+            )
+        failure_time = (
+            float(self.data.time)
+            if kind == "dropped_early"
+            else float(
+                (self.toss_touchdown or {}).get("tSec", self.toss_rest_since)
+            )
+        )
+        self.failure = (kind, failure_time, detail)
+        self.finished = True
 
     def finish(self) -> tuple[dict[str, Any], dict[str, Any]]:
         if not self.finished:

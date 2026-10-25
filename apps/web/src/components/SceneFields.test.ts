@@ -34,4 +34,22 @@ describe("SceneFields default values", () => {
     const input = html.match(/<input\b[^>]*aria-label="Gap width value"[^>]*>/)?.[0];
     expect(input).toContain('value="0.07"');
   });
+
+  it("uses toss-specific bin bounds and controls", () => {
+    const html = renderToStaticMarkup(createElement(SceneFields, {
+      taskFamily: "toss_into_bin",
+      values: defaultOverride("toss_into_bin"),
+      onChange: () => {},
+      seed: 0,
+      onSeedChange: () => {},
+      environments: 1,
+      onEnvironmentsChange: () => {},
+      onReset: () => {},
+    }));
+    expect(html).toContain('aria-label="Object mass"');
+    expect(html).toContain('aria-label="Bin distance"');
+    expect(html).toContain('min="-0.15"');
+    expect(html).toContain('max="0.05"');
+    expect(html).toContain('value="0.08"');
+  });
 });

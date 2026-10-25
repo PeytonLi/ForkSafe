@@ -12,6 +12,7 @@ from simulator.models import SimCase
 
 SCENE_CONFIG_PATH = Path(__file__).with_name("scene_config.json")
 PUSH_GAP_CONFIG_PATH = Path(__file__).parent / "scene_configs/push_gap.json"
+TOSS_BIN_CONFIG_PATH = Path(__file__).parent / "scene_configs/toss_bin.json"
 OVERRIDE_KEYS = {
     "cubeDx",
     "cubeDy",
@@ -29,6 +30,15 @@ PUSH_GAP_OVERRIDE_KEYS = {
     "targetDy",
     "gapDx",
     "gapWidth",
+    "speedScale",
+}
+TOSS_BIN_OVERRIDE_KEYS = {
+    "objectDx",
+    "objectDy",
+    "binDx",
+    "binDy",
+    "binWallHeight",
+    "objectMass",
     "speedScale",
 }
 BIN_DROP_OVERRIDE_KEYS = {
@@ -65,6 +75,7 @@ def task_family(case: SimCase) -> str:
     if not isinstance(family, str) or family not in {
         "divider_pick_place",
         "push_through_gap",
+        "toss_into_bin",
         "bin_drop",
     }:
         raise ValueError(f"unknown taskFamily: {family!r}")
@@ -77,6 +88,8 @@ def _scene_values(
     family = task_family(case)
     if family == "push_through_gap":
         return _push_gap_scene_values(case, base_config)
+    if family == "toss_into_bin":
+        return _toss_bin_scene_values(case, base_config)
     if family == "bin_drop":
         return _bin_drop_scene_values(case, base_config)
     unknown = set(case.scene_overrides) - OVERRIDE_KEYS
@@ -116,6 +129,62 @@ def _scene_values(
     values["dividerCenter"] = [float(divider[0]), float(divider[1])]
     values["dividerHeight"] = float(height)
     return values, float(speed_scale)
+
+
+def _toss_bin_scene_values(
+    case: SimCase, base_config: dict[str, object] | None = None
+) -> tuple[dict[str, object], float]:
+    unknown = set(case.scene_overrides) - TOSS_BIN_OVERRIDE_KEYS
+    if unknown:
+        raise ValueError(f"unknown scene override(s): {', '.join(sorted(unknown))}")
+    values = (
+        json.loads(TOSS_BIN_CONFIG_PATH.read_text())
+        if base_config is None
+        else json.loads(json.dumps(base_config))
+    )
+    ranges = values["overrideRanges"]
+    for key in TOSS_BIN_OVERRIDE_KEYS:
+        value = case.scene_overrides.get(
+            key,
+            1.0 if key == "speedScale" else values.get(key, 0.0),
+        )
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            raise ValueError(f"scene override {key} must be finite and numeric") from None
+        low, high = ranges[key]
+        if not np.isfinite(number) or number < low or number > high:
+            raise ValueError(
+                f"scene override {key} must be finite and within [{low}, {high}]"
+            )
+        if key in {"objectDx", "objectDy", "binDx", "binDy"}:
+            continue
+        values[key] = number
+
+    object_start = np.asarray(values["objectStart"], dtype=float)
+    bin_center = np.asarray(values["binCenter"], dtype=float)
+    object_start[0] += float(case.scene_overrides.get("objectDx", 0.0))
+    object_start[1] += float(case.scene_overrides.get("objectDy", 0.0))
+    bin_center[0] += float(case.scene_overrides.get("binDx", 0.0))
+    bin_center[1] += float(case.scene_overrides.get("binDy", 0.0))
+    half_x, half_y = (float(value) for value in values["binHalfExtents"])
+    half_size = float(values["objectHalfSize"])
+    thickness = float(values["binWallHalfThickness"])
+    if (
+        abs(float(object_start[0] - bin_center[0])) <= half_x + half_size
+        and abs(float(object_start[1] - bin_center[1])) <= half_y + half_size
+    ):
+        raise ValueError("bin overlaps object start")
+    if (
+        abs(float(bin_center[0])) <= half_x + 0.15
+        and abs(float(bin_center[1])) <= half_y + 0.15
+    ):
+        raise ValueError("bin overlaps robot base")
+    if thickness <= 0 or half_x <= thickness or half_y <= thickness:
+        raise ValueError("bin wall thickness must fit within binHalfExtents")
+    values["objectStart"] = [float(value) for value in object_start]
+    values["binCenter"] = [float(value) for value in bin_center]
+    return values, float(case.scene_overrides.get("speedScale", 1.0))
 
 
 def _push_gap_scene_values(
@@ -218,19 +287,70 @@ def build_scene(
         raise ValueError("Panda model has no hand body")
     hand.add_site(name="tcp", pos=[0, 0, 0.1034], size=[0.006])
 
-    cube_pos = values["cubeStart"]
+    cube_pos = values["objectStart"] if family == "toss_into_bin" else values["cubeStart"]
     cube = spec.worldbody.add_body(name="cube", pos=cube_pos)
     cube.add_freejoint(name="cube_free")
     cube.add_geom(
         name="cube_geom",
         type=mujoco.mjtGeom.mjGEOM_BOX,
-        size=[0.02, 0.02, 0.02],
-        mass=0.1,
+        size=(
+            [float(values["objectHalfSize"])] * 3
+            if family == "toss_into_bin"
+            else [0.02, 0.02, 0.02]
+        ),
+        mass=float(values["objectMass"]) if family == "toss_into_bin" else 0.1,
         rgba=[0.85, 0.2, 0.12, 1],
         friction=[1.0, 0.005, 0.0001],
     )
 
-    if family == "divider_pick_place":
+    if family == "toss_into_bin":
+        bin_x, bin_y = values["binCenter"]
+        half_x, half_y = (float(value) for value in values["binHalfExtents"])
+        wall_height = float(values["binWallHeight"])
+        wall_thickness = float(values["binWallHalfThickness"])
+        floor_thickness = float(values["binFloorHalfThickness"])
+        bin_body = spec.worldbody.add_body(name="bin", pos=[bin_x, bin_y, 0])
+        bin_body.add_geom(
+            name="bin_floor",
+            type=mujoco.mjtGeom.mjGEOM_BOX,
+            pos=[0, 0, floor_thickness],
+            size=[half_x, half_y, floor_thickness],
+            rgba=[0.38, 0.54, 0.66, 1],
+        )
+        for name, x, y, size in (
+            (
+                "bin_wall_px",
+                half_x - wall_thickness / 2,
+                0,
+                [wall_thickness / 2, half_y, wall_height / 2],
+            ),
+            (
+                "bin_wall_nx",
+                -half_x + wall_thickness / 2,
+                0,
+                [wall_thickness / 2, half_y, wall_height / 2],
+            ),
+            (
+                "bin_wall_py",
+                0,
+                half_y - wall_thickness / 2,
+                [half_x - wall_thickness, wall_thickness / 2, wall_height / 2],
+            ),
+            (
+                "bin_wall_ny",
+                0,
+                -half_y + wall_thickness / 2,
+                [half_x - wall_thickness, wall_thickness / 2, wall_height / 2],
+            ),
+        ):
+            bin_body.add_geom(
+                name=name,
+                type=mujoco.mjtGeom.mjGEOM_BOX,
+                pos=[x, y, wall_height / 2],
+                size=size,
+                rgba=[0.38, 0.54, 0.66, 1],
+            )
+    elif family == "divider_pick_place":
         divider_x, divider_y = values["dividerCenter"]
         half_length = float(values["dividerHalfLength"])
         half_thickness = float(values["dividerHalfThickness"])
@@ -285,40 +405,43 @@ def build_scene(
             pos=[bin_x, bin_y - half, wall_height / 2],
             size=[half, thick, wall_height / 2], rgba=[0.2, 0.45, 0.62, 1],
         )
-    wall_defs = (
-        ("wall_near", [0.20, 0, wall_height / 2], [0.01, 0.4, wall_height / 2]),
-        ("wall_far", [0.90, 0, wall_height / 2], [0.01, 0.4, wall_height / 2]),
-        ("wall_left", [0.55, -0.40, wall_height / 2], [0.35, 0.01, wall_height / 2]),
-        ("wall_right", [0.55, 0.40, wall_height / 2], [0.35, 0.01, wall_height / 2]),
-    )
-    for name, pos, size in wall_defs:
-        spec.worldbody.add_geom(
-            name=name,
-            type=mujoco.mjtGeom.mjGEOM_BOX,
-            pos=pos,
-            size=size,
-            rgba=[0.45, 0.47, 0.5, 1],
-        )
 
-    target = values["target"]
-    spec.worldbody.add_site(
-        name="target",
-        pos=target,
-        type=mujoco.mjtGeom.mjGEOM_SPHERE,
-        size=[0.025],
-        rgba=[0.1, 0.8, 0.25, 0.4],
-        group=1,
-    )
-    marker = spec.worldbody.add_geom(
-        name="target_marker",
-        type=mujoco.mjtGeom.mjGEOM_SPHERE,
-        pos=target,
-        size=[0.025],
-        contype=0,
-        conaffinity=0,
-        rgba=[0.1, 0.8, 0.25, 0.4],
-    )
-    del marker
+    if family != "toss_into_bin":
+        wall_defs = (
+            ("wall_near", [0.20, 0, wall_height / 2], [0.01, 0.4, wall_height / 2]),
+            ("wall_far", [0.90, 0, wall_height / 2], [0.01, 0.4, wall_height / 2]),
+            ("wall_left", [0.55, -0.40, wall_height / 2], [0.35, 0.01, wall_height / 2]),
+            ("wall_right", [0.55, 0.40, wall_height / 2], [0.35, 0.01, wall_height / 2]),
+        )
+        for name, pos, size in wall_defs:
+            spec.worldbody.add_geom(
+                name=name,
+                type=mujoco.mjtGeom.mjGEOM_BOX,
+                pos=pos,
+                size=size,
+                rgba=[0.45, 0.47, 0.5, 1],
+            )
+
+    if family != "toss_into_bin":
+        target = values["target"]
+        spec.worldbody.add_site(
+            name="target",
+            pos=target,
+            type=mujoco.mjtGeom.mjGEOM_SPHERE,
+            size=[0.025],
+            rgba=[0.1, 0.8, 0.25, 0.4],
+            group=1,
+        )
+        marker = spec.worldbody.add_geom(
+            name="target_marker",
+            type=mujoco.mjtGeom.mjGEOM_SPHERE,
+            pos=target,
+            size=[0.025],
+            contype=0,
+            conaffinity=0,
+            rgba=[0.1, 0.8, 0.25, 0.4],
+        )
+        del marker
     equality = spec.add_equality(
         name="grasp_weld",
         type=mujoco.mjtEq.mjEQ_WELD,
@@ -332,7 +455,12 @@ def build_scene(
 
     model = spec.compile()
     # Yaw noise is supplied per run by the runner from the same case seed.
-    if family == "divider_pick_place":
+    if family == "toss_into_bin":
+        geom_names = (
+            "floor", "cube_geom", "bin_floor", "bin_wall_px", "bin_wall_nx",
+            "bin_wall_py", "bin_wall_ny",
+        )
+    elif family == "divider_pick_place":
         geom_names = (
             "floor", "cube_geom", "divider",
             "wall_near", "wall_far", "wall_left", "wall_right",

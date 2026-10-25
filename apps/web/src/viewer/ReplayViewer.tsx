@@ -3,6 +3,7 @@ import * as THREE from "three";
 import type { SimRunResult, TaskFamily } from "@forksafe/contracts";
 import { resolveScene, type ResolvedScene } from "../scene";
 import { mjToThreePos, mjToThreeQuat, sampleAt, type Sample } from "./transform";
+import { makeTossBin, placeTossBin, setTossBinHeight } from "./tossBin";
 import styles from "./ReplayViewer.module.css";
 
 const CHAIN = ["link0", "link1", "link4", "link6", "hand"] as const;
@@ -16,6 +17,7 @@ interface Scene3D {
   hand: THREE.Mesh;
   cube: THREE.Mesh;
   divider: THREE.Mesh;
+  bin: THREE.Group;
   gapLeft: THREE.Mesh;
   gapRight: THREE.Mesh;
   target: THREE.Mesh;
@@ -125,6 +127,8 @@ function build(canvas: HTMLCanvasElement): Scene3D {
     new THREE.MeshStandardMaterial({ color: "#16a34a", transparent: true, opacity: 0.55 }),
   );
   s.add(target);
+  const bin = makeTossBin();
+  s.add(bin);
   const contact = new THREE.Mesh(new THREE.SphereGeometry(0.018, 16, 10), new THREE.MeshBasicMaterial({ color: "#dc2626" }));
   s.add(contact);
   for (const object of s.children) {
@@ -133,7 +137,7 @@ function build(canvas: HTMLCanvasElement): Scene3D {
   const ghost = ghostArm(s);
   const paths = new THREE.Group();
   s.add(paths);
-  return { renderer, scene: s, camera, links, joints, hand, cube, divider, gapLeft, gapRight, target, contact, ghost, paths };
+  return { renderer, scene: s, camera, links, joints, hand, cube, divider, bin, gapLeft, gapRight, target, contact, ghost, paths };
 }
 
 const v = (p: [number, number, number]) => new THREE.Vector3(...mjToThreePos(p));
@@ -201,7 +205,11 @@ function setStaticScene(s3: Scene3D, scene: ResolvedScene) {
   s3.target.visible = true;
   s3.target.position.set(scene.target[0], scene.target[2], scene.target[1]);
   s3.target.scale.set(0.12, 0.003, 0.12);
+  s3.bin.visible = false;
+  s3.gapLeft.visible = false;
+  s3.gapRight.visible = false;
   if (scene.kind === "divider_pick_place") {
+    s3.divider.visible = true;
     placeFloorObject(
       s3.divider,
       scene.dividerCenter[0],
@@ -211,14 +219,16 @@ function setStaticScene(s3: Scene3D, scene: ResolvedScene) {
       scene.dividerHeight,
       scene.dividerHalfThickness * 2,
     );
-    s3.gapLeft.visible = false;
-    s3.gapRight.visible = false;
   } else if (scene.kind === "bin_drop") {
     s3.divider.visible = false;
-    s3.gapLeft.visible = false;
-    s3.gapRight.visible = false;
     s3.target.scale.set(scene.binWidth, 0.02, scene.binWidth);
     s3.target.position.set(scene.binCenter[0], scene.target[2], scene.binCenter[1]);
+  } else if (scene.kind === "toss_into_bin") {
+    s3.divider.visible = false;
+    s3.target.visible = false;
+    setTossBinHeight(s3.bin, scene.binWallHeight);
+    s3.bin.position.set(scene.binCenter[0], 0, scene.binCenter[1]);
+    s3.bin.visible = true;
   } else {
     s3.divider.visible = false;
     const [wallStart, wallEnd] = scene.wallSpanX;
@@ -251,6 +261,8 @@ function apply(s3: Scene3D, replay: SimRunResult | undefined, t: number, ghost: 
   if (cube) place(smp, s3.cube, "cube");
   const divider = smp.bodies.get("divider");
   if (divider) place(smp, s3.divider, "divider");
+  const bin = smp.bodies.get("bin");
+  if (bin) placeTossBin(s3.bin, bin);
   const gapLeft = smp.bodies.get("gap_wall_left");
   if (gapLeft) place(smp, s3.gapLeft, "gap_wall_left");
   const gapRight = smp.bodies.get("gap_wall_right");
@@ -397,7 +409,9 @@ export function ReplayViewer({
             ? `Gap width: ${resolvedScene.gapWidth.toFixed(2)} m`
             : resolvedScene.kind === "bin_drop"
               ? `Bin opening: ${resolvedScene.binWidth.toFixed(2)} m`
-              : `Divider height: ${resolvedScene.dividerHeight.toFixed(2)} m`}
+              : resolvedScene.kind === "toss_into_bin"
+                ? `Bin wall height: ${resolvedScene.binWallHeight.toFixed(2)} m`
+                : `Divider height: ${resolvedScene.dividerHeight.toFixed(2)} m`}
         </span>}
         {!compact && replay && contact ? (
           <span className={styles.contact}>

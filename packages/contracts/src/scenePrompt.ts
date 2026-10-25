@@ -3,7 +3,7 @@
  * Pure: no network, model, or simulator. Anything the scene cannot represent is refused.
  */
 import {
-  SCENE_OVERRIDE_RANGES,
+  sceneOverrideRange,
   TASK_FAMILY_SPECS,
   isTaskFamily,
   validateSceneOverrides,
@@ -87,7 +87,7 @@ export function compileScenePrompt(
 
   const applied: ScenePromptApplication[] = [];
   for (const change of interpret(source, taskFamily, allowed, refusals)) {
-    const range = SCENE_OVERRIDE_RANGES[change.key];
+    const range = sceneOverrideRange(taskFamily, change.key);
     const base = startingValue(overrides, change.key);
     const next = change.mode === "absolute"
       ? clamp(change.amount ?? base, range.min, range.max)
@@ -353,16 +353,17 @@ function convert(
   taskFamily: string,
   refusals: string[],
 ): { ok: true; amount: number | null } | { ok: false } {
-  const label = SCENE_OVERRIDE_RANGES[key].label;
+  const range = sceneOverrideRange(taskFamily, key);
+  const label = range.label;
   if (number.unit === "percent") {
     pushRefusal(refusals, cannotRepresent("a percentage", taskFamily));
     return { ok: false };
   }
-  if (number.unit === "times" && SCENE_OVERRIDE_RANGES[key].unit !== "×") {
+  if (number.unit === "times" && range.unit !== "×") {
     pushRefusal(refusals, cannotRepresent(`a multiplier for ${label}`, taskFamily));
     return { ok: false };
   }
-  if (number.unit === "metres" && SCENE_OVERRIDE_RANGES[key].unit !== "m") {
+  if (number.unit === "metres" && range.unit !== "m") {
     pushRefusal(refusals, cannotRepresent(`a distance for ${label}`, taskFamily));
     return { ok: false };
   }
@@ -434,7 +435,7 @@ function isScalar(key: SceneOverrideKey): boolean {
 
 function capabilitySentence(taskFamily: string): string {
   if (!isTaskFamily(taskFamily)) return `Unknown task "${taskFamily}".`;
-  const labels = TASK_FAMILY_SPECS[taskFamily].overrideKeys.map((key) => SCENE_OVERRIDE_RANGES[key].label);
+  const labels = TASK_FAMILY_SPECS[taskFamily].overrideKeys.map((key) => sceneOverrideRange(taskFamily, key).label);
   return `This scene can change ${englishList(labels)}.`;
 }
 
@@ -444,7 +445,7 @@ function cannotRepresent(thing: string, taskFamily: string): string {
 
 function unavailable(key: SceneOverrideKey, taskFamily: string): string {
   const title = isTaskFamily(taskFamily) ? TASK_FAMILY_SPECS[taskFamily].title : taskFamily;
-  return `${SCENE_OVERRIDE_RANGES[key].label} is not a setting for "${title}". ${capabilitySentence(taskFamily)}`;
+  return `${sceneOverrideRange(taskFamily, key).label} is not a setting for "${title}". ${capabilitySentence(taskFamily)}`;
 }
 
 function impossible(object: ObjectKind, axis: AxisName): string {

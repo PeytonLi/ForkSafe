@@ -4,9 +4,11 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_TASK_FAMILY,
   SCENE_OVERRIDE_RANGES,
+  TOSS_BIN_OVERRIDES,
   TASK_FAMILIES,
   TASK_FAMILY_SPECS,
   isTaskFamily,
+  sceneOverrideRange,
   sceneVariantFor,
   validateSceneOverrides,
   type SceneOverrideKey,
@@ -23,10 +25,10 @@ function pythonSet(name: string) {
 
 describe("scene family contracts", () => {
   it("defines known families and the default", () => {
-    expect(TASK_FAMILIES).toEqual(["divider_pick_place", "push_through_gap", "bin_drop"]);
+    expect(TASK_FAMILIES).toEqual(["divider_pick_place", "push_through_gap", "bin_drop", "toss_into_bin"]);
     expect(DEFAULT_TASK_FAMILY).toBe("divider_pick_place");
     expect(isTaskFamily("push_through_gap")).toBe(true);
-    expect(isTaskFamily("toss_into_bin")).toBe(false);
+    expect(isTaskFamily("toss_into_bin")).toBe(true);
   });
 
   it("validates family keys, finite values, and inclusive ranges", () => {
@@ -53,6 +55,18 @@ describe("scene family contracts", () => {
       reason: "Robot speed must be between 0.50× and 2.00×.",
     });
     expect(SCENE_OVERRIDE_RANGES.gapWidth).toMatchObject({ min: 0.05, max: 0.2, step: 0.005, unit: "m" });
+    expect(validateSceneOverrides("toss_into_bin", { binDx: 0.06 }).ok).toBe(false);
+    expect(validateSceneOverrides("bin_drop", { binDx: 0.06 }).ok).toBe(true);
+    expect(validateSceneOverrides("toss_into_bin", { speedScale: 1.6 }).ok).toBe(false);
+    expect(validateSceneOverrides("bin_drop", { speedScale: 1.6 }).ok).toBe(true);
+    for (const range of TOSS_BIN_OVERRIDES) {
+      expect(sceneOverrideRange("toss_into_bin", range.key)).toMatchObject({
+        min: range.min,
+        max: range.max,
+        step: range.step,
+        unit: range.unit,
+      });
+    }
   });
 
   it("keeps Python simulator override keys in sync with each family", () => {
@@ -60,6 +74,7 @@ describe("scene family contracts", () => {
       divider_pick_place: "OVERRIDE_KEYS",
       push_through_gap: "PUSH_GAP_OVERRIDE_KEYS",
       bin_drop: "BIN_DROP_OVERRIDE_KEYS",
+      toss_into_bin: "TOSS_BIN_OVERRIDE_KEYS",
     } as const;
     for (const [family, setName] of Object.entries(parity)) {
       expect(pythonSet(setName)).toEqual([...TASK_FAMILY_SPECS[family as keyof typeof parity].overrideKeys].sort());

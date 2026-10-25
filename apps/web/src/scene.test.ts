@@ -49,6 +49,27 @@ describe("scene resolver", () => {
     });
   });
 
+  it("resolves toss overrides independently from bin-drop geometry", () => {
+    const toss = resolveScene("toss_into_bin", {
+      objectDx: 0.02,
+      objectDy: -0.01,
+      binDx: -0.05,
+      binDy: 0.1,
+      binWallHeight: 0.1,
+    });
+    expect(toss.kind).toBe("toss_into_bin");
+    if (toss.kind !== "toss_into_bin") throw new Error("Expected toss scene");
+    expect(toss.cubeStart[0]).toBeCloseTo(0.47);
+    expect(toss.cubeStart[1]).toBeCloseTo(-0.11);
+    expect(toss.binCenter[0]).toBeCloseTo(0.9);
+    expect(toss.binCenter[1]).toBeCloseTo(0.1);
+    expect(toss.binWallHeight).toBe(0.1);
+    const binDrop = resolveScene("bin_drop", { binDx: 0.08, binWidth: 0.2 });
+    if (binDrop.kind !== "bin_drop") throw new Error("Expected bin-drop scene");
+    expect(binDrop.binCenter[0]).toBeCloseTo(0.7);
+    expect(binDrop.binCenter[1]).toBe(0.16);
+  });
+
   it("provides defaults and only reports meaningful changes", () => {
     const defaults = defaultOverride("divider_pick_place");
     expect(defaults).toMatchObject({ dividerHeight: 0.1, speedScale: 1, cubeDx: 0 });

@@ -1,0 +1,19 @@
+{
+  "objectStart": [0.45, -0.10, 0.02],
+  "objectHalfSize": 0.02,
+  "objectMass": 0.05,
+  "binCenter": [0.95, 0.0],
+  "binHalfExtents": [0.10, 0.10],
+  "binWallHeight": 0.08,
+  "binWallHalfThickness": 0.005,
+  "binFloorHalfThickness": 0.005,
+  "overrideRanges": {
+    "objectDx": [-0.08, 0.08],
+    "objectDy": [-0.08, 0.08],
+    "binDx": [-0.15, 0.05],
+    "binDy": [-0.2, 0.2],
+    "binWallHeight": [0.03, 0.15],
+    "objectMass": [0.01, 0.5],
+    "speedScale": [0.5, 1.5]
+  }
+}

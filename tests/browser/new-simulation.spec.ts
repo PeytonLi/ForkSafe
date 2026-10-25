@@ -53,11 +53,12 @@ test("describe a scene, edit the prefill, and refuse unsupported physics", async
   await expectNoHorizontalOverflow(page);
   await input.fill("robot throwing trash into a bin");
   await useThis.click();
-  await expect(note).toContainText("ForkSafe can't simulate that yet.");
-  await journey.getByRole("radio", { name: /Pick and place over a divider/ }).check();
-  await journey.getByRole("button", { name: "Next", exact: true }).click();
-  await expect(journey.getByLabel("Divider height value")).toHaveValue("0.10");
-  await expect(note).toHaveCount(0);
+  await expect(note).toContainText("Matched: Toss an object into a bin.");
+  await expect(journey.getByTestId("scene-preview")).toHaveAttribute("data-scene-kind", "toss_into_bin");
+  await expect(journey.getByTestId("scene-preview-summary")).toContainText("Bin wall height");
+  await waitForCanvas(page, journey.getByTestId("scene-preview"));
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await screenshot(page, "toss-bin-preview-fixture", viewport);
 });
 
 async function expectNoHorizontalOverflow(page: Page) {

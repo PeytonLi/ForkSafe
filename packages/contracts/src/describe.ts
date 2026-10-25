@@ -1,5 +1,5 @@
 import {
-  DESCRIBE_HINTS, SCENE_DEFAULTS, SCENE_OVERRIDE_RANGES, TASK_FAMILIES, TASK_FAMILY_SPECS,
+  DESCRIBE_HINTS, SCENE_DEFAULTS, sceneOverrideRange, TASK_FAMILIES, TASK_FAMILY_SPECS,
   isTaskFamily, validateSceneOverrides, type SceneOverrideKey, type TaskFamily,
 } from "./scenes.js";
 
@@ -30,7 +30,7 @@ export function normalizeDescribedOverrides(family: TaskFamily, input: Record<st
     const raw = input[key];
     if (raw === null || raw === undefined) continue;
     if (typeof raw !== "number" || !Number.isFinite(raw)) throw new Error("Invalid scene number");
-    const { min, max, step } = SCENE_OVERRIDE_RANGES[key];
+    const { min, max, step } = sceneOverrideRange(family, key);
     const clamped = Math.min(max, Math.max(min, raw));
     const value = Number(Math.min(max, Math.max(min, min + Math.round((clamped - min) / step) * step)).toFixed(5));
     if (value !== SCENE_DEFAULTS[key]) output[key] = value;

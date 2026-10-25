@@ -1,4 +1,4 @@
-import { minimizeMonotonic, SCENE_OVERRIDE_RANGES, TASK_FAMILY_SPECS, isTaskFamily, type SceneOverrideKey, type TaskFamily } from "@forksafe/contracts";
+import { minimizeMonotonic, SCENE_OVERRIDE_RANGES, sceneOverrideRange, TASK_FAMILY_SPECS, isTaskFamily, type SceneOverrideKey, type TaskFamily } from "@forksafe/contracts";
 
 /** Shown on the shrink control. This model is a fixed rule, not a new MuJoCo run. */
 export const RECORDED_MODEL_LABEL = "This shrink uses a fixed recorded scene model, not a new MuJoCo run.";
@@ -31,8 +31,8 @@ function atMost(overrides: Record<string, number>, key: string, limit: number): 
   return typeof value === "number" && Number.isFinite(value) && value <= limit;
 }
 
-function midpoint(key: SceneOverrideKey): number {
-  const range = SCENE_OVERRIDE_RANGES[key];
+function midpoint(taskFamily: TaskFamily, key: SceneOverrideKey): number {
+  const range = sceneOverrideRange(taskFamily, key);
   return (range.min + range.max) / 2;
 }
 
@@ -40,7 +40,7 @@ function midpoint(key: SceneOverrideKey): number {
 export function pickShrinkKey(taskFamily: TaskFamily, overrides: Record<string, number>): SceneOverrideKey {
   const keys = TASK_FAMILY_SPECS[taskFamily].overrideKeys;
   for (const key of keys) {
-    const range = SCENE_OVERRIDE_RANGES[key];
+    const range = sceneOverrideRange(taskFamily, key);
     const passesAtEnd = !recordedSceneFails(taskFamily, { ...overrides, [key]: range.min })
       || !recordedSceneFails(taskFamily, { ...overrides, [key]: range.max });
     if (recordedSceneFails(taskFamily, overrides) && passesAtEnd) return key;
@@ -55,9 +55,9 @@ export function shrinkRecordedControl(
 ): { value: number; from: number } | { reason: string } {
   if (!recordedSceneFails(taskFamily, overrides)) return { reason: "not-failure" };
   if (!isTaskFamily(taskFamily) || !isSceneKey(key)) return { reason: "This control is not in the recorded model." };
-  const range = SCENE_OVERRIDE_RANGES[key];
+  const range = sceneOverrideRange(taskFamily, key);
   const raw = overrides[key];
-  const high = typeof raw === "number" && Number.isFinite(raw) ? raw : midpoint(key);
+  const high = typeof raw === "number" && Number.isFinite(raw) ? raw : midpoint(taskFamily, key);
   const fails = (value: number) => recordedSceneFails(taskFamily, { ...overrides, [key]: value });
   const minPasses = !fails(range.min);
   const maxPasses = !fails(range.max);

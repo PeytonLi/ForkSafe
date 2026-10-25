@@ -144,6 +144,7 @@ def make_snapshot(session: RunSession) -> dict[str, Any]:
             "gripperSettled": _finite_number(executor.gripper_settled),
             "closeComplete": executor.close_complete,
             "attached": executor.attached,
+            "tossReleased": executor.toss_released,
             "attachmentEvents": json.loads(json.dumps(executor.attachment_events)),
             "error": list(executor.error) if executor.error is not None else None,
         },
@@ -157,6 +158,10 @@ def make_snapshot(session: RunSession) -> dict[str, Any]:
             "settledSince": session.settled_since,
             "idleSince": session.idle_since,
             "planFinishedSince": session.plan_finished_since,
+            "tossRelease": session.toss_release,
+            "tossTouchdown": session.toss_touchdown,
+            "tossWasInside": session.toss_was_inside,
+            "tossRestSince": session.toss_rest_since,
         },
         "rng": {
             "seed": session.seed,
@@ -315,6 +320,7 @@ def _validate_snapshot(snapshot_doc: Any) -> tuple[dict[str, Any], dict[str, Any
             "gripperSettled",
             "closeComplete",
             "attached",
+            "tossReleased",
             "attachmentEvents",
             "error",
         },
@@ -322,7 +328,17 @@ def _validate_snapshot(snapshot_doc: Any) -> tuple[dict[str, Any], dict[str, Any
     )
     _required_fields(
         state["loop"],
-        {"stepCount", "counters", "settledSince", "idleSince", "planFinishedSince"},
+        {
+            "stepCount",
+            "counters",
+            "settledSince",
+            "idleSince",
+            "planFinishedSince",
+            "tossRelease",
+            "tossTouchdown",
+            "tossWasInside",
+            "tossRestSince",
+        },
         "loop",
     )
     _required_fields(state["rng"], {"seed", "bitGenerator"}, "rng")
@@ -338,6 +354,7 @@ def _validate_snapshot(snapshot_doc: Any) -> tuple[dict[str, Any], dict[str, Any
     if (
         not isinstance(executor["closeComplete"], bool)
         or not isinstance(executor["attached"], bool)
+        or not isinstance(executor["tossReleased"], bool)
         or not isinstance(executor["attachmentEvents"], list)
         or (
             executor["error"] is not None
@@ -353,6 +370,12 @@ def _validate_snapshot(snapshot_doc: Any) -> tuple[dict[str, Any], dict[str, Any
     _checked_int(loop["stepCount"], "loop stepCount")
     for key in ("settledSince", "idleSince", "planFinishedSince"):
         _optional_float(loop[key], f"loop {key}")
+    for key in ("tossRelease", "tossTouchdown"):
+        if loop[key] is not None and not isinstance(loop[key], dict):
+            raise SnapshotIntegrityError(f"malformed loop {key}")
+    if not isinstance(loop["tossWasInside"], bool):
+        raise SnapshotIntegrityError("malformed loop tossWasInside")
+    _optional_float(loop["tossRestSince"], "loop tossRestSince")
     if not isinstance(loop["counters"], list):
         raise SnapshotIntegrityError("malformed loop counters")
     _checked_int(state["rng"]["seed"], "RNG seed")
@@ -481,6 +504,7 @@ def restore_session(
     )
     session.executor.close_complete = executor_state["closeComplete"]
     session.executor.attached = executor_state["attached"]
+    session.executor.toss_released = executor_state["tossReleased"]
     session.executor.attachment_events = json.loads(
         json.dumps(executor_state["attachmentEvents"])
     )
@@ -514,6 +538,10 @@ def restore_session(
     session.plan_finished_since = _optional_float(
         loop["planFinishedSince"], "loop planFinishedSince"
     )
+    session.toss_release = json.loads(json.dumps(loop["tossRelease"]))
+    session.toss_touchdown = json.loads(json.dumps(loop["tossTouchdown"]))
+    session.toss_was_inside = loop["tossWasInside"]
+    session.toss_rest_since = _optional_float(loop["tossRestSince"], "loop tossRestSince")
     success_criteria = manifest["successCriteria"]
     if set(success_criteria) != set(SUCCESS_CRITERIA) | {"maxTimeSec"}:
         raise SnapshotIntegrityError("malformed successCriteria fields")

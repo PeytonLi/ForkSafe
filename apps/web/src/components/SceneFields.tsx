@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { SCENE_OVERRIDE_RANGES, TASK_FAMILY_SPECS, type SceneOverrideKey, type TaskFamily } from "@forksafe/contracts";
+import { SCENE_OVERRIDE_RANGES, sceneOverrideRange, TASK_FAMILY_SPECS, type SceneOverrideKey, type TaskFamily } from "@forksafe/contracts";
 import styles from "./SceneFields.module.css";
 
 const FIELD_GROUPS: Record<TaskFamily, { label: string; keys: SceneOverrideKey[] }[]> = {
@@ -16,6 +16,10 @@ const FIELD_GROUPS: Record<TaskFamily, { label: string; keys: SceneOverrideKey[]
   bin_drop: [
     { label: "Bin", keys: ["binDx", "binDy", "binWidth"] },
     { label: "Cube", keys: ["cubeDx", "cubeDy"] },
+  ],
+  toss_into_bin: [
+    { label: "Object", keys: ["objectDx", "objectDy", "objectMass"] },
+    { label: "Bin", keys: ["binDx", "binDy", "binWallHeight"] },
   ],
 };
 
@@ -36,13 +40,13 @@ interface Props {
 
 export function formatSceneValue(key: string, value: number): string {
   if (!Number.isFinite(value)) return "";
-  const digits = ["dividerHeight", "gapWidth", "binWidth", "speedScale"].includes(key) ? 2 : 3;
+  const digits = ["dividerHeight", "gapWidth", "binWidth", "binWallHeight", "objectMass", "speedScale"].includes(key) ? 2 : 3;
   return value.toFixed(digits);
 }
 
-function SceneNumber({ sceneKey, value, onChange }: { sceneKey: SceneOverrideKey; value: number; onChange: (value: number) => void }) {
+function SceneNumber({ taskFamily, sceneKey, value, onChange }: { taskFamily: TaskFamily; sceneKey: SceneOverrideKey; value: number; onChange: (value: number) => void }) {
   const [draft, setDraft] = useState<string | null>(null);
-  const range = SCENE_OVERRIDE_RANGES[sceneKey];
+  const range = sceneOverrideRange(taskFamily, sceneKey);
   return (
     <input
       className={styles.number}
@@ -93,7 +97,7 @@ export function SceneFields({
           <legend>{group.label}</legend>
           {group.keys.map((key) => {
             if (!keys.some((sceneKey) => sceneKey === key)) return null;
-            const range = SCENE_OVERRIDE_RANGES[key];
+            const range = sceneOverrideRange(taskFamily, key);
             const value = values[key] ?? 0;
             return (
               <label className={styles.field} key={key}>
@@ -109,7 +113,7 @@ export function SceneFields({
                     value={Number.isFinite(value) ? value : range.min}
                     onChange={(event) => onChange(key, Number(event.currentTarget.value))}
                   />
-                  <SceneNumber sceneKey={key} value={value} onChange={(next) => onChange(key, next)} />
+                  <SceneNumber taskFamily={taskFamily} sceneKey={key} value={value} onChange={(next) => onChange(key, next)} />
                   <span className={styles.unit}>{range.unit}</span>
                 </span>
               </label>
@@ -132,7 +136,7 @@ export function SceneFields({
               value={values.speedScale ?? 1}
               onChange={(event) => onChange("speedScale", Number(event.currentTarget.value))}
             />
-            <SceneNumber sceneKey="speedScale" value={speedScale} onChange={(next) => onChange("speedScale", next)} />
+          <SceneNumber taskFamily={taskFamily} sceneKey="speedScale" value={speedScale} onChange={(next) => onChange("speedScale", next)} />
             <span className={styles.unit}>×</span>
           </span>
         </label>

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation } from "convex/react";
 import { makeFunctionReference } from "convex/server";
-import { DEFAULT_TASK_FAMILY, SCENE_OVERRIDE_RANGES, TASK_FAMILY_SPECS, isTaskFamily, type SceneOverrideKey } from "@forksafe/contracts";
+import { DEFAULT_TASK_FAMILY, SCENE_DEFAULTS, SCENE_OVERRIDE_RANGES, sceneOverrideRange, TASK_FAMILY_SPECS, isTaskFamily, type SceneOverrideKey } from "@forksafe/contracts";
 import { useClient } from "../hooks";
 import type { InvestigationWorkspace } from "../services";
 import { challengesFor, removeChallenge, saveChallenge, type ChallengeRequest } from "./challengeCase";
@@ -35,7 +35,7 @@ function initialOverrides(workspace: InvestigationWorkspace): Record<string, num
   const baseline = workspace.investigation.baselineCase.sceneOverrides;
   return Object.fromEntries(fieldKeys(workspace).map((key) => {
     const value = baseline[key];
-    return [key, typeof value === "number" && Number.isFinite(value) ? value : 0];
+    return [key, typeof value === "number" && Number.isFinite(value) ? value : SCENE_DEFAULTS[key as SceneOverrideKey]];
   }));
 }
 
@@ -44,6 +44,9 @@ export function ChallengeCaseForm({ workspace, candidateId }: { workspace: Inves
   const access = useBrowserAccess();
   const investigationId = workspace.investigation.id;
   const seed = workspace.investigation.baselineCase.seed;
+  const taskFamily = isTaskFamily(workspace.investigation.baselineCase.taskFamily)
+    ? workspace.investigation.baselineCase.taskFamily
+    : DEFAULT_TASK_FAMILY;
   const keys = fieldKeys(workspace);
   const [note, setNote] = useState("");
   const [overrides, setOverrides] = useState<Record<string, number>>(() => initialOverrides(workspace));
@@ -94,7 +97,7 @@ export function ChallengeCaseForm({ workspace, candidateId }: { workspace: Inves
       </label>
       <div className={styles.grid}>
         {keys.map((key) => {
-          const range = isOverrideKey(key) ? SCENE_OVERRIDE_RANGES[key] : undefined;
+          const range = isOverrideKey(key) ? sceneOverrideRange(taskFamily, key) : undefined;
           return (
             <label className={styles.field} key={key}>
               {range?.label ?? key}
