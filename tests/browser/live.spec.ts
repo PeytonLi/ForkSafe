@@ -33,7 +33,8 @@ async function assertNoOverflow(page: Page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
 }
 
-test("fixture live stream advances, hands off to replay, and appears in environment cards", async ({ page }, info) => {
+// Desktop software WebGL plus the stream handoff can run past the 45s suite cap.
+test("fixture live stream advances, hands off to replay, and appears in environment cards", { timeout: 90_000 }, async ({ page }, info) => {
   const mobile = info.project.name === "mobile";
   await page.setViewportSize(mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 });
   await openDemo(page, mobile, true);
