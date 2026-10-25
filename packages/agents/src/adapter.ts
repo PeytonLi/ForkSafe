@@ -15,7 +15,7 @@ import { FORKSAFE_TOOL_NAMES } from "./tools.js";
 export type StreamMsg =
   | { type: "assistant"; text: string }
   | { type: "tool_call"; name: string; toolCallId: string }
-  | { type: "tool_result"; isError: boolean }
+  | { type: "tool_result"; isError: boolean; toolCallId?: string; text?: string }
   | { type: "error"; message: string }
   | {
       type: "result";
@@ -122,6 +122,17 @@ export class ToolSurfaceError extends Error {
   }
 }
 
+function toolResultText(message: { content?: unknown }): string | undefined {
+  const content = message.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((block) => (block && typeof block === "object" && "text" in block ? String((block as { text?: unknown }).text ?? "") : ""))
+      .join("");
+  }
+  return undefined;
+}
+
 function mapMessage(message: DroidStreamMessage): StreamMsg | null {
   switch (message.type) {
     case DroidMessageType.Assistant:
@@ -129,7 +140,7 @@ function mapMessage(message: DroidStreamMessage): StreamMsg | null {
     case DroidMessageType.ToolCall:
       return { type: "tool_call", name: message.name, toolCallId: message.toolUseId };
     case DroidMessageType.ToolResult:
-      return { type: "tool_result", isError: message.isError };
+      return { type: "tool_result", isError: message.isError, toolCallId: message.toolUseId, text: toolResultText(message) };
     case DroidMessageType.Error:
       return { type: "error", message: message.message };
     case DroidMessageType.Result:
