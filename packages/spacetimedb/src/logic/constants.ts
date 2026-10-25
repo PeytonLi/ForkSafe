@@ -71,6 +71,10 @@ export const FAILURE_KINDS = [
   "engine_error",
   "missing_artifact",
   "invalid_run",
+  "dropped_early",
+  "bounced_out",
+  "missed_bin_short",
+  "missed_bin_long",
 ] as const;
 
 export const CLAIMS = ["observation", "inference"] as const;
