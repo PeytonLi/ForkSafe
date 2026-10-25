@@ -1,4 +1,4 @@
-import Auth0 from "@auth/core/providers/auth0";
+import Auth0 from "./node_modules/@auth/core/providers/auth0.js";
 import { Password } from "@convex-dev/auth/providers/Password";
 import { convexAuth } from "@convex-dev/auth/server";
 import { v } from "convex/values";
