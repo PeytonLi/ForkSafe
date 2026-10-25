@@ -2,7 +2,7 @@ import Auth0 from "./node_modules/@auth/core/providers/auth0.js";
 import { Password } from "@convex-dev/auth/providers/Password";
 import { convexAuth } from "@convex-dev/auth/server";
 import { ConvexError, v } from "convex/values";
-import { internalQuery, mutation, query } from "./_generated/server.js";
+import { internalMutation, internalQuery, mutation, query } from "./_generated/server.js";
 import { UnauthorizedError } from "./lib/auth.js";
 import { roleOf } from "./lib/memberRole.js";
 import { accessGrantedForUser, identityHasAccess, newOAuthAccountNeedsInvite, validateInvite } from "./lib/webAccess.js";
@@ -62,7 +62,7 @@ export const viewer = query({
 
 const memberRoleArg = v.union(v.literal("lead"), v.literal("operator"), v.literal("reviewer"));
 
-/** A lead with access assigns seats. A caller cannot widen their own seat, and the last lead stays a lead. */
+/** A lead with access assigns seats to someone else. You cannot change your own seat. */
 export const setMemberRole = mutation({
   args: { role: memberRoleArg, email: v.optional(v.string()) },
   handler: async (ctx, args) => {
@@ -72,18 +72,30 @@ export const setMemberRole = mutation({
     const caller = userId ? await ctx.db.get(userId) : null;
     if (!caller || !accessGrantedForUser(caller) || roleOf(caller) !== "lead") throw new UnauthorizedError();
     const requested = args.email?.trim().toLowerCase() ?? "";
+    if (!requested) throw new ConvexError("Pick whose seat to change.");
     const own = caller.email?.trim().toLowerCase() ?? "";
-    const target = requested === "" || requested === own
-      ? caller
-      : await ctx.db.query("users").withIndex("email", (q) => q.eq("email", requested)).unique();
+    if (requested === own) throw new ConvexError("You cannot change your own seat.");
+    const target = await ctx.db.query("users").withIndex("email", (q) => q.eq("email", requested)).unique();
     if (!target) throw new ConvexError("No account with that email");
     if (roleOf(target) === "lead" && args.role !== "lead") {
       const users = await ctx.db.query("users").collect();
-      const leads = users.filter((user) => accessGrantedForUser(user) && roleOf(user) === "lead").length;
+      const leads = users.filter((user) => user.accessGranted === true && roleOf(user) === "lead").length;
       if (leads <= 1) throw new ConvexError("The last lead cannot leave that seat.");
     }
     await ctx.db.patch(target._id, { memberRole: args.role });
     return { memberRole: args.role };
+  },
+});
+
+/** Ops: restore a seat from the Convex CLI when someone demoted the only active lead. */
+export const forceMemberRole = internalMutation({
+  args: { email: v.string(), role: memberRoleArg },
+  handler: async (ctx, args) => {
+    const email = args.email.trim().toLowerCase();
+    const target = await ctx.db.query("users").withIndex("email", (q) => q.eq("email", email)).unique();
+    if (!target) throw new ConvexError("No account with that email");
+    await ctx.db.patch(target._id, { memberRole: args.role });
+    return { memberRole: args.role, email };
   },
 });
 
