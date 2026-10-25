@@ -9,6 +9,9 @@ import {
   InvestigationEnvironment,
   SimFrame,
   SimRunResult,
+  isTaskFamily,
+  validateSceneOverrides,
+  type DescribeOutcome,
 } from "@forksafe/contracts";
 import { ConvexReactClient } from "convex/react";
 import { makeFunctionReference } from "convex/server";
@@ -45,6 +48,7 @@ export const CONVEX_FUNCTIONS = {
   cancel: "investigations:cancel",
   capture: "investigations:capture",
   findFailure: "sceneSearch:findFailure",
+  describeScene: "describe:describeScene",
   recordReview: "reviews:record",
 } as const;
 
@@ -217,6 +221,15 @@ export const LiveStreamResponseSchema = z.object({
   })),
 }).nullable();
 
+const DescribeResponse = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("matched"), taskFamily: z.string().refine(isTaskFamily), overrides: z.record(z.number().finite()), explanation: z.string() }),
+  z.object({ status: z.literal("unsupported"), explanation: z.string() }),
+]).and(z.object({ mode: z.enum(["llm", "rules"]), fallback: z.boolean().optional() })).superRefine((result, ctx) => {
+  if (result.status === "matched" && !validateSceneOverrides(result.taskFamily, result.overrides).ok) {
+    ctx.addIssue({ code: "custom", message: "Invalid described scene" });
+  }
+});
+
 export const CONVEX_RESPONSE_SCHEMAS = {
   listInvestigations: z.array(ListItem),
   workspace: Workspace,
@@ -226,6 +239,7 @@ export const CONVEX_RESPONSE_SCHEMAS = {
   candidateDiff: z.string(),
   capture: Capture,
   findFailure: FailureSearch,
+  describeScene: DescribeResponse,
   recordReview: HumanReview,
 };
 
@@ -318,6 +332,14 @@ export class ConvexForkSafeClient implements ForkSafeClient {
       return parse(CONVEX_RESPONSE_SCHEMAS.capture, r, "Capture outcome");
     } catch (e) {
       mapError(e);
+    }
+  }
+  async describeScene(text: string): Promise<DescribeOutcome> {
+    try {
+      const result = await this.client.action(makeFunctionReference<"action">(CONVEX_FUNCTIONS.describeScene), { text });
+      return parse(CONVEX_RESPONSE_SCHEMAS.describeScene, result, "Description") as DescribeOutcome;
+    } catch (error) {
+      mapError(error);
     }
   }
   async findFailure(

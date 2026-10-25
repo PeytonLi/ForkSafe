@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { SCENE_OVERRIDE_RANGES, TASK_FAMILY_SPECS, type SceneOverrideKey, type TaskFamily } from "@forksafe/contracts";
 import styles from "./SceneFields.module.css";
 
@@ -40,6 +40,34 @@ export function formatSceneValue(key: string, value: number): string {
   return value.toFixed(digits);
 }
 
+function SceneNumber({ sceneKey, value, onChange }: { sceneKey: SceneOverrideKey; value: number; onChange: (value: number) => void }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const range = SCENE_OVERRIDE_RANGES[sceneKey];
+  return (
+    <input
+      className={styles.number}
+      type="number"
+      aria-label={`${range.label} value`}
+      min={range.min}
+      max={range.max}
+      step={range.step}
+      value={draft ?? formatSceneValue(sceneKey, value)}
+      onChange={(event) => {
+        const raw = event.currentTarget.value;
+        setDraft(raw);
+        onChange(raw === "" ? Number.NaN : Number(raw));
+      }}
+      onBlur={(event) => {
+        const raw = event.currentTarget.value;
+        const current = raw === "" ? Number.NaN : Number(raw);
+        const next = Number.isFinite(current) ? Math.min(range.max, Math.max(range.min, current)) : sceneKey === "speedScale" ? 1 : range.min;
+        setDraft(null);
+        onChange(Number(next.toFixed(5)));
+      }}
+    />
+  );
+}
+
 export function SceneFields({
   taskFamily,
   values,
@@ -67,10 +95,6 @@ export function SceneFields({
             if (!keys.some((sceneKey) => sceneKey === key)) return null;
             const range = SCENE_OVERRIDE_RANGES[key];
             const value = values[key] ?? 0;
-            const clamp = () => {
-              const next = Number.isFinite(value) ? Math.min(range.max, Math.max(range.min, value)) : range.min;
-              onChange(key, Number(next.toFixed(5)));
-            };
             return (
               <label className={styles.field} key={key}>
                 <span className={styles.label}>{range.label}</span>
@@ -85,17 +109,7 @@ export function SceneFields({
                     value={Number.isFinite(value) ? value : range.min}
                     onChange={(event) => onChange(key, Number(event.currentTarget.value))}
                   />
-                  <input
-                    className={styles.number}
-                    type="number"
-                    aria-label={`${range.label} value`}
-                    min={range.min}
-                    max={range.max}
-                    step={range.step}
-                    value={formatSceneValue(key, value)}
-                    onChange={(event) => onChange(key, event.currentTarget.value === "" ? Number.NaN : Number(event.currentTarget.value))}
-                    onBlur={clamp}
-                  />
+                  <SceneNumber sceneKey={key} value={value} onChange={(next) => onChange(key, next)} />
                   <span className={styles.unit}>{range.unit}</span>
                 </span>
               </label>
@@ -118,20 +132,7 @@ export function SceneFields({
               value={values.speedScale ?? 1}
               onChange={(event) => onChange("speedScale", Number(event.currentTarget.value))}
             />
-            <input
-              className={styles.number}
-              type="number"
-              aria-label={`${SCENE_OVERRIDE_RANGES.speedScale.label} value`}
-              min={SCENE_OVERRIDE_RANGES.speedScale.min}
-              max={SCENE_OVERRIDE_RANGES.speedScale.max}
-              step={SCENE_OVERRIDE_RANGES.speedScale.step}
-              value={formatSceneValue("speedScale", speedScale)}
-              onChange={(event) => onChange("speedScale", event.currentTarget.value === "" ? Number.NaN : Number(event.currentTarget.value))}
-              onBlur={() => {
-                const current = speedScale;
-                onChange("speedScale", Number((Number.isFinite(current) ? Math.min(2, Math.max(0.5, current)) : 1).toFixed(5)));
-              }}
-            />
+            <SceneNumber sceneKey="speedScale" value={speedScale} onChange={(next) => onChange("speedScale", next)} />
             <span className={styles.unit}>×</span>
           </span>
         </label>

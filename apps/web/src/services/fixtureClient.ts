@@ -9,6 +9,8 @@ import {
   InvestigationEnvironment,
   SimFrame,
   SimRunResult,
+  describeScene,
+  type DescribeOutcome,
 } from "@forksafe/contracts";
 import { z } from "zod";
 import raw from "../fixtures/demo.json";
@@ -557,6 +559,10 @@ export class FixtureClient implements ForkSafeClient {
         ? "Fixture mode cannot run an imported controller because it cannot run physics."
         : "Fixture mode cannot run physics. Connect the simulator and Convex (set VITE_CONVEX_URL) to record a new baseline.",
     }));
+  }
+
+  describeScene(text: string): Promise<DescribeOutcome> {
+    return this.wait(() => ({ ...describeScene(text), mode: "fixture" as const }));
   }
 
   findFailure(

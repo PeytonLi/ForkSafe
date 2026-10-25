@@ -19,6 +19,7 @@ import type * as challengeRequests from "../challengeRequests.js";
 import type * as crons from "../crons.js";
 import type * as daytonaPool from "../daytonaPool.js";
 import type * as demo from "../demo.js";
+import type * as describe from "../describe.js";
 import type * as dispatchers_elastic from "../dispatchers/elastic.js";
 import type * as dispatchers_elasticData from "../dispatchers/elasticData.js";
 import type * as dispatchers_jira from "../dispatchers/jira.js";
@@ -105,6 +106,7 @@ declare const fullApi: ApiFromModules<{
   capture: typeof capture;
   challengeRequests: typeof challengeRequests;
   crons: typeof crons;
+  describe: typeof describe;
   daytonaPool: typeof daytonaPool;
   demo: typeof demo;
   "dispatchers/elastic": typeof dispatchers_elastic;

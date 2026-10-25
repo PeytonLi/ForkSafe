@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { DescribeOutcome } from "@forksafe/contracts";
 import { compileScenePrompt, DEFAULT_TASK_FAMILY, SCENE_OVERRIDE_RANGES, TASK_FAMILIES, TASK_FAMILY_SPECS, isTaskFamily, validateSceneOverrides, type SceneOverrideKey, type ScenePromptResult, type TaskFamily } from "@forksafe/contracts";
 import type { ImportedFailure } from "../../../../packages/contracts/src/importedFailure.js";
 import { changedOverrides, defaultOverride } from "../scene";
@@ -32,6 +33,10 @@ export function NewSimulation({ onAccepted }: { onAccepted: (investigationId: st
   const [scenePrompt, setScenePrompt] = useState("");
   const [scenePromptResult, setScenePromptResult] = useState<ScenePromptResult | null>(null);
   const [importedController, setImportedController] = useState<ImportedFailure | null>(null);
+  const [description, setDescription] = useState("");
+  const [describing, setDescribing] = useState(false);
+  const [described, setDescribed] = useState<DescribeOutcome | null>(null);
+  const [describeError, setDescribeError] = useState<string | null>(null);
 
   const validation = validateSceneOverrides(taskFamily, overrides);
   const seedValid = Number.isInteger(seed) && seed >= 0;
@@ -45,7 +50,38 @@ export function NewSimulation({ onAccepted }: { onAccepted: (investigationId: st
     setStartResult(null);
     setScenePrompt("");
     setScenePromptResult(null);
+    setDescribed(null);
   };
+
+  const useDescription = async () => {
+    if (!access.canWrite) {
+      access.showSignIn();
+      return;
+    }
+    setDescribing(true);
+    setDescribed(null);
+    setDescribeError(null);
+    try {
+      const result = await client.describeScene(description);
+      if (result.status === "matched") {
+        chooseFamily(result.taskFamily);
+        setOverrides({ ...defaultOverride(result.taskFamily), ...result.overrides });
+        setStep(2);
+      }
+      setDescribed(result);
+    } catch {
+      setDescribeError("The description couldn't be read just now. Try again, or pick a task below.");
+    } finally {
+      setDescribing(false);
+    }
+  };
+
+  const describeNote = described && (
+    <p className={styles.searchResult} role="status" data-testid="describe-result">
+      <span className={styles.modeBadge}>{described.mode === "fixture" ? "Sample data" : described.mode === "llm" ? "Read by AI" : "Matched by keywords"}</span>
+      {described.explanation}
+    </p>
+  );
 
   const applyScenePrompt = () => {
     const result = compileScenePrompt(taskFamily, scenePrompt, overrides);
@@ -119,6 +155,20 @@ export function NewSimulation({ onAccepted }: { onAccepted: (investigationId: st
       </div>
 
       {step === 1 && (
+        <>
+        <section aria-labelledby="describe-heading" className={styles.card}>
+          <h2 id="describe-heading">Describe it <span className={styles.optional}>(optional)</span></h2>
+          <form className={styles.describeForm} onSubmit={(event) => { event.preventDefault(); void useDescription(); }}>
+            <label htmlFor="describe-input" className="visually-hidden">Describe a robot task</label>
+            <textarea id="describe-input" data-testid="describe-input" maxLength={500} rows={2}
+              placeholder="For example: a robot pushing a box through a narrow opening, a bit faster than usual"
+              value={description} disabled={describing}
+              onChange={(event) => { setDescription(event.target.value); setDescribed(null); setDescribeError(null); }} />
+            <button type="submit" data-testid="describe-use" disabled={!description.trim() || describing}>{describing ? "Reading…" : "Use this"}</button>
+          </form>
+          {describeNote}
+          {describeError && <p className={styles.refusal} role="alert">{describeError}</p>}
+        </section>
         <section aria-labelledby="task-heading" className={styles.card}>
           <h2 id="task-heading">Pick a task</h2>
           <ImportFailurePanel
@@ -153,12 +203,14 @@ export function NewSimulation({ onAccepted }: { onAccepted: (investigationId: st
             <button type="button" className="primary" onClick={() => setStep(2)}>Next</button>
           </div>
         </section>
+        </>
       )}
 
       {step === 2 && (
         <section aria-labelledby="scene-heading" className={styles.card}>
           <h2 id="scene-heading">Set up the scene</h2>
           <p className={styles.description}>{TASK_FAMILY_SPECS[taskFamily].description}</p>
+          {describeNote}
           <div className={styles.sceneLayout}>
             <div className={styles.scenePreviewColumn}>
               <div className={styles.scenePreview}>
