@@ -186,7 +186,8 @@ describe("learning loop", () => {
     stubCaptureEnvironment();
     const t = convexTest(schema, modules);
     await seedInvestigation(t);
-    const gated = await t.mutation(api.learning.retry, { investigationId });
+    const caller = t.withIdentity({ subject: "tester|session" });
+    const gated = await caller.mutation(api.learning.retry, { investigationId });
     expect(gated).toMatchObject({ accepted: false, reason: "No fix has been approved for this task yet." });
     await t.run(async (ctx) => {
       await ctx.db.insert("controllerLineage", {
@@ -197,8 +198,8 @@ describe("learning loop", () => {
         spacetimeCommitted: false, createdAtMs: 2,
       });
     });
-    const first = await t.mutation(api.learning.retry, { investigationId });
-    const second = await t.mutation(api.learning.retry, { investigationId });
+    const first = await caller.mutation(api.learning.retry, { investigationId });
+    const second = await caller.mutation(api.learning.retry, { investigationId });
     expect(first).toMatchObject({ accepted: true });
     expect(second).toEqual(first);
     if (!first.accepted) return;

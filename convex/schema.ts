@@ -45,6 +45,23 @@ export default defineSchema({
     // stay leads so this field does not take access away.
     memberRole: v.optional(v.union(v.literal("lead"), v.literal("operator"), v.literal("reviewer"))),
   }).index("email", ["email"]).index("phone", ["phone"]),
+  workspaces: defineTable({
+    appId: uuid,
+    name: v.string(),
+    createdAtMs: v.number(),
+  }).index("by_appId", ["appId"]),
+  workspaceMembers: defineTable({
+    workspaceId: uuid,
+    userId: v.id("users"),
+    role: v.union(v.literal("lead"), v.literal("operator"), v.literal("reviewer")),
+    createdAtMs: v.number(),
+  }).index("by_user", ["userId"]).index("by_workspace_user", ["workspaceId", "userId"]),
+  workspaceInvites: defineTable({
+    code: v.string(),
+    workspaceId: uuid,
+    createdBy: v.id("users"),
+    createdAtMs: v.number(),
+  }).index("by_code", ["code"]).index("by_workspace", ["workspaceId"]),
   forgeRequests: defineTable({
     idempotencyKey: v.string(), payload: v.string(), requestId: uuid,
     parentInvestigationId: uuid, followUpInvestigationId: uuid,
@@ -86,6 +103,7 @@ export default defineSchema({
       maxFinalCandidates: v.number(),
     }),
     idempotencyKey: v.string(),
+    workspaceId: v.optional(uuid),
     workflowId: v.optional(v.string()),
     createdAtMs: v.number(),
     updatedAtMs: v.number(),

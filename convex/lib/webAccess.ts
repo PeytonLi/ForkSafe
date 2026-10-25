@@ -2,6 +2,7 @@ import type { Auth } from "convex/server";
 import type { Id } from "../_generated/dataModel.js";
 import { constantTimeEqual, isLocalDeployment, UnauthorizedError } from "./auth.js";
 import { mayOperate, mayReview, roleOf, type MemberRole } from "./memberRole.js";
+import { canReadInvestigation, memberships } from "./workspaces.js";
 
 type Env = Record<string, string | undefined>;
 type UserRow = { accessGranted?: boolean; memberRole?: string } | null;
@@ -27,7 +28,11 @@ export async function identityHasAccess(ctx: { db: UserDb }, identity: { subject
   // Convex Auth subjects are `<users id>|<session id>`. Anything else is a
   // legacy or test identity and is not a Google account waiting on an invite.
   if (!userId) return true;
-  return accessGrantedForUser(await ctx.db.get(userId));
+  const user = await ctx.db.get(userId);
+  if (!user || accessGrantedForUser(user)) return true;
+  const db = ctx.db as UserDb & { query?: (table: "workspaceMembers") => { withIndex: Function } };
+  if (!db.query) return false;
+  return (await memberships(ctx, userId)).length > 0;
 }
 
 export function validateInvite(params: Record<string, unknown>, env: Env = process.env): void {
@@ -61,8 +66,18 @@ export async function hasPrivateAccess(ctx: { auth: Auth; db: UserDb }, token?: 
   return validServiceToken(token, env);
 }
 
-export async function requireInvestigationRead(ctx: { auth: Auth; db: UserDb }, id: string, token?: string): Promise<void> {
-  if (!isPublicInvestigation(id) && !await hasPrivateAccess(ctx, token)) throw new UnauthorizedError();
+export async function requireInvestigationRead(ctx: { auth: Auth; db: any }, id: string, token?: string, env: Env = process.env): Promise<void> {
+  if (isPublicInvestigation(id, env) || validServiceToken(token, env)) return;
+  const row = await ctx.db.query("investigations").withIndex("by_appId", (q: any) => q.eq("appId", id)).unique();
+  if (!row) {
+    if (await hasPrivateAccess(ctx, token, env)) return;
+    throw new UnauthorizedError();
+  }
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) throw new UnauthorizedError();
+  const userId = ctx.db.normalizeId("users", identity.subject.split("|")[0] ?? "");
+  const user = userId ? await ctx.db.get(userId) : null;
+  if (!await canReadInvestigation(ctx, row, user, userId)) throw new UnauthorizedError();
 }
 
 export async function requireWriteIdentity(ctx: { auth: Auth }, token?: string, env: Env = process.env): Promise<string> {

@@ -5,7 +5,6 @@ import { ConvexError } from "convex/values";
 import { internal } from "../_generated/api.js";
 import { action } from "../_generated/server.js";
 import { UnauthorizedError } from "../lib/auth.js";
-import { isPublicInvestigation } from "../lib/webAccess.js";
 import { notConnected, parseAsk, toWebAnswer, type WebAnswer } from "./askPolicy.js";
 import { AgentBuilder, agentBuilderReadiness, toDocuments, type CanonicalRecord, type CanonicalResolver } from "./elasticAgent.js";
 
@@ -18,8 +17,7 @@ export const ask = action({
   handler: async (ctx, args): Promise<WebAnswer> => {
     if (!await ctx.auth.getUserIdentity()) throw new UnauthorizedError();
     const { investigationId, question, mentionedIds } = parseAsk(args);
-    const granted = await ctx.runQuery(internal.auth.sessionAccess, {});
-    if (!granted && !isPublicInvestigation(investigationId)) throw new UnauthorizedError();
+    if (!await ctx.runQuery(internal.workspaces.canRead, { investigationId })) throw new UnauthorizedError();
     const scope = await ctx.runQuery(internal.web.askData.scope, { investigationId, ids: mentionedIds });
     if (!scope.exists) throw new ConvexError("investigation_not_found");
     if (scope.foreign.length) throw new ConvexError("out_of_scope");

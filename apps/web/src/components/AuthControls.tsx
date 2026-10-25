@@ -11,6 +11,8 @@ export function AuthControls() {
   const [signUp, setSignUp] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
+  const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!access.open) return;
     const onPointer = (event: PointerEvent) => {
@@ -50,14 +52,12 @@ export function AuthControls() {
       .catch(() => setError("Google sign-in failed. Try again."))
       .finally(() => setBusy(false));
   };
-  const pendingInvite = access.authenticated && access.verified && !access.accessGranted;
+  const pendingInvite = access.authenticated && access.verified && !access.accessGranted && !access.workspace;
   const triggerLabel = !access.authenticated
     ? "Sign in"
     : !access.verified
       ? "Verifying…"
-      : pendingInvite
-        ? "Access code"
-        : (access.email ?? "Account");
+      : (access.workspace?.name ?? access.email ?? "Account");
   return <section aria-label="Account" className={styles.account} ref={accountRef}>
     <button
       type="button"
@@ -71,15 +71,27 @@ export function AuthControls() {
     </button>
     {access.open && pendingInvite && <form onSubmit={submitInvite} aria-label="Access code" className={styles.menu}>
       <h2>Access code</h2>
-      <p className={styles.note}>{access.email ? `${access.email} is signed in.` : "You are signed in."} Enter the shared access code to open private investigations. This is one workspace, not separate organizations.</p>
+      <p className={styles.note}>Enter a workspace invite, or the original access code for the shared investigations.</p>
       <label>Access code <input name="inviteCode" type="password" autoComplete="off" required /></label>
       <button type="submit" className="primary" disabled={busy}>{busy ? "Please wait…" : "Unlock workspace"}</button>
       <button type="button" className={styles.textButton} onClick={() => { void access.signOut().catch(() => setError("Sign out failed. Please retry.")); }}>Sign out</button>
       {error && <p role="alert" className={styles.error}>{error}</p>}
     </form>}
     {access.open && access.authenticated && !pendingInvite && <div className={styles.menu} role="dialog" aria-label="Account menu">
-      <h2>{access.verified ? (access.email ?? "Signed in") : "Verifying session…"}</h2>
-      <p className={styles.note}>Signed in. Everyone with access shares this workspace.</p>
+      <h2>{access.workspace?.name ?? "Your workspace"}</h2>
+      <p className={styles.note}>{access.email ?? "Signed in"}. Simulations you start stay in this workspace. An invite adds someone here only.</p>
+      <button type="button" className="primary" disabled={busy} onClick={() => {
+        setBusy(true); setError("");
+        void access.createInvite().then(setInviteCode).catch(() => setError("Could not create an invite.")).finally(() => setBusy(false));
+      }}>{busy ? "Please wait…" : "Invite someone"}</button>
+      {inviteCode && <p className={styles.code} data-testid="workspace-invite">{inviteCode}</p>}
+      {inviteCode && <button type="button" className={styles.textButton} onClick={() => {
+        void navigator.clipboard.writeText(inviteCode).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1500); });
+      }}>{copied ? "Copied" : "Copy code"}</button>}
+      <form onSubmit={submitInvite}>
+        <label>Join with a code <input name="inviteCode" type="text" autoComplete="off" required /></label>
+        <button type="submit" disabled={busy}>Join workspace</button>
+      </form>
       <button type="button" className={styles.textButton} onClick={() => { void access.signOut().catch(() => setError("Sign out failed. Please retry.")); }}>Sign out</button>
       {error && <p role="alert" className={styles.error}>{error}</p>}
     </div>}

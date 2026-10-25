@@ -6,6 +6,8 @@ import { internalQuery, mutation, query } from "./_generated/server.js";
 import { UnauthorizedError } from "./lib/auth.js";
 import { roleOf } from "./lib/memberRole.js";
 import { accessGrantedForUser, identityHasAccess, newOAuthAccountNeedsInvite, validateInvite } from "./lib/webAccess.js";
+import { workspaceForUser } from "./lib/workspaces.js";
+import { acceptInvite } from "./workspaces.js";
 
 export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
   providers: [
@@ -47,11 +49,13 @@ export const viewer = query({
     if (!identity) return null;
     const userId = ctx.db.normalizeId("users", identity.subject.split("|")[0] ?? "");
     const user = userId ? await ctx.db.get(userId) : null;
+    const workspace = user ? await workspaceForUser(ctx, user._id) : null;
     return {
       subject: identity.subject,
       email: user?.email ?? null,
       accessGranted: accessGrantedForUser(user),
       memberRole: roleOf(user),
+      workspace: workspace ? { id: workspace.appId, name: workspace.name } : null,
     };
   },
 });
@@ -100,6 +104,10 @@ export const redeemInvite = mutation({
     const inWindow = user.inviteFailureWindowStartMs !== undefined && now - user.inviteFailureWindowStartMs < INVITE_WINDOW_MS;
     const failures = inWindow ? (user.inviteFailures ?? 0) : 0;
     if (failures >= MAX_INVITE_GUESSES) return { ok: false as const };
+    if (await acceptInvite(ctx, user, args.inviteCode)) {
+      await ctx.db.patch(user._id, { inviteFailures: 0 });
+      return { ok: true as const };
+    }
     let accepted = false;
     try {
       validateInvite({ flow: "signUp", inviteCode: args.inviteCode });

@@ -12,4 +12,5 @@
 .divider::before, .divider::after { content: ""; flex: 1 1 auto; height: 1px; background: var(--line); }
 .textButton { min-height: 32px; padding: 0 8px; border-color: transparent; background: transparent; color: var(--ink); font-size: var(--text-sm); font-weight: 600; }
 .textButton:hover:not(:disabled) { background: var(--hover); }
+.code { margin: 0; padding: 8px; border-radius: 8px; background: var(--gray-bg); color: var(--ink); font-family: ui-monospace, monospace; font-size: 12px; overflow-wrap: anywhere; }
 .error { margin: 0; color: var(--red-ink); font-size: var(--text-xs); }
