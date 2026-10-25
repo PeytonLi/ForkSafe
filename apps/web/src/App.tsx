@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { AuthControls } from "./components/AuthControls";
 import { ReadinessStrip } from "./components/ReadinessStrip";
 import { InvestigationView } from "./components/InvestigationView";
 import { HealthPage } from "./components/HealthPage";
@@ -177,7 +178,10 @@ export function App() {
                 </ol>
               </nav>
             )}
-            <ReadinessStrip clientSource={client.source} />
+            <div className={styles.topActions}>
+              <ReadinessStrip clientSource={client.source} />
+              <AuthControls />
+            </div>
           </div>
         </header>
 

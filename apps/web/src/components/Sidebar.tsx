@@ -3,7 +3,6 @@ import type { AsyncState, Route } from "../hooks";
 import { useClient, useIndicator } from "../hooks";
 import type { InvestigationListItem } from "../services";
 import { TABS, activeSection } from "../sections";
-import { AuthControls } from "./AuthControls";
 import { MemberRoleControl } from "./MemberRoleControl";
 import { BrandMark, Icon, SECTION_ICONS } from "./Icon";
 import { human, stateTone } from "./tone";
@@ -185,7 +184,6 @@ export function Sidebar({ route, go, investigations, collapsed, onToggleCollapse
       </nav>
 
       <footer className={styles.footer}>
-        <AuthControls labelClassName={styles.label} />
         <MemberRoleControl />
         <p className={`${styles.meta} ${styles.label}`}>
           <span>v{pkg.version} · {client.source.kind === "fixture" ? "Recorded examples" : "Live workspace"}</span>

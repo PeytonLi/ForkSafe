@@ -1,18 +1,15 @@
-.account { position: relative; display: grid; gap: 8px; min-width: 0; }
-.row { display: flex; min-height: 32px; align-items: center; gap: 10px; padding: 0 0 0 12px; overflow: hidden; }
+.account { position: relative; flex: 0 0 auto; }
+.trigger { display: flex; max-width: 220px; min-height: 36px; align-items: center; gap: 8px; padding: 0 12px 0 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--ink); font-size: var(--text-sm); font-weight: 600; }
+.trigger:hover:not(:disabled) { background: var(--hover); }
+.triggerLabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .icon { width: 16px; height: 16px; flex: 0 0 auto; color: var(--muted); }
-.status { min-width: 0; flex: 1 1 auto; overflow: hidden; color: var(--muted); font-size: var(--text-xs); text-overflow: ellipsis; white-space: nowrap; }
-.quiet { min-height: 28px; padding: 0 8px; border-color: transparent; background: transparent; font-size: var(--text-xs); }
-.quiet:hover:not(:disabled) { background: var(--hover); }
-.signIn { display: flex; width: 100%; min-height: 32px; align-items: center; gap: 10px; padding: 0 12px; overflow: hidden; border-color: transparent; background: transparent; color: var(--ink); font-size: var(--text-sm); font-weight: 600; white-space: nowrap; }
-.signIn:hover:not(:disabled) { background: var(--hover); }
-.form { position: fixed; z-index: 80; display: grid; width: min(320px, calc(100vw - 24px)); max-height: min(520px, calc(100vh - 24px)); overflow: auto; gap: 12px; padding: 16px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel); box-shadow: var(--shadow-pop); animation: pop-in 180ms var(--ease-out) both; }
-.form h2 { margin: 0; color: var(--ink); font-size: 15px; }
-.form label { display: grid; gap: 4px; color: var(--muted); font-size: var(--text-xs); font-weight: 600; }
-.form input { width: 100%; }
-.formActions { display: flex; flex-wrap: wrap; gap: 8px; }
-.formActions button { flex: 1 1 120px; }
+.menu { position: absolute; top: calc(100% + 8px); right: 0; z-index: 40; display: grid; width: min(320px, calc(100vw - 24px)); gap: 12px; padding: 16px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel); box-shadow: var(--shadow-pop); }
+.menu h2 { margin: 0; color: var(--ink); font-size: 15px; overflow-wrap: anywhere; }
+.menu label { display: grid; gap: 4px; color: var(--muted); font-size: var(--text-xs); font-weight: 600; }
+.menu input { width: 100%; }
 .note { margin: 0; color: var(--muted); font-size: var(--text-xs); font-weight: 500; line-height: 1.4; }
 .divider { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--muted); font-size: var(--text-xs); font-weight: 600; }
 .divider::before, .divider::after { content: ""; flex: 1 1 auto; height: 1px; background: var(--line); }
-.error { margin: 0; padding: 0 12px; color: var(--red-ink); font-size: var(--text-xs); }
+.textButton { min-height: 32px; padding: 0 8px; border-color: transparent; background: transparent; color: var(--ink); font-size: var(--text-sm); font-weight: 600; }
+.textButton:hover:not(:disabled) { background: var(--hover); }
+.error { margin: 0; color: var(--red-ink); font-size: var(--text-xs); }
