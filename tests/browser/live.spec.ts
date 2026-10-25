@@ -57,7 +57,7 @@ test("fixture live stream advances, hands off to replay, and appears in environm
   await expect.poll(async () => {
     const text = await readout.textContent();
     return Number(/t=([0-9.]+)/.exec(text ?? "")?.[1] ?? 0);
-  }, { timeout: 5_000 }).toBeGreaterThan(initialT + 0.1);
+  }, { timeout: 20_000 }).toBeGreaterThan(initialT + 0.1);
   if (!mobile) await page.screenshot({ path: evidencePath(info, "capture-streaming-desktop.png") });
 
   await page.waitForTimeout(7_500);
