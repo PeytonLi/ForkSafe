@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { compileScenePrompt, DEFAULT_TASK_FAMILY, SCENE_OVERRIDE_RANGES, TASK_FAMILIES, TASK_FAMILY_SPECS, validateSceneOverrides, type SceneOverrideKey, type ScenePromptResult, type TaskFamily } from "@forksafe/contracts";
+import { compileScenePrompt, DEFAULT_TASK_FAMILY, SCENE_OVERRIDE_RANGES, TASK_FAMILIES, TASK_FAMILY_SPECS, isTaskFamily, validateSceneOverrides, type SceneOverrideKey, type ScenePromptResult, type TaskFamily } from "@forksafe/contracts";
+import type { ImportedFailure } from "../../../../packages/contracts/src/importedFailure.js";
 import { changedOverrides, defaultOverride } from "../scene";
 import { useClient } from "../hooks";
 import type { ControllerChoiceValue, FailureSearchOutcome } from "../services";
@@ -9,6 +10,7 @@ import { human } from "./tone";
 import { ReplayViewer } from "../viewer/ReplayViewer";
 import { ControllerChoice } from "./ControllerChoice";
 import { FailureMinimizer } from "./FailureMinimizer";
+import { ImportFailurePanel } from "./ImportFailurePanel";
 import { SceneFields } from "./SceneFields";
 import { SegThumb } from "./SegThumb";
 import styles from "./NewSimulation.module.css";
@@ -29,6 +31,7 @@ export function NewSimulation({ onAccepted }: { onAccepted: (investigationId: st
   const [startResult, setStartResult] = useState<{ mode: string; reason: string } | null>(null);
   const [scenePrompt, setScenePrompt] = useState("");
   const [scenePromptResult, setScenePromptResult] = useState<ScenePromptResult | null>(null);
+  const [importedController, setImportedController] = useState<ImportedFailure | null>(null);
 
   const validation = validateSceneOverrides(taskFamily, overrides);
   const seedValid = Number.isInteger(seed) && seed >= 0;
@@ -87,6 +90,7 @@ export function NewSimulation({ onAccepted }: { onAccepted: (investigationId: st
         requestedEnvironments: environments,
         taskFamily,
         controller,
+        ...(importedController ? { controllerSource: importedController.controllerSource } : {}),
       });
       if (result.accepted) {
         onAccepted(result.investigationId);
@@ -117,6 +121,19 @@ export function NewSimulation({ onAccepted }: { onAccepted: (investigationId: st
       {step === 1 && (
         <section aria-labelledby="task-heading" className={styles.card}>
           <h2 id="task-heading">Pick a task</h2>
+          <ImportFailurePanel
+            active={importedController !== null}
+            onClear={() => setImportedController(null)}
+            onImport={(value) => {
+              if (isTaskFamily(value.taskFamily)) {
+                setTaskFamily(value.taskFamily);
+                setOverrides({ ...defaultOverride(value.taskFamily), ...value.sceneOverrides });
+              }
+              setSeed(value.seed);
+              if (value.title !== "Imported failure") setTitle(value.title);
+              setImportedController(value);
+            }}
+          />
           <fieldset className={styles.taskChoices}>
             <legend className="visually-hidden">Task family</legend>
             {TASK_FAMILIES.map((family) => {
