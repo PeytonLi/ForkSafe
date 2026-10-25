@@ -38,7 +38,9 @@ export function captureProgressFor({
   } else if (captureStatus === "failed") {
     activeStep = 2;
     currentTitle = "Recording didn't work";
-    currentDetail = lastError ?? "The baseline run could not be recorded.";
+    currentDetail = lastError === "controller_sha_mismatch"
+      ? "The simulator stopped before physics started. The Franka model was not in the sandbox, so the capture was rejected."
+      : (lastError ?? "The baseline run could not be recorded.");
     resultTitle = currentTitle;
     resultDetail = currentDetail;
   } else if (captureStatus === "recorded") {

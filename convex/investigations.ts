@@ -7,6 +7,7 @@ import { readLimits } from "./lib/constants.js";
 import { countsTowardCapacity } from "./lib/reservations.js";
 import { hasPrivateAccess, isPublicInvestigation, requireInvestigationRead, requireOperateIdentity } from "./lib/webAccess.js";
 import { appId, assertUUID } from "./lib/validators.js";
+import { webFailureKinds } from "./lib/webFailureKinds.js";
 import { MoreInvestigationRequest } from "./forgeProtocolExt.js";
 import { finalizeCancelledJob } from "./lib/jobOps.js";
 import { currentControllerForFamily, selectPriorHints } from "./learning.js";
@@ -492,7 +493,7 @@ export const workspace = query({
       experiments: experiments.filter((row) => row.suite !== "withheld").map((row) => ({
         id: row.appId, investigationId: id, ...(row.environmentId ? { environmentId: row.environmentId } : {}),
         ...(row.candidateId ? { candidateId: row.candidateId } : {}), attemptId: row.attemptId, epoch: row.epoch, simCase: row.simCase,
-        status: row.status, failureKinds: row.failureKinds, completed: row.completed,
+        status: row.status, failureKinds: webFailureKinds(row.failureKinds), completed: row.completed,
         ...(row.completionTimeSec !== undefined ? { completionTimeSec: row.completionTimeSec } : {}), changedFunctions: row.changedFunctions,
         ...(row.traceArtifactId ? { traceArtifactId: row.traceArtifactId } : {}), ...(row.replayArtifactId ? { replayArtifactId: row.replayArtifactId } : {}),
         engineVersion: row.engineVersion, assetsSha256: sha64(row.assetsSha256), controllerSha256: sha64(row.controllerSha256),
@@ -506,7 +507,7 @@ export const workspace = query({
       evaluations: evaluations.map((row) => ({
         id: row.appId, candidateId: row.candidateId, investigationId: id, evaluatorAttemptId: row.evaluatorAttemptId, suite: row.suite,
         cases: row.cases.map((item) => ({ caseId: item.caseId, status: item.status, ...(item.experimentId ? { experimentId: item.experimentId } : {}),
-          ...(item.completionTimeSec !== undefined ? { completionTimeSec: item.completionTimeSec } : {}), failureKinds: item.failureKinds })),
+          ...(item.completionTimeSec !== undefined ? { completionTimeSec: item.completionTimeSec } : {}), failureKinds: webFailureKinds(item.failureKinds) })),
         allRequiredPassed: row.allRequiredPassed, ...(row.medianCompletionTimeSec !== undefined ? { medianCompletionTimeSec: row.medianCompletionTimeSec } : {}),
         status: row.status, ...(row.reportArtifactId ? { reportArtifactId: row.reportArtifactId } : {}), createdAtMs: row.createdAtMs,
       })),
