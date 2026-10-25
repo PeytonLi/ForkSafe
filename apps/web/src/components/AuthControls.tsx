@@ -1,43 +1,16 @@
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useClient } from "../hooks";
 import { useBrowserAccess } from "../services/browserAccess";
 import { Icon } from "./Icon";
 import styles from "./AuthControls.module.css";
 
-export function AuthControls({ labelClassName = "" }: { labelClassName?: string }) {
+export function AuthControls() {
   const client = useClient();
   const access = useBrowserAccess();
   const accountRef = useRef<HTMLElement>(null);
   const [signUp, setSignUp] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [place, setPlace] = useState<{ left: number; bottom: number } | null>(null);
-  useLayoutEffect(() => {
-    if (!access.open) return;
-    const node = accountRef.current;
-    if (!node) return;
-    const update = () => {
-      const rect = node.getBoundingClientRect();
-      let edge = rect.right;
-      let parent = node.parentElement;
-      while (parent && parent !== document.body && parent !== document.documentElement) {
-        const style = getComputedStyle(parent);
-        if (/(auto|hidden|clip|scroll)/.test(`${style.overflow}${style.overflowX}${style.overflowY}`)) {
-          edge = parent.getBoundingClientRect().right;
-          break;
-        }
-        parent = parent.parentElement;
-      }
-      const width = Math.min(320, window.innerWidth - 24);
-      setPlace({
-        left: Math.max(12, Math.min(edge + 12, window.innerWidth - 12 - width)),
-        bottom: Math.max(12, window.innerHeight - rect.bottom),
-      });
-    };
-    update();
-    window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
-  }, [access.open, access.authenticated]);
   useEffect(() => {
     if (!access.open) return;
     const onPointer = (event: PointerEvent) => {
@@ -61,14 +34,14 @@ export function AuthControls({ labelClassName = "" }: { labelClassName?: string 
     const data = new FormData(event.currentTarget);
     data.set("flow", signUp ? "signUp" : "signIn");
     setBusy(true); setError("");
-    try { await access.signIn(data); } catch { setError("Sign in failed. Check your credentials and, for sign-up, your invite code."); }
+    try { await access.signIn(data); } catch { setError("Sign in failed. Check your credentials and, for sign-up, your access code."); }
     finally { setBusy(false); }
   };
   const submitInvite = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const code = String(new FormData(event.currentTarget).get("inviteCode") ?? "");
     setBusy(true); setError("");
-    try { await access.redeemInvite(code); access.close(); } catch { setError("Invite code was not accepted."); }
+    try { await access.redeemInvite(code); access.close(); } catch { setError("Access code was not accepted."); }
     finally { setBusy(false); }
   };
   const continueWithGoogle = () => {
@@ -78,39 +51,48 @@ export function AuthControls({ labelClassName = "" }: { labelClassName?: string 
       .finally(() => setBusy(false));
   };
   const pendingInvite = access.authenticated && access.verified && !access.accessGranted;
-  const formStyle = place ? { left: place.left, bottom: place.bottom } : { visibility: "hidden" as const };
+  const triggerLabel = !access.authenticated
+    ? "Sign in"
+    : !access.verified
+      ? "Verifying…"
+      : pendingInvite
+        ? "Access code"
+        : (access.email ?? "Account");
   return <section aria-label="Account" className={styles.account} ref={accountRef}>
-    {access.authenticated ? <div className={styles.row}>
-        <Icon name="user" className={styles.icon} />
-        <span data-testid="signed-in" className={`${styles.status} ${labelClassName}`}>
-          {pendingInvite ? "Invite required" : access.verified ? (access.email ?? "Signed in (server verified)") : "Verifying session…"}
-        </span>
-        {pendingInvite && <button type="button" className={`${styles.quiet} ${labelClassName}`} onClick={access.showSignIn}>Enter invite</button>}
-        <button type="button" className={`${styles.quiet} ${labelClassName}`} onClick={() => { void access.signOut().catch(() => setError("Sign out failed. Please retry.")); }}>Sign out</button>
-      </div>
-      : <button type="button" className={styles.signIn} onClick={access.showSignIn}><Icon name="user" className={styles.icon} /><span className={labelClassName}>Sign in</span></button>}
-    {access.open && pendingInvite && <form onSubmit={submitInvite} aria-label="Invite code" className={styles.form} style={formStyle}>
-      <h2>Enter invite code</h2>
-      <p className={styles.note}>{access.email ? `${access.email} is signed in with Google.` : "Your Google account is signed in."} The invite lets this account open private investigations.</p>
-      <label>Invite code <input name="inviteCode" type="password" autoComplete="off" required /></label>
-      <button type="submit" className="primary" disabled={busy}>{busy ? "Please wait…" : "Use invite"}</button>
-      <div className={styles.formActions}>
-        <button type="button" onClick={access.close}>Close</button>
-      </div>
+    <button
+      type="button"
+      className={styles.trigger}
+      aria-expanded={access.open}
+      aria-haspopup="dialog"
+      onClick={() => (access.open ? access.close() : access.showSignIn())}
+    >
+      <Icon name="user" className={styles.icon} />
+      <span className={styles.triggerLabel} data-testid={access.authenticated ? "signed-in" : undefined}>{triggerLabel}</span>
+    </button>
+    {access.open && pendingInvite && <form onSubmit={submitInvite} aria-label="Access code" className={styles.menu}>
+      <h2>Access code</h2>
+      <p className={styles.note}>{access.email ? `${access.email} is signed in.` : "You are signed in."} Enter the shared access code to open private investigations. This is one workspace, not separate organizations.</p>
+      <label>Access code <input name="inviteCode" type="password" autoComplete="off" required /></label>
+      <button type="submit" className="primary" disabled={busy}>{busy ? "Please wait…" : "Unlock workspace"}</button>
+      <button type="button" className={styles.textButton} onClick={() => { void access.signOut().catch(() => setError("Sign out failed. Please retry.")); }}>Sign out</button>
+      {error && <p role="alert" className={styles.error}>{error}</p>}
     </form>}
-    {access.open && !access.authenticated && <form onSubmit={submitPassword} aria-label={signUp ? "Sign up" : "Sign in"} className={styles.form} style={formStyle}>
-      <h2>{signUp ? "Sign up" : "Sign in"}</h2>
+    {access.open && access.authenticated && !pendingInvite && <div className={styles.menu} role="dialog" aria-label="Account menu">
+      <h2>{access.verified ? (access.email ?? "Signed in") : "Verifying session…"}</h2>
+      <p className={styles.note}>Signed in. Everyone with access shares this workspace.</p>
+      <button type="button" className={styles.textButton} onClick={() => { void access.signOut().catch(() => setError("Sign out failed. Please retry.")); }}>Sign out</button>
+      {error && <p role="alert" className={styles.error}>{error}</p>}
+    </div>}
+    {access.open && !access.authenticated && <form onSubmit={submitPassword} aria-label={signUp ? "Sign up" : "Sign in"} className={styles.menu}>
+      <h2>{signUp ? "Create account" : "Sign in"}</h2>
       <button type="button" className="primary" disabled={busy} onClick={continueWithGoogle}>{busy ? "Please wait…" : "Continue with Google"}</button>
       <p className={styles.divider}>or use email</p>
       <label>Email <input name="email" type="email" autoComplete="email" required /></label>
       <label>Password <input name="password" type="password" minLength={8} autoComplete={signUp ? "new-password" : "current-password"} required /></label>
-      {signUp && <label>Invite code <input name="inviteCode" type="password" autoComplete="off" required /></label>}
-      <button type="submit" className="primary" disabled={busy}>{busy ? "Please wait…" : signUp ? "Create account" : "Sign in to account"}</button>
-      <div className={styles.formActions}>
-        <button type="button" onClick={() => { setSignUp(!signUp); setError(""); }}>{signUp ? "Use existing account" : "Create an account"}</button>
-        <button type="button" onClick={access.close}>Close</button>
-      </div>
+      {signUp && <label>Access code <input name="inviteCode" type="password" autoComplete="off" required /></label>}
+      <button type="submit" className="primary" disabled={busy}>{busy ? "Please wait…" : signUp ? "Create account" : "Sign in"}</button>
+      <button type="button" className={styles.textButton} onClick={() => { setSignUp(!signUp); setError(""); }}>{signUp ? "Use an existing account" : "Create an account"}</button>
+      {error && <p role="alert" className={styles.error}>{error}</p>}
     </form>}
-    {error && <p role="alert" className={styles.error}>{error}</p>}
   </section>;
 }
