@@ -44,6 +44,9 @@ export function EnvironmentGrid({ workspace: w }: { workspace: InvestigationWork
         const sessions = w.sessions.filter((s) => s.environmentId === e.id);
         const exps = w.experiments.filter((x) => x.environmentId === e.id).sort((a, b) => b.startedAtMs - a.startedAtMs);
         const current = exps.find((x) => x.status === "running" || x.status === "queued");
+        const finished = !current
+          ? exps.find((x): x is typeof x & { replayArtifactId: string } => Boolean(x.replayArtifactId))
+          : undefined;
         const cands = w.candidates.filter((c) => c.environmentId === e.id);
         const activeAgents = sessions.filter((s) => s.state === "streaming" || s.state === "idle").length;
         const tokens = sessions.reduce((n, s) => n + s.tokenUsage.inputTokens + s.tokenUsage.outputTokens, 0);
@@ -66,6 +69,8 @@ export function EnvironmentGrid({ workspace: w }: { workspace: InvestigationWork
               compact={compact}
               selected={selected.id === e.id}
               experiment={current}
+              finishedExperiment={finished}
+              investigationId={w.investigation.id}
               scene={w.investigation.baselineCase.sceneOverrides}
               taskFamily={w.investigation.baselineCase.taskFamily}
               onSelectLive={(button) => {

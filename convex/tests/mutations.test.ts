@@ -109,6 +109,39 @@ describe("Convex lifecycle mutations", () => {
     })).rejects.toThrow("global_capacity_exhausted");
   });
 
+  it("closes exhausted factory handoffs and settles the investigation", async () => {
+    vi.stubEnv("INTEGRATION_SHARED_SECRET", token);
+    const t = createTest();
+    const { job, investigationId: id } = await createStartedJob(t);
+    const first = await t.mutation(api.workers.claim, { jobId: job.appId, workerId: "worker-a", serviceToken: token });
+    await t.mutation(api.workers.recordStage, {
+      jobId: job.appId, attemptId: first.attemptId, epoch: first.epoch, stage: "grant_installed", serviceToken: token,
+    });
+    await t.mutation(internal.reconcile.tick, { now: first.leaseExpiresAtMs + 1 });
+    await t.mutation(internal.workers.acknowledgeGrantRevocation, {
+      jobId: job.appId, attemptId: first.attemptId, epoch: first.epoch,
+    });
+    const second = await t.mutation(api.workers.claim, { jobId: job.appId, workerId: "worker-b", serviceToken: token });
+    await t.mutation(api.workers.recordStage, {
+      jobId: job.appId, attemptId: second.attemptId, epoch: second.epoch, stage: "grant_installed", serviceToken: token,
+    });
+    const result = await t.mutation(internal.reconcile.tick, { now: second.leaseExpiresAtMs + 1 });
+    expect(result.expired).toBe(1);
+    const settled = await t.query(api.workers.getJob, { jobId: job.appId, serviceToken: token });
+    expect(settled?.state).toBe("failed");
+    expect(settled?.lastError).toBe("attempts_exhausted");
+    const handoffs = await t.run(async (ctx: any) =>
+      (await ctx.db.query("handoffs").withIndex("by_job", (q: any) => q.eq("jobId", job.appId)).collect())
+        .map((row: any) => row.stage),
+    );
+    expect(handoffs).toContain("completion_acknowledged");
+    const settle = await t.mutation(internal.investigations.afterEnvironmentJobSettled, { investigationId: id });
+    expect(settle).toMatchObject({ action: "failed_no_candidates" });
+    const investigation = await t.query(api.investigations.get, { investigationId: id, serviceToken: token });
+    expect(investigation?.state).toBe("failed");
+    expect(investigation?.lastError).toBe("no_candidates_submitted");
+  });
+
   it("reconciles evidence committed after a worker crash", async () => {
     vi.stubEnv("INTEGRATION_SHARED_SECRET", token);
     const t = createTest();
