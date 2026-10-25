@@ -549,12 +549,13 @@ export class FixtureClient implements ForkSafeClient {
     });
   }
 
-  requestCapture(_draft: CaptureDraft): Promise<CaptureOutcome> {
+  requestCapture(draft: CaptureDraft): Promise<CaptureOutcome> {
     return this.wait(() => ({
       accepted: false as const,
       mode: "fixture" as const,
-      reason:
-        "Fixture mode cannot run physics. Connect the simulator and Convex (set VITE_CONVEX_URL) to record a new baseline.",
+      reason: draft.controllerSource
+        ? "Fixture mode cannot run an imported controller because it cannot run physics."
+        : "Fixture mode cannot run physics. Connect the simulator and Convex (set VITE_CONVEX_URL) to record a new baseline.",
     }));
   }
 
