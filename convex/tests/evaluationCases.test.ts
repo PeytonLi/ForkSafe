@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { sceneVariantFor } from "@forksafe/contracts";
 import publicManifest from "../../evaluation/public/manifest.json";
 import pushGapManifest from "../../evaluation/push_gap/manifest.json";
-import { publicCasesFor, withheldApplies } from "../lib/evaluationCases.js";
+import { publicCasesFor, withheldApplies, withheldCasesFor } from "../lib/evaluationCases.js";
 
 describe("evaluation cases follow the investigation task", () => {
   it("keeps divider public cases on the manifest and appends a different captured scene", () => {
@@ -110,5 +111,66 @@ describe("evaluation cases follow the investigation task", () => {
     expect(withheldApplies("divider_pick_place")).toBe(true);
     expect(withheldApplies()).toBe(true);
     expect(withheldApplies("other")).toBe(false);
+    expect(withheldApplies({ taskFamily: "push_through_gap" })).toBe(false);
+    expect(withheldApplies({ taskFamily: "push_through_gap", controllerChoice: "baseline" })).toBe(false);
+    expect(withheldCasesFor({ taskFamily: "push_through_gap" })).toEqual([]);
+    const dividerWithheld = withheldCasesFor({ taskFamily: "divider_pick_place" });
+    expect(dividerWithheld.length).toBeGreaterThan(0);
+    expect(dividerWithheld.every((item) => item.execution === "signed")).toBe(true);
+    expect(dividerWithheld.some((item) => item.caseId === "imported-withheld-0")).toBe(false);
+  });
+
+  it("keeps an unimported divider on a signed public case", () => {
+    const cases = publicCasesFor({ taskFamily: "divider_pick_place" });
+    expect(cases.some((item) => item.execution === "signed" && item.caseId !== "imported-public")).toBe(true);
+    expect(cases.some((item) => item.caseId === "imported-public")).toBe(false);
+  });
+
+  it("scores an imported divider on its scene and withholds later variations", () => {
+    const baseline = {
+      caseId: "captured-divider",
+      suite: "original" as const,
+      seed: 4,
+      sceneOverrides: { dividerHeight: 0.1 },
+      taskFamily: "divider_pick_place",
+    };
+    const investigation = {
+      taskFamily: "divider_pick_place",
+      controllerChoice: "imported",
+      baselineCase: baseline,
+      requestedEnvironments: 3,
+    };
+    const publicCases = publicCasesFor(investigation);
+    expect(publicCases.map((item) => item.caseId)).toEqual(["imported-public"]);
+    expect(publicCases.every((item) => item.execution === "direct")).toBe(true);
+
+    const withheldIds = withheldCasesFor(investigation).map((item) => item.caseId);
+    expect(withheldIds.length).toBeGreaterThan(0);
+    expect(withheldIds.every((id) => id.startsWith("imported-withheld-"))).toBe(true);
+
+    const agentIndexes = new Set([0, 1, 2]);
+    const agentCaseIds = [0, 1, 2].map((index) => sceneVariantFor(index, baseline).caseId);
+    const withheldIndexes = withheldIds.map((id) => Number(id.slice("imported-withheld-".length)));
+    expect(withheldIndexes.filter((index) => agentIndexes.has(index))).toEqual([]);
+    expect(withheldIds.filter((id) => agentCaseIds.includes(id))).toEqual([]);
+  });
+
+  it("still withholds an imported push investigation", () => {
+    const baseline = {
+      caseId: "captured-push",
+      suite: "original" as const,
+      seed: 4,
+      sceneOverrides: { gapWidth: 0.1 },
+      taskFamily: "push_through_gap",
+    };
+    expect(withheldApplies({ taskFamily: "push_through_gap", controllerChoice: "imported", baselineCase: baseline })).toBe(true);
+    const withheldIds = withheldCasesFor({
+      taskFamily: "push_through_gap",
+      controllerChoice: "imported",
+      baselineCase: baseline,
+      requestedEnvironments: 3,
+    }).map((item) => item.caseId);
+    expect(withheldIds.every((id) => id.startsWith("imported-withheld-"))).toBe(true);
+    expect(withheldIds.some((id) => id === "withheld-01")).toBe(false);
   });
 });

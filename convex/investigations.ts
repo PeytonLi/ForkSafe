@@ -1,11 +1,13 @@
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
 import { DEFAULT_TASK_FAMILY, TASK_FAMILY_SPECS, isTaskFamily, sceneVariantFor, validateSceneOverrides } from "@forksafe/contracts";
+import { validateImportedFailure } from "../packages/contracts/src/importedFailure.js";
 import { internal } from "./_generated/api.js";
 import { mutation, query, internalMutation, internalQuery, type MutationCtx } from "./_generated/server.js";
 import { readLimits } from "./lib/constants.js";
 import { countsTowardCapacity } from "./lib/reservations.js";
 import { accessGrantedForUser, hasPrivateAccess, isPublicInvestigation, requireInvestigationRead, requireOperateIdentity } from "./lib/webAccess.js";
+import { sha256Hex } from "./lib/controllerDiff.js";
 import { memberships, workspaceIdForCaller } from "./lib/workspaces.js";
 import { appId, assertUUID } from "./lib/validators.js";
 import { webFailureKinds } from "./lib/webFailureKinds.js";
@@ -546,17 +548,33 @@ export const capture = mutation({
   args: {
     title: v.string(), seed: v.number(), sceneOverrides: v.record(v.string(), v.number()), requestedEnvironments: v.number(),
     taskFamily: v.optional(v.string()), controller: v.optional(v.union(v.literal("approved"), v.literal("baseline"))),
+    controllerSource: v.optional(v.string()),
     autoStart: v.optional(v.boolean()), idempotencyKey: v.optional(v.string()), serviceToken: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<{ accepted: true; investigationId: string } | { accepted: false; mode: string; reason: string }> => {
     await requireOperateIdentity(ctx, args.serviceToken);
     const limits = readLimits();
-    const taskFamily = args.taskFamily ?? DEFAULT_TASK_FAMILY;
-    const validation = validateSceneOverrides(taskFamily, args.sceneOverrides);
+    let title = args.title;
+    let taskFamily = args.taskFamily ?? DEFAULT_TASK_FAMILY;
+    let seed = args.seed;
+    let sceneOverrides = args.sceneOverrides;
+    let controllerText: string | undefined;
+    if (args.controllerSource !== undefined) {
+      const imported = validateImportedFailure({
+        title: args.title, taskFamily, seed: args.seed, sceneOverrides: args.sceneOverrides, controllerSource: args.controllerSource,
+      });
+      if (!imported.ok) return { accepted: false, mode: "live", reason: imported.reason };
+      title = imported.value.title;
+      taskFamily = imported.value.taskFamily;
+      seed = imported.value.seed;
+      sceneOverrides = imported.value.sceneOverrides;
+      controllerText = imported.value.controllerSource;
+    }
+    const validation = validateSceneOverrides(taskFamily, sceneOverrides);
     if (!validation.ok) return { accepted: false, mode: "live", reason: validation.reason };
     if (!isTaskFamily(taskFamily)) return { accepted: false, mode: "live", reason: `Unknown task "${taskFamily}".` };
-    if (!args.title.trim()) return { accepted: false, mode: "live", reason: "title is required" };
-    if (!Number.isInteger(args.seed) || args.seed < 0) return { accepted: false, mode: "live", reason: "seed must be a non-negative integer" };
+    if (!title.trim()) return { accepted: false, mode: "live", reason: "title is required" };
+    if (!Number.isInteger(seed) || seed < 0) return { accepted: false, mode: "live", reason: "seed must be a non-negative integer" };
     if (!Number.isInteger(args.requestedEnvironments) || args.requestedEnvironments < 1 || args.requestedEnvironments > limits.maxEnvironments) {
       return { accepted: false, mode: "live", reason: `requestedEnvironments must be 1-${limits.maxEnvironments}` };
     }
@@ -564,7 +582,7 @@ export const capture = mutation({
       return { accepted: false, mode: process.env.DAYTONA_MODE === "local" ? "local" : "blocked", reason: "capture needs a Daytona execution sandbox; DAYTONA_API_KEY is not configured" };
     }
     const requestedChoice = args.controller ?? "approved";
-    const current = await currentControllerForFamily(ctx, taskFamily);
+    const current = controllerText === undefined ? await currentControllerForFamily(ctx, taskFamily) : null;
     const bundle = await ctx.db.query("bundles").withIndex("by_key", (q) => q.eq("key", "simulator")).unique();
     const baseline = await ctx.db.query("bundles").withIndex("by_key", (q) => q.eq("key", "baseline_controller")).unique();
     if (!bundle || !baseline) return { accepted: false, mode: "blocked", reason: "simulator bundle not published (run apps/runner publish-bundles)" };
@@ -575,22 +593,34 @@ export const capture = mutation({
     const investigationId = appId();
     const baselineExperimentId = appId();
     const workspaceId = await workspaceIdForCaller(ctx);
-    const useApproved = requestedChoice === "approved" && current?.source === "approved";
+    const useApproved = controllerText === undefined && requestedChoice === "approved" && current?.source === "approved";
+    const controllerSha256 = controllerText !== undefined
+      ? await sha256Hex(controllerText)
+      : useApproved ? current!.controllerSha256 : baseline.sha256;
+    if (controllerText !== undefined) {
+      const prior = await ctx.db.query("controllerSources").withIndex("by_sha", (q) => q.eq("controllerSha256", controllerSha256)).unique();
+      if (!prior) {
+        await ctx.db.insert("controllerSources", {
+          controllerSha256, artifactId: appId(), source: controllerText,
+          bytes: new TextEncoder().encode(controllerText).byteLength, createdAtMs: now, investigationId,
+        });
+      }
+    }
     await ctx.db.insert("investigations", {
-      appId: investigationId, title: args.title.trim().slice(0, 200), state: "capturing", cancelStatus: "none", cancelEpoch: 0, version: 1,
+      appId: investigationId, title: title.trim().slice(0, 200), state: "capturing", cancelStatus: "none", cancelEpoch: 0, version: 1,
       requestedEnvironments: args.requestedEnvironments,
       baselineCase: {
-        caseId: TASK_FAMILY_SPECS[taskFamily].baseCaseId, suite: "original", seed: args.seed,
-        sceneOverrides: args.sceneOverrides, taskFamily, description: "Captured baseline failure",
+        caseId: TASK_FAMILY_SPECS[taskFamily].baseCaseId, suite: "original", seed,
+        sceneOverrides, taskFamily, description: "Captured baseline failure",
       },
       baselineExperimentId,
       budget: { wallTimeMs: 600_000, maxExperimentsPerEnv: 20, maxCandidatesPerEnv: 2, maxFinalCandidates: 3 },
       idempotencyKey, captureStatus: "pending", autoStart: args.autoStart ?? true,
       ...(workspaceId ? { workspaceId } : {}),
       taskFamily,
-      controllerSha256: useApproved ? current!.controllerSha256 : baseline.sha256,
+      controllerSha256,
       controllerVersion: useApproved ? current!.version : 1,
-      controllerChoice: useApproved ? "approved" : "baseline",
+      controllerChoice: controllerText !== undefined ? "imported" : useApproved ? "approved" : "baseline",
       createdAtMs: now, updatedAtMs: now,
     });
     await ctx.scheduler.runAfter(0, internal.capture.run, { investigationId });

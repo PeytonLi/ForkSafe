@@ -80,7 +80,6 @@ export default defineSchema({
     appId: uuid,
     taskFamily: v.optional(v.string()),
     controllerSha256: v.optional(v.string()),
-    // "imported" is stored on rows written by an earlier deployment. New captures use approved or baseline.
     controllerChoice: v.optional(v.union(v.literal("approved"), v.literal("baseline"), v.literal("imported"))),
     controllerVersion: v.optional(v.number()),
     retryOfInvestigationId: v.optional(uuid),

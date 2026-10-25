@@ -213,6 +213,12 @@ function setStaticScene(s3: Scene3D, scene: ResolvedScene) {
     );
     s3.gapLeft.visible = false;
     s3.gapRight.visible = false;
+  } else if (scene.kind === "bin_drop") {
+    s3.divider.visible = false;
+    s3.gapLeft.visible = false;
+    s3.gapRight.visible = false;
+    s3.target.scale.set(scene.binWidth, 0.02, scene.binWidth);
+    s3.target.position.set(scene.binCenter[0], scene.target[2], scene.binCenter[1]);
   } else {
     s3.divider.visible = false;
     const [wallStart, wallEnd] = scene.wallSpanX;
@@ -389,7 +395,9 @@ export function ReplayViewer({
         {!replay && <span data-testid="scene-preview-summary">
           {resolvedScene.kind === "push_through_gap"
             ? `Gap width: ${resolvedScene.gapWidth.toFixed(2)} m`
-            : `Divider height: ${resolvedScene.dividerHeight.toFixed(2)} m`}
+            : resolvedScene.kind === "bin_drop"
+              ? `Bin opening: ${resolvedScene.binWidth.toFixed(2)} m`
+              : `Divider height: ${resolvedScene.dividerHeight.toFixed(2)} m`}
         </span>}
         {!compact && replay && contact ? (
           <span className={styles.contact}>

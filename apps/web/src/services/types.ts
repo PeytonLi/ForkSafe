@@ -67,6 +67,7 @@ export interface CaptureDraft {
   requestedEnvironments: number;
   taskFamily: TaskFamily;
   controller?: ControllerChoiceValue;
+  controllerSource?: string;
 }
 
 export type ControllerChoiceValue = "approved" | "baseline";

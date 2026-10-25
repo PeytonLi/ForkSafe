@@ -31,6 +31,15 @@ PUSH_GAP_OVERRIDE_KEYS = {
     "gapWidth",
     "speedScale",
 }
+BIN_DROP_OVERRIDE_KEYS = {
+    "cubeDx",
+    "cubeDy",
+    "binDx",
+    "binDy",
+    "binWidth",
+    "speedScale",
+}
+BIN_DROP_CONFIG_PATH = Path(__file__).parent / "scene_configs/bin_drop.json"
 
 
 @dataclass
@@ -56,6 +65,7 @@ def task_family(case: SimCase) -> str:
     if not isinstance(family, str) or family not in {
         "divider_pick_place",
         "push_through_gap",
+        "bin_drop",
     }:
         raise ValueError(f"unknown taskFamily: {family!r}")
     return family
@@ -64,8 +74,11 @@ def task_family(case: SimCase) -> str:
 def _scene_values(
     case: SimCase, base_config: dict[str, object] | None = None
 ) -> tuple[dict[str, object], float]:
-    if task_family(case) == "push_through_gap":
+    family = task_family(case)
+    if family == "push_through_gap":
         return _push_gap_scene_values(case, base_config)
+    if family == "bin_drop":
+        return _bin_drop_scene_values(case, base_config)
     unknown = set(case.scene_overrides) - OVERRIDE_KEYS
     if unknown:
         raise ValueError(f"unknown scene override(s): {', '.join(sorted(unknown))}")
@@ -148,6 +161,44 @@ def _push_gap_scene_values(
     return values, float(speed_scale)
 
 
+def _bin_drop_scene_values(
+    case: SimCase, base_config: dict[str, object] | None = None
+) -> tuple[dict[str, object], float]:
+    unknown = set(case.scene_overrides) - BIN_DROP_OVERRIDE_KEYS
+    if unknown:
+        raise ValueError(f"unknown scene override(s): {', '.join(sorted(unknown))}")
+    values = (
+        json.loads(BIN_DROP_CONFIG_PATH.read_text())
+        if base_config is None
+        else json.loads(json.dumps(base_config))
+    )
+    cube = np.asarray(values["cubeStart"], dtype=float)
+    bin_center = np.asarray(values["binCenter"], dtype=float)
+    for key, axis, coordinates in (
+        ("cubeDx", 0, cube),
+        ("cubeDy", 1, cube),
+        ("binDx", 0, bin_center),
+        ("binDy", 1, bin_center),
+    ):
+        offset = case.scene_overrides.get(key, 0.0)
+        if not np.isfinite(offset):
+            raise ValueError(f"nonfinite scene override: {key}")
+        coordinates[axis] += offset
+    bin_width = case.scene_overrides.get("binWidth", float(values["binWidth"]))
+    speed_scale = case.scene_overrides.get("speedScale", 1.0)
+    if not np.isfinite(bin_width) or bin_width < 0.08 or bin_width > 0.20:
+        raise ValueError("binWidth must be finite and between 0.08 and 0.20")
+    if not np.isfinite(speed_scale) or speed_scale <= 0:
+        raise ValueError("speedScale must be finite and positive")
+    values["cubeStart"] = [float(value) for value in cube]
+    values["binCenter"] = [float(value) for value in bin_center]
+    values["target"] = [float(bin_center[0]), float(bin_center[1]), 0.02]
+    values["binWidth"] = float(bin_width)
+    values["binHeight"] = 0.06
+    values["binHalfThickness"] = 0.008
+    return values, float(speed_scale)
+
+
 def build_scene(
     case: SimCase, *, base_config: dict[str, object] | None = None
 ) -> BuiltScene:
@@ -191,7 +242,7 @@ def build_scene(
             size=[half_length, half_thickness, float(values["dividerHeight"]) / 2],
             rgba=[0.35, 0.38, 0.42, 1],
         )
-    else:
+    elif family == "push_through_gap":
         gap_x, gap_y = values["gapCenter"]
         gap_half_width = float(values["gapWidth"]) / 2
         half_thickness = float(values["wallHalfThickness"])
@@ -209,6 +260,31 @@ def build_scene(
                 size=[(end - start) / 2, half_thickness, wall_height / 2],
                 rgba=[0.35, 0.38, 0.42, 1],
             )
+    else:
+        bin_x, bin_y = values["binCenter"]
+        half = float(values["binWidth"]) / 2
+        thick = float(values["binHalfThickness"])
+        wall_height = float(values["binHeight"])
+        spec.worldbody.add_geom(
+            name="bin_px", type=mujoco.mjtGeom.mjGEOM_BOX,
+            pos=[bin_x + half, bin_y, wall_height / 2],
+            size=[thick, half, wall_height / 2], rgba=[0.2, 0.45, 0.62, 1],
+        )
+        spec.worldbody.add_geom(
+            name="bin_nx", type=mujoco.mjtGeom.mjGEOM_BOX,
+            pos=[bin_x - half, bin_y, wall_height / 2],
+            size=[thick, half, wall_height / 2], rgba=[0.2, 0.45, 0.62, 1],
+        )
+        spec.worldbody.add_geom(
+            name="bin_py", type=mujoco.mjtGeom.mjGEOM_BOX,
+            pos=[bin_x, bin_y + half, wall_height / 2],
+            size=[half, thick, wall_height / 2], rgba=[0.2, 0.45, 0.62, 1],
+        )
+        spec.worldbody.add_geom(
+            name="bin_ny", type=mujoco.mjtGeom.mjGEOM_BOX,
+            pos=[bin_x, bin_y - half, wall_height / 2],
+            size=[half, thick, wall_height / 2], rgba=[0.2, 0.45, 0.62, 1],
+        )
     wall_defs = (
         ("wall_near", [0.20, 0, wall_height / 2], [0.01, 0.4, wall_height / 2]),
         ("wall_far", [0.90, 0, wall_height / 2], [0.01, 0.4, wall_height / 2]),
@@ -256,28 +332,21 @@ def build_scene(
 
     model = spec.compile()
     # Yaw noise is supplied per run by the runner from the same case seed.
-    geom_names = (
-        (
-            "floor",
-            "cube_geom",
-            "divider",
-            "wall_near",
-            "wall_far",
-            "wall_left",
-            "wall_right",
+    if family == "divider_pick_place":
+        geom_names = (
+            "floor", "cube_geom", "divider",
+            "wall_near", "wall_far", "wall_left", "wall_right",
         )
-        if family == "divider_pick_place"
-        else (
-            "floor",
-            "cube_geom",
-            "gap_wall_left",
-            "gap_wall_right",
-            "wall_near",
-            "wall_far",
-            "wall_left",
-            "wall_right",
+    elif family == "push_through_gap":
+        geom_names = (
+            "floor", "cube_geom", "gap_wall_left", "gap_wall_right",
+            "wall_near", "wall_far", "wall_left", "wall_right",
         )
-    )
+    else:
+        geom_names = (
+            "floor", "cube_geom", "bin_px", "bin_nx", "bin_py", "bin_ny",
+            "wall_near", "wall_far", "wall_left", "wall_right",
+        )
     geom_ids = {
         name: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, name)
         for name in geom_names
