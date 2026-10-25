@@ -34,7 +34,8 @@ async function assertNoOverflow(page: Page) {
 }
 
 // Desktop software WebGL plus the stream handoff can run past the 45s suite cap.
-test("fixture live stream advances, hands off to replay, and appears in environment cards", { timeout: 90_000 }, async ({ page }, info) => {
+test("fixture live stream advances, hands off to replay, and appears in environment cards", async ({ page }, info) => {
+  test.setTimeout(90_000);
   const mobile = info.project.name === "mobile";
   await page.setViewportSize(mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 });
   await openDemo(page, mobile, true);
