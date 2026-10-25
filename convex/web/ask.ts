@@ -17,9 +17,9 @@ export const ask = action({
   handler: async (ctx, args): Promise<WebAnswer> => {
     if (!await ctx.auth.getUserIdentity()) throw new UnauthorizedError();
     const { investigationId, question, mentionedIds } = parseAsk(args);
-    if (!await ctx.runQuery(internal.workspaces.canRead, { investigationId })) throw new UnauthorizedError();
     const scope = await ctx.runQuery(internal.web.askData.scope, { investigationId, ids: mentionedIds });
     if (!scope.exists) throw new ConvexError("investigation_not_found");
+    if (!await ctx.runQuery(internal.workspaces.canRead, { investigationId })) throw new UnauthorizedError();
     if (scope.foreign.length) throw new ConvexError("out_of_scope");
 
     const parsedEnv = EnvConfig.safeParse(Object.fromEntries(Object.entries(process.env).filter(([, value]) => value !== "")));
