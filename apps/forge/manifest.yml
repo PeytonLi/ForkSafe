@@ -17,11 +17,18 @@ modules:
   webtrigger:
     - key: forksafe-selfcheck
       function: selfcheck
+  trigger:
+    - key: forksafe-on-issue-created
+      function: issueCreated
+      events:
+        - avi:jira:created:issue
   function:
     - key: resolver
       handler: generated/resolver.handler
     - key: selfcheck
       handler: generated/resolver.selfcheck
+    - key: issueCreated
+      handler: generated/resolver.issueCreated
 resources:
   - key: panel
     path: src/frontend/panel.tsx
