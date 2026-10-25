@@ -2,8 +2,9 @@ import { v } from "convex/values";
 import { ConvexError } from "convex/values";
 import { Workpool } from "@convex-dev/workpool";
 import { components, internal } from "./_generated/api.js";
-import { action, internalAction, internalMutation, internalQuery } from "./_generated/server.js";
+import { action, internalAction, internalMutation, internalQuery, mutation } from "./_generated/server.js";
 import { requireServiceToken } from "./lib/auth.js";
+import { requireOperateIdentity } from "./lib/webAccess.js";
 import { appId, assertUUID } from "./lib/validators.js";
 
 export const outboxPool = new Workpool(components.outboxPool, { maxParallelism: 2 });
@@ -74,6 +75,16 @@ export const requeue = internalMutation({
       requeued += 1;
     }
     return { requeued, skipped };
+  },
+});
+
+export const sweepDead = mutation({
+  args: { serviceToken: v.optional(v.string()) },
+  handler: async (ctx, args): Promise<{ deleted: number }> => {
+    await requireOperateIdentity(ctx, args.serviceToken);
+    const dead = await ctx.db.query("outbox").withIndex("by_status_next", (q) => q.eq("status", "dead")).collect();
+    for (const entry of dead) await ctx.db.delete(entry._id);
+    return { deleted: dead.length };
   },
 });
 
