@@ -1,8 +1,23 @@
-import { expect, test } from "../../apps/web/e2e/playwright";
+import { expect, test, type Page } from "../../apps/web/e2e/playwright";
 
 const PANDA = "3b7d9303-7082-4b73-a3b6-1391b3e2fc4d";
 
-test("scene prompt, shrink, reviewer seat, case file, and challenge stay in the product", async ({ page }) => {
+/** The seat radios live in the sidebar. On a phone that sidebar is the menu drawer. */
+async function chooseSeat(page: Page, name: "Lead" | "Operator" | "Reviewer", mobile: boolean) {
+  if (mobile) {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.getByRole("button", { name: "Open menu" }).click();
+  }
+  const scope = mobile ? page.getByRole("dialog", { name: "Menu" }) : page.getByRole("complementary", { name: "Sidebar" });
+  await scope.getByRole("radio", { name }).check();
+  if (mobile) {
+    await scope.getByRole("button", { name: "Close menu" }).click();
+    await expect(page.getByRole("dialog", { name: "Menu" })).toHaveCount(0);
+  }
+}
+
+test("scene prompt, shrink, reviewer seat, case file, and challenge stay in the product", async ({ page }, info) => {
+  const mobile = info.project.name === "mobile";
   await page.goto("/#/new");
   await page.getByRole("button", { name: "Next" }).click();
   await page.getByLabel("Describe a scene change").fill("Move the divider 6 cm closer");
@@ -17,12 +32,12 @@ test("scene prompt, shrink, reviewer seat, case file, and challenge stay in the 
   await page.getByRole("button", { name: "Shrink this failure" }).click();
   await expect(page.getByText("not a new MuJoCo run")).toBeVisible();
 
-  await page.getByRole("radio", { name: "Reviewer" }).check();
+  await chooseSeat(page, "Reviewer", mobile);
   await page.getByRole("button", { name: "Next" }).click();
   await expect(page.getByText("This seat cannot start a simulation.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Start" })).toBeDisabled();
 
-  await page.getByRole("radio", { name: "Lead" }).check();
+  await chooseSeat(page, "Lead", mobile);
   await expect(page.getByRole("button", { name: "Start" })).toBeEnabled();
 
   await page.goto(`/#/investigations/${PANDA}/casefile`);
