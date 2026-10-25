@@ -38,6 +38,10 @@ resolver.define("requestMoreInvestigation", ({ payload, context }) =>
 
 export const handler = resolver.getDefinitions();
 
+export async function issueCreated(event: unknown) {
+  return handlers.issueCreated(event);
+}
+
 export async function selfcheck() {
   const panelResult = await handlers.getPanel({ payload: {}, context: {} });
   return {
