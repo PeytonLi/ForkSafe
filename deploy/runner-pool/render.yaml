@@ -15,3 +15,7 @@ services:
         value: https://giant-jellyfish-684.convex.site
       - key: POOL_MAX_RUNNERS
         value: "4"
+      - key: RUNNER_MAX_TOKENS_PER_INVESTIGATION
+        value: "500000"
+      - key: RUNNER_MAX_OUTPUT_TOKENS_PER_INVESTIGATION
+        value: "80000"

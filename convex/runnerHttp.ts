@@ -125,7 +125,8 @@ export function registerRunnerRoutes(router: HttpRouter): void {
           await ctx.runMutation(internal.runnerControl.failGrantInstall, { credentialId: auth.credential.appId, attemptId: lease.attemptId, epoch: lease.epoch, error: install.error ?? "grant_install_failed" });
           return json({ lease: null, retryAfterMs: 5_000, reason: "grant_install_failed" });
         }
-        await ctx.runMutation(internal.runnerControl.markGrantInstalled, { credentialId: auth.credential.appId, attemptId: lease.attemptId, epoch: lease.epoch, grantId: grant.grantId, bridgeMode: install.mode });
+        const granted = await ctx.runMutation(internal.runnerControl.markGrantInstalled, { credentialId: auth.credential.appId, attemptId: lease.attemptId, epoch: lease.epoch, grantId: grant.grantId, bridgeMode: install.mode });
+        const leasedUntilMs = typeof granted?.leasedUntilMs === "number" ? granted.leasedUntilMs : lease.leaseExpiresAtMs;
         let baselineControllerSource: string | undefined;
         if (investigation.controllerSha256) {
           const selected = await ctx.runQuery(internal.evidence.getSourceBySha, { controllerSha256: investigation.controllerSha256 });
@@ -168,7 +169,7 @@ export function registerRunnerRoutes(router: HttpRouter): void {
         return json({
           lease: {
             job: { ...contractJob(job), state: "granted", payload },
-            attempt: { id: lease.attemptId, jobId: job.appId, epoch: lease.epoch, state: "leased", workerId, leasedUntilMs: lease.leaseExpiresAtMs, lastHeartbeatMs: Date.now(), startedAtMs: Date.now() },
+            attempt: { id: lease.attemptId, jobId: job.appId, epoch: lease.epoch, state: "leased", workerId, leasedUntilMs, lastHeartbeatMs: Date.now(), startedAtMs: Date.now() },
             grant: {
               id: grant.grantId, jobId: job.appId, attemptId: lease.attemptId, epoch: lease.epoch, investigationId: job.investigationId,
               environmentId: job.environmentId, scope: { operations: TOOL_NAMES.slice(), artifactPrefixes: [`inv/${job.investigationId}/`], maxBytes: 64 * 1024 * 1024 },

@@ -4,7 +4,7 @@ import { FencedError } from "./job-source.js";
 import type { Lease } from "./protocol.js";
 
 export const HEARTBEAT_INTERVAL_MS = 5_000;
-export const LEASE_TTL_MS = 30_000;
+export const LEASE_TTL_MS = 120_000;
 
 export function effectiveDeadlineMs(lease: Lease): number {
   return Math.min(lease.attempt.leasedUntilMs, lease.grant.expiresAtMs);
@@ -59,7 +59,8 @@ export class LeaseKeeper {
     if (this.beatTimer || this.controller.signal.aborted) return;
     this.beatTimer = this.timers.setInterval(() => { void this.beat(); }, HEARTBEAT_INTERVAL_MS);
     this.watchTimer = this.timers.setInterval(() => this.checkDeadline(), 1_000);
-    this.checkDeadline();
+    // Extend immediately — do not abandon on the pre-first-beat margin while Factory opens.
+    void this.beat();
   }
 
   stop(): void {

@@ -286,7 +286,13 @@ describe("RunnerExecutor", () => {
     }));
     const lease = sampleLease(20_000);
     const source = {
-      heartbeat: vi.fn(async () => ({ ok: false as const, reason: "fenced" as const })),
+      // First beat (before session open) must succeed so the turn can start; later beats fence.
+      heartbeat: vi.fn(async () => {
+        if (source.heartbeat.mock.calls.length <= 1) {
+          return { ok: true as const, leasedUntilMs: 50_000, epoch: 0 };
+        }
+        return { ok: false as const, reason: "fenced" as const };
+      }),
       complete: vi.fn(async () => ({ accepted: true })),
     };
     const executor = new RunnerExecutor({ sessions: manager, source: source as never, log: new ActivityLog() });
@@ -295,7 +301,7 @@ describe("RunnerExecutor", () => {
     await vi.advanceTimersByTimeAsync(5_000);
     release();
     await expect(task).resolves.toBeNull();
-    expect(source.heartbeat).toHaveBeenCalledOnce();
+    expect(source.heartbeat.mock.calls.length).toBeGreaterThanOrEqual(2);
     expect(source.complete).not.toHaveBeenCalled();
   });
 
@@ -506,7 +512,7 @@ describe("RunnerExecutor", () => {
     expect(completions).toHaveLength(1);
     expect(completions[0]).toMatchObject({ outcome: "infra_failed" });
     expect(String(completions[0]!.result.error)).toMatch(/^session_open_failed:Failed to start Droid/);
-    expect(source.heartbeat).not.toHaveBeenCalled();
+    expect(source.heartbeat).toHaveBeenCalled();
     const spans = exporter.getFinishedSpans();
     const jobSpan = spans.find((span) => span.name === "runner.job");
     const sessionOpenSpan = spans.find((span) => span.name === "runner.session.open");

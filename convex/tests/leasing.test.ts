@@ -21,7 +21,7 @@ describe("leasing decisions", () => {
   });
   it("extends heartbeat only for the matching worker, attempt, and epoch", () => {
     const running = { ...job, state: "running", epoch: 1, activeAttemptId: "attempt" };
-    expect(decideHeartbeat(running, attempt, investigation, 1, 1_000, "worker")).toMatchObject({ ok: true, leasedUntilMs: 31_000 });
+    expect(decideHeartbeat(running, attempt, investigation, 1, 1_000, "worker")).toMatchObject({ ok: true, leasedUntilMs: 121_000 });
     expect(decideHeartbeat(running, attempt, investigation, 1, 1_000, "other")).toMatchObject({ ok: false, reason: "worker_mismatch" });
     expect(decideHeartbeat(running, attempt, investigation, 2, 1_000, "worker")).toMatchObject({ ok: false, reason: "fenced" });
   });
