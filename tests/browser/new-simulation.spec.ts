@@ -5,6 +5,61 @@ import { expect, test, type Locator, type Page } from "../../apps/web/e2e/playwr
 const shots = process.env.FORKSAFE_SCREENSHOT_DIR ?? path.resolve(process.cwd(), "test-results", "screenshots");
 const pandaId = "3b7d9303-7082-4b73-a3b6-1391b3e2fc4d";
 
+test("describe a scene, edit the prefill, and refuse unsupported physics", async ({ page }, info) => {
+  const mobile = info.project.name === "mobile";
+  const viewport = mobile ? "390x844" : "1440x900";
+  await page.setViewportSize(mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/#/new");
+  const journey = page.getByTestId("new-simulation");
+  const input = journey.getByTestId("describe-input");
+  const useThis = journey.getByTestId("describe-use");
+  await expect(input).toBeVisible();
+  await expect(input).toHaveAttribute("maxlength", "500");
+  await expect(useThis).toBeDisabled();
+  await screenshot(page, "describe-empty", viewport);
+  await input.fill("a robot pushing a box through a narrow opening, a bit faster than usual");
+  await screenshot(page, "describe-typed", viewport);
+  await useThis.click();
+  await expect(journey.getByRole("heading", { name: "Set up the scene" })).toBeVisible();
+  await expect(journey.getByLabel("Gap width value")).toHaveValue("0.06");
+  await expect(journey.getByLabel("Robot speed value")).toHaveValue("1.30");
+  await expect(journey.getByTestId("scene-preview")).toHaveAttribute("data-scene-kind", "push_through_gap");
+  const note = journey.getByTestId("describe-result");
+  await expect(note).toContainText("Matched: Push through a gap. Narrower gap (0.06 m), robot speed 1.3×.");
+  await expect(note).toContainText("Sample data");
+  await waitForCanvas(page, journey.getByTestId("scene-preview"));
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await screenshot(page, "describe-matched", viewport);
+  await expectNoHorizontalOverflow(page);
+  for (const [label, value] of [["Gap width value", "0.09"], ["Robot speed value", "1.45"], ["Move cube sideways value", "-0.035"]] as const) {
+    const field = journey.getByLabel(label);
+    await field.focus();
+    await field.press("ControlOrMeta+a");
+    await field.pressSequentially(value);
+    await field.press("Tab");
+    await expect(field).toHaveValue(value);
+  }
+  await expect(journey.getByTestId("scene-preview-summary")).toHaveText("Gap width: 0.09 m");
+  await journey.getByRole("button", { name: "Back", exact: true }).click();
+  await input.fill("a drone landing");
+  await useThis.click();
+  await expect(journey.getByRole("heading", { name: "Pick a task" })).toBeVisible();
+  await expect(note).toContainText("ForkSafe can't simulate that yet. It supports:");
+  await expect(note).toContainText("Pick and place over a divider");
+  await expect(note).toContainText("Push through a gap");
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await screenshot(page, "describe-unsupported", viewport);
+  await expectNoHorizontalOverflow(page);
+  await input.fill("robot throwing trash into a bin");
+  await useThis.click();
+  await expect(note).toContainText("ForkSafe can't simulate that yet.");
+  await journey.getByRole("radio", { name: /Pick and place over a divider/ }).check();
+  await journey.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(journey.getByLabel("Divider height value")).toHaveValue("0.10");
+  await expect(note).toHaveCount(0);
+});
+
 async function expectNoHorizontalOverflow(page: Page) {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(overflow, "page must not scroll horizontally").toBeLessThanOrEqual(0);

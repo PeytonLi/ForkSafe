@@ -42,6 +42,28 @@ export const TASK_FAMILY_SPECS = {
 }>;
 
 export type TaskFamily = keyof typeof TASK_FAMILY_SPECS;
+export const DESCRIBE_HINTS: Record<string, { strong: readonly string[]; weak: readonly string[]; exclusive?: readonly string[] }> = {
+  divider_pick_place: {
+    strong: ["divider", "barrier", "pick and place", "pick up", "lift", "lifts", "lifting", "over a wall", "over the wall", "carry", "carries", "carrying"],
+    weak: ["wall", "over", "place", "obstacle", "pick"],
+  },
+  push_through_gap: {
+    strong: ["gap", "opening", "slot", "doorway", "through", "push", "pushes", "pushing", "slide", "slides", "sliding"],
+    weak: ["narrow", "hole", "shove"],
+  },
+  bin_drop: { strong: ["drop", "drops", "dropping"], weak: ["bin"] },
+  // A drop is not a throw. This entry stays inactive until its simulator exists.
+  toss_into_bin: {
+    strong: ["bin", "toss", "tosses", "tossing", "throw", "throws", "throwing", "trash", "basket"],
+    weak: ["into"],
+    exclusive: ["toss", "tosses", "tossing", "throw", "throws", "throwing"],
+  },
+};
+
+export const SCENE_DEFAULTS: Record<SceneOverrideKey, number> = {
+  cubeDx: 0, cubeDy: 0, targetDx: 0, targetDy: 0, dividerDx: 0, dividerDy: 0,
+  gapDx: 0, binDx: 0, binDy: 0, dividerHeight: 0.1, gapWidth: 0.07, binWidth: 0.14, speedScale: 1,
+};
 export const TASK_FAMILIES = Object.keys(TASK_FAMILY_SPECS) as TaskFamily[];
 export const DEFAULT_TASK_FAMILY: TaskFamily = "divider_pick_place";
 
