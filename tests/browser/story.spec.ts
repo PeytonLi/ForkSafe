@@ -193,7 +193,7 @@ test("readiness endpoint returns contract-shaped data without secret values", as
   const res = await request.get("/api/readiness");
   expect(res.ok()).toBeTruthy();
   const body = await res.json();
-  expect(body.integrations.length).toBeGreaterThanOrEqual(10);
+  expect(body.integrations.length).toBeGreaterThanOrEqual(8);
   for (const r of body.integrations) {
     expect(["live", "local", "fixture", "blocked", "not_implemented"]).toContain(r.mode);
     expect(typeof r.probed).toBe("boolean");

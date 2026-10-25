@@ -52,7 +52,6 @@ export async function probeIntegrations(env: Record<string, string | undefined> 
         { headers: { Authorization: `Basic ${btoa(`${env.ATLASSIAN_EMAIL ?? ""}:${env.ATLASSIAN_API_TOKEN ?? ""}`)}` } }),
     ]),
     entry("factory", env.FACTORY_API_KEY ? "live" : "blocked", env.FACTORY_API_KEY ? "configured_not_probed" : "missing_config"),
-    ...(["atlassian_confluence", "simulator", "evaluator"] as const).map((name) => entry(name, "not_implemented", "probe_not_implemented")),
   ];
 }
 
