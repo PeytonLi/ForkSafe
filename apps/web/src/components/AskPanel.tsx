@@ -2,6 +2,7 @@ import { useId, useRef, useState, type FormEvent } from "react";
 import { routeHref, shortId, useClient } from "../hooks";
 import { errorCode, QUESTION_MAX, SUGGESTED_QUESTIONS, withheldReason, type EvidenceAnswer, type EvidenceCitation, type InvestigationWorkspace } from "../services";
 import { useBrowserAccess } from "../services/browserAccess";
+import { requestReplaySeek } from "../viewer/replaySeek";
 import { Badge } from "./Panel";
 import styles from "./AskPanel.module.css";
 
@@ -129,12 +130,26 @@ function CitationChip({ c, investigationId, envIndex }: { c: EvidenceCitation; i
   const env = c.environmentId ? envIndex.get(c.environmentId) : undefined;
   const href = routeHref({ investigationId, tab: c.docType === "finding" ? "evidence" : "timeline", focus: c.id });
   const kind = c.docType === "finding" ? "Finding" : c.docType === "experiment_result" ? "Experiment" : "Evidence";
+  const tSec = c.tSec;
   return (
     <li>
       <a className={styles.chip} href={href} title={c.summary} data-testid="citation-chip">
         {env !== undefined && <span className={styles.chipEnv}>Env {env}</span>}
         {kind} {shortId(c.id)}
       </a>
+      {typeof tSec === "number" && Number.isFinite(tSec) && (
+        <button
+          type="button"
+          className={styles.showAt}
+          data-testid="citation-seek"
+          onClick={() => {
+            requestReplaySeek({ investigationId, tSec, citationId: c.id });
+            location.hash = routeHref({ investigationId, tab: "compare", focus: c.id });
+          }}
+        >
+          Show at {tSec.toFixed(1)}s
+        </button>
+      )}
     </li>
   );
 }

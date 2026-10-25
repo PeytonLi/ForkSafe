@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api.js";
 import { internalMutation, mutation, query } from "./_generated/server.js";
-import { hasPrivateAccess, requireInvestigationRead, requireWriteIdentity } from "./lib/webAccess.js";
+import { hasPrivateAccess, requireInvestigationRead, requireOperateIdentity } from "./lib/webAccess.js";
 import { appId, assertUUID } from "./lib/validators.js";
 
 export const DEFAULT_TASK_FAMILY = "divider_pick_place";
@@ -291,7 +291,7 @@ export const view = query({
 export const retry = mutation({
   args: { investigationId: v.string(), idempotencyKey: v.optional(v.string()), serviceToken: v.optional(v.string()) },
   handler: async (ctx, args): Promise<{ accepted: true; investigationId: string } | { accepted: false; mode: string; reason: string }> => {
-    await requireWriteIdentity(ctx, args.serviceToken);
+    await requireOperateIdentity(ctx, args.serviceToken);
     assertUUID(args.investigationId, "investigationId");
     const source = await ctx.db.query("investigations")
       .withIndex("by_appId", (q) => q.eq("appId", args.investigationId))

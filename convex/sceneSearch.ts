@@ -2,7 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { action } from "./_generated/server.js";
 import { internal } from "./_generated/api.js";
 import { isTaskFamily, validateSceneOverrides } from "@forksafe/contracts";
-import { requireWriteIdentity } from "./lib/webAccess.js";
+import { requireOperateIdentity } from "./lib/webAccess.js";
 import type { FailureSearchResult } from "./lib/sceneSearch.js";
 import { appId } from "./lib/validators.js";
 
@@ -22,7 +22,7 @@ export const findFailure = action({
     seed: v.optional(v.number()),
   },
   handler: async (ctx, args): Promise<FindFailureResponse> => {
-    await requireWriteIdentity(ctx, args.serviceToken);
+    await requireOperateIdentity(ctx, args.serviceToken);
     if (args.sceneOverrides !== undefined) {
       const validation = validateSceneOverrides(args.taskFamily, args.sceneOverrides);
       if (!validation.ok) {

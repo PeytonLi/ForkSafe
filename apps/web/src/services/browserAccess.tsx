@@ -5,15 +5,56 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 import { ConvexForkSafeClient } from "./convexClient";
 import type { ForkSafeClient } from "./types";
 
+export type MemberRole = "lead" | "operator" | "reviewer";
+
 export const mayWrite = (kind: string, authenticated: boolean, accessGranted = true) =>
   kind === "fixture" || (authenticated && accessGranted);
 
-type Viewer = { subject: string; email: string | null; accessGranted: boolean } | null;
+export function seatAllows(role: MemberRole, action: "operate" | "review"): boolean {
+  if (action === "operate") return role === "lead" || role === "operator";
+  return role === "lead" || role === "reviewer";
+}
+
+const ROLE_KEY = "forksafe.memberRole";
+
+function asRole(role: string | null | undefined): MemberRole {
+  return role === "operator" || role === "reviewer" ? role : "lead";
+}
+
+function storedRole(): MemberRole {
+  try {
+    return asRole(localStorage.getItem(ROLE_KEY));
+  } catch {
+    return "lead";
+  }
+}
+
+type Viewer = { subject: string; email: string | null; accessGranted: boolean; memberRole?: MemberRole } | null;
 const viewerQuery = makeFunctionReference<"query", {}, Viewer>("auth:viewer");
 const redeemInviteMutation = makeFunctionReference<"mutation", { inviteCode: string }, { ok: boolean }>("auth:redeemInvite");
+const setMemberRoleMutation = makeFunctionReference<"mutation", { role: MemberRole; email?: string }, { memberRole: MemberRole }>("auth:setMemberRole");
 
-const Access = createContext({
-  canWrite: true,
+type AccessValue = {
+  canWrite: boolean;
+  canOperate: boolean;
+  canReview: boolean;
+  role: MemberRole;
+  setRole: (role: MemberRole) => Promise<void>;
+  assignRole: (email: string, role: MemberRole) => Promise<void>;
+  authenticated: boolean;
+  verified: boolean;
+  accessGranted: boolean;
+  email: string | null;
+  open: boolean;
+  showSignIn: () => void;
+  close: () => void;
+  signIn: (data: FormData) => Promise<void>;
+  signInWithGoogle: () => Promise<void>;
+  redeemInvite: (code: string) => Promise<void>;
+  signOut: () => Promise<void>;
+};
+
+const signedOut = {
   authenticated: false,
   verified: false,
   accessGranted: true,
@@ -25,13 +66,31 @@ const Access = createContext({
   signInWithGoogle: async () => {},
   redeemInvite: async (_code: string) => {},
   signOut: async () => {},
+};
+
+const Access = createContext<AccessValue>({
+  canWrite: true,
+  canOperate: true,
+  canReview: true,
+  role: "lead",
+  setRole: async () => {},
+  assignRole: async () => {},
+  ...signedOut,
 });
 export const useBrowserAccess = () => useContext(Access);
+
+function seats(canWrite: boolean, role: MemberRole) {
+  return {
+    canOperate: canWrite && seatAllows(role, "operate"),
+    canReview: canWrite && seatAllows(role, "review"),
+  };
+}
 
 function Session({ children }: { children: ReactNode }) {
   const { isAuthenticated } = useConvexAuth();
   const viewer = useQuery(viewerQuery);
   const redeem = useMutation(redeemInviteMutation);
+  const setMemberRole = useMutation(setMemberRoleMutation);
   const actions = useAuthActions();
   const [open, setOpen] = useState(false);
   const [epoch, setEpoch] = useState(0);
@@ -45,8 +104,14 @@ function Session({ children }: { children: ReactNode }) {
     if (isAuthenticated && viewer?.accessGranted === false) setOpen(true);
   }, [isAuthenticated, viewer?.accessGranted]);
   const accessGranted = viewer?.accessGranted === true;
+  const canWrite = mayWrite("convex", isAuthenticated, accessGranted);
+  const role = asRole(viewer?.memberRole);
   return <Access.Provider value={{
-    canWrite: mayWrite("convex", isAuthenticated, accessGranted),
+    canWrite,
+    ...seats(canWrite, role),
+    role,
+    setRole: async (next) => { await setMemberRole({ role: next }); },
+    assignRole: async (email, next) => { await setMemberRole({ role: next, email }); },
     authenticated: isAuthenticated,
     verified: !!viewer,
     accessGranted,
@@ -67,8 +132,25 @@ function Session({ children }: { children: ReactNode }) {
   }}><div key={`${isAuthenticated ? "signed-in" : "signed-out"}-${epoch}`}>{children}</div></Access.Provider>;
 }
 
+function FixtureAccess({ children }: { children: ReactNode }) {
+  const [role, setRoleState] = useState<MemberRole>(storedRole);
+  const canWrite = mayWrite("fixture", false);
+  const setRole = async (next: MemberRole) => {
+    try { localStorage.setItem(ROLE_KEY, next); } catch { /* private browsing */ }
+    setRoleState(next);
+  };
+  return <Access.Provider value={{
+    canWrite,
+    ...seats(canWrite, role),
+    role,
+    setRole,
+    assignRole: async () => { throw new Error("No account with that email"); },
+    ...signedOut,
+  }}>{children}</Access.Provider>;
+}
+
 export function BrowserAccessProvider({ client, children }: { client: ForkSafeClient; children: ReactNode }) {
   return client instanceof ConvexForkSafeClient
     ? <ConvexAuthProvider client={client.react}><Session>{children}</Session></ConvexAuthProvider>
-    : <>{children}</>;
+    : <FixtureAccess>{children}</FixtureAccess>;
 }

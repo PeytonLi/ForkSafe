@@ -30,6 +30,11 @@
 .validation, .refusal { margin: 0; padding: 0.65rem 0.75rem; border-radius: 9px; background: var(--amber-bg); color: var(--amber); font-size: var(--text-sm); line-height: 1.45; }
 .titleField { display: grid; gap: 0.4rem; color: var(--muted); font-size: var(--text-sm); }
 .titleField input { width: 100%; min-height: 42px; padding: 0.5rem 0.65rem; color: var(--ink); }
+.scenePrompt { display: grid; gap: 0.65rem; }
+.scenePrompt textarea { width: 100%; min-height: 4.5rem; resize: vertical; line-height: 1.45; }
+.scenePrompt button { justify-self: start; }
+.promptResult { display: grid; gap: 0.45rem; }
+.promptApplied { margin: 0; padding: 0.65rem 0.75rem; border-radius: 9px; background: var(--accent-soft); color: var(--ink); font-size: var(--text-sm); line-height: 1.45; }
 .summary { display: grid; gap: 0.3rem; padding: 0.85rem; border-radius: 10px; background: var(--subtle); color: var(--muted); font-size: var(--text-sm); }
 .summary strong { color: var(--ink); }
 @media (max-width: 560px) {

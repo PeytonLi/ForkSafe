@@ -11,6 +11,7 @@ import { SegThumb } from "./SegThumb";
 import { human, stateTone, words } from "./tone";
 import styles from "./ComparePanel.module.css";
 import { useBrowserAccess } from "../services/browserAccess";
+import { ChallengeCaseForm } from "./ChallengeCaseForm";
 
 const DETAIL_TABS = [
   ["replay", "Replay"],
@@ -103,7 +104,7 @@ function CandidateDetail({ w, cand }: { w: InvestigationWorkspace; cand: Control
       <div role="tabpanel" id={`compare-panel-${active}`} aria-labelledby={`compare-tab-${active}`} className={styles.subTabPanel} data-testid={`compare-panel-content-${active}`}>
         {active === "replay" && (
           <Panel title="Synchronized replay" headingLevel={3} state={replays} testId="comparison-replay">
-            {(r) => <SyncedReplays original={r.original} candidate={r.candidate} scene={inv.baselineCase.sceneOverrides} taskFamily={inv.baselineCase.taskFamily} />}
+            {(r) => <SyncedReplays original={r.original} candidate={r.candidate} scene={inv.baselineCase.sceneOverrides} taskFamily={inv.baselineCase.taskFamily} investigationId={inv.id} />}
           </Panel>
         )}
         {active === "results" && (
@@ -152,6 +153,7 @@ function CandidateDetail({ w, cand }: { w: InvestigationWorkspace; cand: Control
         )}
         {active === "review" && <ReviewForm w={w} cand={cand} evals={evals} />}
       </div>
+      <ChallengeCaseForm workspace={w} candidateId={cand.id} />
     </div>
   );
 }
@@ -163,6 +165,7 @@ export function SyncedReplays({
   taskFamily,
   labels = { before: "Original", after: "Repaired candidate" },
   compact = false,
+  investigationId,
 }: {
   original: SimRunResult;
   candidate: SimRunResult;
@@ -170,8 +173,9 @@ export function SyncedReplays({
   taskFamily?: string;
   labels?: { before: string; after: string };
   compact?: boolean;
+  investigationId?: string;
 }) {
-  const clock = useReplayClock(Math.max(replayDuration(original.frames), replayDuration(candidate.frames)));
+  const clock = useReplayClock(Math.max(replayDuration(original.frames), replayDuration(candidate.frames)), 0, investigationId);
   const markers = [
     ...(original.firstFailure ? [{ tSec: original.firstFailure.tSec, label: `${labels.before.toLowerCase()} ${human(original.firstFailure.kind)}` }] : []),
     ...(candidate.firstFailure ? [{ tSec: candidate.firstFailure.tSec, label: `${labels.after.toLowerCase()} ${human(candidate.firstFailure.kind)}` }] : []),
@@ -268,9 +272,11 @@ function ReviewForm({ w, cand, evals }: { w: InvestigationWorkspace; cand: Contr
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const reviewable = !!final && w.investigation.state === "awaiting_review";
+  const reviewerSeatRequired = "canReview" in access && access.canReview === false;
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (reviewerSeatRequired) return;
     if (!access.canWrite) { access.showSignIn(); return; }
     if (!final || !decision) return;
     setBusy(true);
@@ -334,8 +340,8 @@ function ReviewForm({ w, cand, evals }: { w: InvestigationWorkspace; cand: Contr
             <textarea value={notes} maxLength={4000} rows={2} onChange={(e) => setNotes(e.target.value)} />
           </label>
           {!decision && <p className={styles.reviewHelper} id="review-help">Choose a decision to enable your review.</p>}
-          <button type="submit" className={`primary ${styles.reviewSubmit}`} disabled={!decision || busy} aria-describedby={!decision ? "review-help" : undefined} data-testid="submit-review">
-            {busy ? "Recording…" : "Record review"}
+          <button type="submit" className={`primary ${styles.reviewSubmit}`} disabled={!decision || busy || reviewerSeatRequired} aria-describedby={!decision ? "review-help" : undefined} data-testid="submit-review">
+            {busy ? "Recording…" : reviewerSeatRequired ? "Reviewer seat required" : "Record review"}
           </button>
           {err && <p role="alert" className={styles.err}>{err}</p>}
         </form>

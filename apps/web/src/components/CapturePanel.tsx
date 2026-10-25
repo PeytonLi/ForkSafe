@@ -71,6 +71,7 @@ export function CapturePanel({ workspace }: { workspace: InvestigationWorkspace 
             scene={inv.baselineCase.sceneOverrides}
             taskFamily={inv.baselineCase.taskFamily}
             initialT={handoff?.atSec ?? 0}
+            investigationId={inv.id}
           />
         ) : null}
       </Panel>
@@ -121,8 +122,8 @@ export function CapturePanel({ workspace }: { workspace: InvestigationWorkspace 
   );
 }
 
-function BaselineReplay({ replay, scene, taskFamily, initialT }: { replay: NonNullable<Awaited<ReturnType<ReturnType<typeof useClient>["getReplay"]>>>; scene: Record<string, number>; taskFamily?: string; initialT: number }) {
-  const clock = useReplayClock(replayDuration(replay.frames), initialT);
+function BaselineReplay({ replay, scene, taskFamily, initialT, investigationId }: { replay: NonNullable<Awaited<ReturnType<ReturnType<typeof useClient>["getReplay"]>>>; scene: Record<string, number>; taskFamily?: string; initialT: number; investigationId: string }) {
+  const clock = useReplayClock(replayDuration(replay.frames), initialT, investigationId);
   const markers = replay.firstFailure ? [{ tSec: replay.firstFailure.tSec, label: human(replay.firstFailure.kind) }] : [];
   return (
     <div>
@@ -171,7 +172,7 @@ function SceneEditor({ scene, taskFamily: taskFamilyInput, seed, envs, open, onO
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!access.canWrite) { access.showSignIn(); return; }
-    if (!validation.ok || !seedValid) return;
+    if (access.canOperate === false || !validation.ok || !seedValid) return;
     setBusy(true);
     setOutcome(null);
     try {
@@ -247,8 +248,8 @@ function SceneEditor({ scene, taskFamily: taskFamilyInput, seed, envs, open, onO
           {!validation.ok && <p className={styles.warn} role="alert">{validation.reason}</p>}
           {!seedValid && <p className={styles.warn} role="alert">Seed must be a non-negative integer.</p>}
           <div className={styles.actions}>
-            <button type={access.canWrite ? "submit" : "button"} onClick={access.canWrite ? undefined : access.showSignIn} className="primary" disabled={busy || !validation.ok || !seedValid}>
-              {!access.canWrite ? "Sign in to capture" : busy ? "Requesting…" : "Record baseline run"}
+            <button type={access.canWrite && access.canOperate !== false ? "submit" : "button"} onClick={access.canWrite ? undefined : access.showSignIn} className="primary" disabled={busy || !validation.ok || !seedValid || (access.canWrite && access.canOperate === false)}>
+              {!access.canWrite ? "Sign in to capture" : access.canOperate === false ? "Operator seat required" : busy ? "Requesting…" : "Record baseline run"}
             </button>
             <button type="button" onClick={onClose}>Cancel</button>
             {changed.length > 0 && <span className={styles.note}>{changed.length} parameter(s) changed</span>}

@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import schema from "../schema.js";
 import { api } from "../_generated/api.js";
 import { internalAction } from "../_generated/server.js";
-import { accessGrantedForUser, newOAuthAccountNeedsInvite, requireWriteIdentity, validateInvite } from "../lib/webAccess.js";
+import { mayOperate, mayReview, roleOf } from "../lib/memberRole.js";
+import { accessGrantedForUser, newOAuthAccountNeedsInvite, requireOperateIdentity, requireReviewIdentity, requireWriteIdentity, validateInvite } from "../lib/webAccess.js";
 
 const modules = { ...import.meta.glob("../**/*.ts"), "../bridge.ts": async () => ({
   recordReview: internalAction({ args: {}, handler: async () => ({ committed: false }) }),
@@ -180,5 +181,115 @@ describe("investigation visibility", () => {
     const reader = t.withIdentity({ subject: "reader" });
     expect(await reader.query(api.candidates.diff, { candidateId })).toContain("private controller");
     expect(await reader.query(api.candidates.replay, { candidateId })).toEqual({ frames: [] });
+  });
+});
+
+describe("member seats", () => {
+  const anon = { auth: { getUserIdentity: async () => null } as Auth };
+  const subject = "user-1|session";
+
+  function identityCtx(user: { memberRole?: string; accessGranted?: boolean } | null) {
+    return {
+      auth: { getUserIdentity: async () => ({ subject, tokenIdentifier: "trusted|user-1" }) } as Auth,
+      db: {
+        normalizeId: () => "user-1",
+        get: async () => user,
+      },
+    };
+  }
+
+  it("keeps an absent or unknown role as a lead", () => {
+    for (const user of [undefined, null, {}, { memberRole: "nope" }]) {
+      expect(roleOf(user)).toBe("lead");
+      expect(mayOperate(roleOf(user))).toBe(true);
+      expect(mayReview(roleOf(user))).toBe(true);
+    }
+    expect(roleOf({ memberRole: "operator" })).toBe("operator");
+    expect(mayOperate("operator")).toBe(true);
+    expect(mayReview("operator")).toBe(false);
+    expect(mayOperate("reviewer")).toBe(false);
+    expect(mayReview("reviewer")).toBe(true);
+  });
+
+  it("rejects a reviewer who operates and an operator who reviews, and still lets a missing role do both", async () => {
+    await expect(requireOperateIdentity(identityCtx({ memberRole: "reviewer" }))).rejects.toThrow("unauthorized");
+    await expect(requireReviewIdentity(identityCtx({ memberRole: "reviewer" }))).resolves.toBe(`convex-auth:${subject}`);
+    await expect(requireReviewIdentity(identityCtx({ memberRole: "operator" }))).rejects.toThrow("unauthorized");
+    await expect(requireOperateIdentity(identityCtx({ memberRole: "operator" }))).resolves.toBe(`convex-auth:${subject}`);
+    await expect(requireOperateIdentity(identityCtx({}))).resolves.toBe(`convex-auth:${subject}`);
+    await expect(requireReviewIdentity(identityCtx(null))).resolves.toBe(`convex-auth:${subject}`);
+    await expect(requireOperateIdentity(identityCtx({ memberRole: "nope" }))).resolves.toBe(`convex-auth:${subject}`);
+    await expect(requireReviewIdentity(identityCtx({ accessGranted: false }))).rejects.toThrow("unauthorized");
+  });
+
+  it("lets a service token and the local dev identity operate and review", async () => {
+    await expect(requireOperateIdentity(anon, token)).resolves.toBe("service:integration");
+    await expect(requireReviewIdentity(anon, token)).resolves.toBe("service:integration");
+    const local = { FORKSAFE_DEV_ANONYMOUS_UI: "true", CONVEX_CLOUD_URL: "http://127.0.0.1:3210" };
+    await expect(requireOperateIdentity(anon, undefined, local)).resolves.toBe("local:anonymous-ui");
+    await expect(requireReviewIdentity(anon, undefined, local)).resolves.toBe("local:anonymous-ui");
+  });
+
+  async function account(email: string, memberRole?: "lead" | "operator" | "reviewer") {
+    const t = await seeded();
+    const userId = await t.run((ctx) => ctx.db.insert("users", { email, ...(memberRole ? { memberRole } : {}) }));
+    const caller = t.withIdentity({ subject: `${userId}|session`, tokenIdentifier: `trusted|${userId}` });
+    return { t, caller, userId };
+  }
+
+  it("lets an account with no seat operate and review", async () => {
+    const { caller, userId } = await account("legacy-seat@example.com");
+    expect(await caller.query(api.auth.viewer, {})).toMatchObject({ memberRole: "lead", accessGranted: true });
+    await expect(caller.mutation(api.investigations.capture, capture)).resolves.toMatchObject({ accepted: false });
+    await expect(caller.action(api.reviews.record, review)).resolves.toMatchObject({ reviewerIdentity: `convex-auth:${userId}|session` });
+    await expect(caller.action(api.sceneSearch.findFailure, { taskFamily: "divider_pick_place" })).resolves.toMatchObject({ found: false });
+    await expect(caller.mutation(api.investigations.cancel, { investigationId: id })).resolves.toBeDefined();
+  });
+
+  it("refuses operate actions for a reviewer and review actions for an operator", async () => {
+    const reviewer = await account("reviewer@example.com", "reviewer");
+    await expect(reviewer.caller.mutation(api.investigations.capture, capture)).rejects.toThrow("unauthorized");
+    await expect(reviewer.caller.mutation(api.investigations.cancel, { investigationId: id })).rejects.toThrow("unauthorized");
+    await expect(reviewer.caller.action(api.sceneSearch.findFailure, { taskFamily: "divider_pick_place" })).rejects.toThrow("unauthorized");
+    await expect(reviewer.caller.action(api.reviews.record, review)).resolves.toMatchObject({ reviewerIdentity: `convex-auth:${reviewer.userId}|session` });
+
+    const operator = await account("operator@example.com", "operator");
+    await expect(operator.caller.action(api.reviews.record, review)).rejects.toThrow("unauthorized");
+    await expect(operator.caller.mutation(api.investigations.capture, capture)).resolves.toMatchObject({ accepted: false });
+    await expect(operator.caller.action(api.sceneSearch.findFailure, { taskFamily: "divider_pick_place" })).resolves.toMatchObject({ found: false });
+    await expect(operator.caller.mutation(api.investigations.cancel, { investigationId: id })).resolves.toBeDefined();
+  });
+
+  it("lets a service token operate and review without a seat", async () => {
+    const t = await seeded();
+    await expect(t.mutation(api.investigations.capture, { ...capture, serviceToken: token })).resolves.toMatchObject({ accepted: false });
+    await expect(t.action(api.reviews.record, { ...review, serviceToken: token })).resolves.toMatchObject({ reviewerIdentity: "service:integration" });
+    await expect(t.action(api.sceneSearch.findFailure, { taskFamily: "divider_pick_place", serviceToken: token })).resolves.toMatchObject({ found: false });
+    await expect(t.mutation(api.investigations.cancel, { investigationId: id, serviceToken: token })).resolves.toBeDefined();
+  });
+
+  it("lets a lead assign seats and keeps the last lead", async () => {
+    const t = await seeded();
+    const leadId = await t.run((ctx) => ctx.db.insert("users", { email: "lead@example.com", accessGranted: true }));
+    const reviewerId = await t.run((ctx) => ctx.db.insert("users", { email: "reviewer@example.com", memberRole: "reviewer", accessGranted: true }));
+    const operatorId = await t.run((ctx) => ctx.db.insert("users", { email: "operator@example.com", memberRole: "operator", accessGranted: true }));
+    const pendingId = await t.run((ctx) => ctx.db.insert("users", { email: "pending@example.com", accessGranted: false }));
+    const lead = t.withIdentity({ subject: `${leadId}|session` });
+    const reviewer = t.withIdentity({ subject: `${reviewerId}|session` });
+    const operator = t.withIdentity({ subject: `${operatorId}|session` });
+    const pending = t.withIdentity({ subject: `${pendingId}|session` });
+    await expect(t.mutation(api.auth.setMemberRole, { role: "lead" })).rejects.toThrow("unauthorized");
+    await expect(pending.mutation(api.auth.setMemberRole, { role: "lead" })).rejects.toThrow("unauthorized");
+    await expect(reviewer.mutation(api.auth.setMemberRole, { role: "lead" })).rejects.toThrow("unauthorized");
+    await expect(operator.mutation(api.auth.setMemberRole, { role: "lead", email: "reviewer@example.com" })).rejects.toThrow("unauthorized");
+    await expect(lead.mutation(api.auth.setMemberRole, { role: "reviewer" })).rejects.toThrow(/last lead/i);
+    await lead.mutation(api.auth.setMemberRole, { role: "reviewer", email: "  Operator@Example.com " });
+    expect(await operator.query(api.auth.viewer, {})).toMatchObject({ memberRole: "reviewer", accessGranted: true });
+    await expect(lead.mutation(api.auth.setMemberRole, { role: "operator", email: "missing@example.com" })).rejects.toThrow("No account with that email");
+    const secondLeadId = await t.run((ctx) => ctx.db.insert("users", { email: "lead-two@example.com", accessGranted: true }));
+    await lead.mutation(api.auth.setMemberRole, { role: "operator" });
+    expect(await lead.query(api.auth.viewer, {})).toMatchObject({ memberRole: "operator" });
+    const second = t.withIdentity({ subject: `${secondLeadId}|session` });
+    expect(await second.query(api.auth.viewer, {})).toMatchObject({ memberRole: "lead" });
   });
 });

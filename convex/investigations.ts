@@ -5,7 +5,7 @@ import { internal } from "./_generated/api.js";
 import { mutation, query, internalMutation, internalQuery, type MutationCtx } from "./_generated/server.js";
 import { readLimits } from "./lib/constants.js";
 import { countsTowardCapacity } from "./lib/reservations.js";
-import { hasPrivateAccess, isPublicInvestigation, requireInvestigationRead, requireWriteIdentity } from "./lib/webAccess.js";
+import { hasPrivateAccess, isPublicInvestigation, requireInvestigationRead, requireOperateIdentity } from "./lib/webAccess.js";
 import { appId, assertUUID } from "./lib/validators.js";
 import { MoreInvestigationRequest } from "./forgeProtocolExt.js";
 import { finalizeCancelledJob } from "./lib/jobOps.js";
@@ -62,7 +62,7 @@ export const create = mutation({
     serviceToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    await requireWriteIdentity(ctx, args.serviceToken);
+    await requireOperateIdentity(ctx, args.serviceToken);
     const existing = await ctx.db.query("investigations")
       .withIndex("by_idempotencyKey", (q) => q.eq("idempotencyKey", args.idempotencyKey))
       .unique();
@@ -229,7 +229,7 @@ async function startHandler(ctx: MutationCtx, args: { investigationId: string; e
 export const start = mutation({
   args: { investigationId: v.string(), expectedVersion: v.number(), serviceToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    await requireWriteIdentity(ctx, args.serviceToken);
+    await requireOperateIdentity(ctx, args.serviceToken);
     return await startHandler(ctx, args);
   },
 });
@@ -345,7 +345,7 @@ export const attachWorkflowId = internalMutation({
 export const cancel = mutation({
   args: { investigationId: v.string(), expectedVersion: v.optional(v.number()), serviceToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    await requireWriteIdentity(ctx, args.serviceToken);
+    await requireOperateIdentity(ctx, args.serviceToken);
     assertUUID(args.investigationId, "investigationId");
     const investigation = await ctx.db.query("investigations")
       .withIndex("by_appId", (q) => q.eq("appId", args.investigationId))
@@ -530,7 +530,7 @@ export const capture = mutation({
     autoStart: v.optional(v.boolean()), idempotencyKey: v.optional(v.string()), serviceToken: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<{ accepted: true; investigationId: string } | { accepted: false; mode: string; reason: string }> => {
-    await requireWriteIdentity(ctx, args.serviceToken);
+    await requireOperateIdentity(ctx, args.serviceToken);
     const limits = readLimits();
     const taskFamily = args.taskFamily ?? DEFAULT_TASK_FAMILY;
     const validation = validateSceneOverrides(taskFamily, args.sceneOverrides);

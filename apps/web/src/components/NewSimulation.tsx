@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { DEFAULT_TASK_FAMILY, TASK_FAMILIES, TASK_FAMILY_SPECS, validateSceneOverrides, type TaskFamily } from "@forksafe/contracts";
+import { compileScenePrompt, DEFAULT_TASK_FAMILY, SCENE_OVERRIDE_RANGES, TASK_FAMILIES, TASK_FAMILY_SPECS, validateSceneOverrides, type SceneOverrideKey, type ScenePromptResult, type TaskFamily } from "@forksafe/contracts";
 import { changedOverrides, defaultOverride } from "../scene";
 import { useClient } from "../hooks";
 import type { ControllerChoiceValue, FailureSearchOutcome } from "../services";
@@ -8,6 +8,7 @@ import { sceneActionMessage } from "../services/sceneActionMessage";
 import { human } from "./tone";
 import { ReplayViewer } from "../viewer/ReplayViewer";
 import { ControllerChoice } from "./ControllerChoice";
+import { FailureMinimizer } from "./FailureMinimizer";
 import { SceneFields } from "./SceneFields";
 import { SegThumb } from "./SegThumb";
 import styles from "./NewSimulation.module.css";
@@ -26,9 +27,12 @@ export function NewSimulation({ onAccepted }: { onAccepted: (investigationId: st
   const [searchResult, setSearchResult] = useState<FailureSearchOutcome | null>(null);
   const [starting, setStarting] = useState(false);
   const [startResult, setStartResult] = useState<{ mode: string; reason: string } | null>(null);
+  const [scenePrompt, setScenePrompt] = useState("");
+  const [scenePromptResult, setScenePromptResult] = useState<ScenePromptResult | null>(null);
 
   const validation = validateSceneOverrides(taskFamily, overrides);
   const seedValid = Number.isInteger(seed) && seed >= 0;
+  const canOperate = access.canOperate !== false;
   const defaultTitle = `${TASK_FAMILY_SPECS[taskFamily].title} – custom scene`;
 
   const chooseFamily = (family: TaskFamily) => {
@@ -36,9 +40,18 @@ export function NewSimulation({ onAccepted }: { onAccepted: (investigationId: st
     setOverrides(defaultOverride(family));
     setSearchResult(null);
     setStartResult(null);
+    setScenePrompt("");
+    setScenePromptResult(null);
+  };
+
+  const applyScenePrompt = () => {
+    const result = compileScenePrompt(taskFamily, scenePrompt, overrides);
+    setScenePromptResult(result);
+    setOverrides(result.overrides);
   };
 
   const findFailure = async () => {
+    if (!canOperate) return;
     setSearching(true);
     setSearchResult(null);
     try {
@@ -63,7 +76,7 @@ export function NewSimulation({ onAccepted }: { onAccepted: (investigationId: st
       access.showSignIn();
       return;
     }
-    if (!validation.ok || !seedValid) return;
+    if (!canOperate || !validation.ok || !seedValid) return;
     setStarting(true);
     setStartResult(null);
     try {
@@ -135,7 +148,7 @@ export function NewSimulation({ onAccepted }: { onAccepted: (investigationId: st
               <ReplayViewer taskFamily={taskFamily} scene={overrides} />
               </div>
               <div className={styles.searchRow}>
-                <button type="button" onClick={findFailure} disabled={searching}>
+                <button type="button" onClick={findFailure} disabled={searching || (access.canWrite && !canOperate)}>
                   {searching ? "Searching…" : "Find a failure for me"}
                 </button>
                 {searchResult && (
@@ -168,8 +181,38 @@ export function NewSimulation({ onAccepted }: { onAccepted: (investigationId: st
                   setSeed(1);
                   setEnvironments(1);
                   setSearchResult(null);
+                  setScenePrompt("");
+                  setScenePromptResult(null);
                 }}
               />
+              <FailureMinimizer taskFamily={taskFamily} overrides={overrides} seed={seed} onApply={setOverrides} />
+              <div className={styles.scenePrompt} data-testid="scene-prompt">
+                <label className={styles.titleField}>
+                  <span>Describe a scene change</span>
+                  <textarea
+                    rows={3}
+                    value={scenePrompt}
+                    placeholder="Move the divider 6 cm closer"
+                    onChange={(event) => {
+                      setScenePrompt(event.currentTarget.value);
+                      setScenePromptResult(null);
+                    }}
+                  />
+                </label>
+                <button type="button" onClick={applyScenePrompt}>Apply to the sliders</button>
+                {scenePromptResult && (
+                  <div className={styles.promptResult} data-testid="scene-prompt-result" aria-live="polite">
+                    {scenePromptResult.applied.map((item, index) => (
+                      <p className={styles.promptApplied} role="status" key={`${item.key}-${index}`}>
+                        {item.label}: {formatPromptValue(item.key, item.value)}
+                      </p>
+                    ))}
+                    {scenePromptResult.refusals.map((refusal) => (
+                      <p className={styles.refusal} role="alert" key={refusal}>{refusal}</p>
+                    ))}
+                  </div>
+                )}
+              </div>
               {!validation.ok && <p className={styles.validation} role="alert">{validation.reason}</p>}
               {!seedValid && <p className={styles.validation} role="alert">Seed must be a non-negative integer.</p>}
               <div className={styles.actions}>
@@ -224,10 +267,11 @@ export function NewSimulation({ onAccepted }: { onAccepted: (investigationId: st
           {!validation.ok && <p className={styles.validation} role="alert">{validation.reason}</p>}
           <div className={styles.actions}>
             <button type="button" onClick={() => setStep(2)}>Back</button>
-            <button type="button" className="primary" onClick={start} disabled={starting || !validation.ok || !seedValid}>
+            <button type="button" className="primary" onClick={start} disabled={starting || !validation.ok || !seedValid || (access.canWrite && !canOperate)}>
               {!access.canWrite ? "Sign in to start" : starting ? "Starting…" : "Start"}
             </button>
           </div>
+          {access.canWrite && !canOperate && <p className={styles.refusal} role="status">This seat cannot start a simulation.</p>}
           {startResult && (
             <p className={styles.refusal} role="status" data-testid="start-refusal">
               <span className={styles.modeBadge}>{sceneActionMessage(startResult.mode, startResult.reason, "capture").label}</span>
@@ -238,4 +282,11 @@ export function NewSimulation({ onAccepted }: { onAccepted: (investigationId: st
       )}
     </div>
   );
+}
+
+function formatPromptValue(key: string, value: number): string {
+  if (!(key in SCENE_OVERRIDE_RANGES)) return String(value);
+  const range = SCENE_OVERRIDE_RANGES[key as SceneOverrideKey];
+  const digits = range.unit === "×" ? 2 : 3;
+  return `${value.toFixed(digits)} ${range.unit}`;
 }
