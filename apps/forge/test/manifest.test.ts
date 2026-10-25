@@ -54,9 +54,9 @@ describe("Forge manifest", () => {
     for (const item of functionModules) {
       expect(item.key).toMatch(/^[a-zA-Z0-9_-]+$/);
       expect(item.handler).toBe(
-        item.key === "selfcheck"
-          ? "generated/resolver.selfcheck"
-          : "generated/resolver.handler",
+        item.key === "resolver"
+          ? "generated/resolver.handler"
+          : `generated/resolver.${item.key}`,
       );
       expect(functions.has(item.key)).toBe(true);
     }

@@ -196,3 +196,49 @@ describe("Forge resolver handlers", () => {
     }
   });
 });
+
+describe("Forge issue-created trigger", () => {
+  const event = (labels: unknown[] = ["forksafe"]) => ({
+    issue: {
+      key: "FS-77",
+      id: "10077",
+      fields: {
+        project: { key: "FS" },
+        summary: "Arm drops cube before the divider",
+        labels,
+      },
+    },
+  });
+
+  it("starts an investigation for a forksafe-labeled issue", async () => {
+    const handlers = createHandlers(fixtureBackend());
+    const result = await handlers.issueCreated(event());
+    expect(result).toMatchObject({
+      ok: true,
+      mode: "fixture",
+      data: { state: "capturing" },
+    });
+  });
+
+  it("accepts labels in object form and is case-insensitive", async () => {
+    const handlers = createHandlers(fixtureBackend());
+    const result = await handlers.issueCreated(
+      event([{ name: "Bug" }, { name: "ForkSafe" }]),
+    );
+    expect(result).toMatchObject({ ok: true });
+  });
+
+  it("skips issues without the forksafe label", async () => {
+    const handlers = createHandlers(fixtureBackend());
+    const result = await handlers.issueCreated(event(["bug"]));
+    expect(result).toEqual({ ok: false, skipped: "missing_forsafe_label" });
+  });
+
+  it("skips malformed events", async () => {
+    const handlers = createHandlers(fixtureBackend());
+    expect(await handlers.issueCreated({ comment: {} })).toEqual({
+      ok: false,
+      skipped: "not_an_issue_event",
+    });
+  });
+});

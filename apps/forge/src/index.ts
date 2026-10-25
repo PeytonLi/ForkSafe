@@ -1,4 +1,5 @@
 import ResolverModule from "@forge/resolver";
+import api, { route } from "@forge/api";
 import { backendFromEnv } from "./backend.js";
 import { createHandlers, type ForgeContext } from "./handlers.js";
 
@@ -7,7 +8,17 @@ const ResolverClass =
   ResolverModule;
 const resolver = new ResolverClass();
 const backend = backendFromEnv();
-const handlers = createHandlers(backend);
+
+async function fetchIssueLabels(issueKey: string): Promise<string[]> {
+  const response = await api
+    .asApp()
+    .requestJira(route`/rest/api/3/issue/${issueKey}?fields=labels`);
+  if (!response.ok) throw new Error(`jira_issue_lookup_${response.status}`);
+  const body = (await response.json()) as { fields?: { labels?: string[] } };
+  return body.fields?.labels ?? [];
+}
+
+const handlers = createHandlers(backend, { fetchIssueLabels });
 
 const resolverNames = [
   "getPanel",
@@ -37,6 +48,12 @@ resolver.define("requestMoreInvestigation", ({ payload, context }) =>
 );
 
 export const handler = resolver.getDefinitions();
+
+export async function issueCreated(event: unknown) {
+  const result = await handlers.issueCreated(event);
+  console.log("forksafe issueCreated", JSON.stringify(result));
+  return result;
+}
 
 export async function selfcheck() {
   const panelResult = await handlers.getPanel({ payload: {}, context: {} });

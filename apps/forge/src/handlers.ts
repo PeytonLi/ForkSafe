@@ -65,7 +65,10 @@ const MoreInvestigationPayload = z.object({
 
 export function createHandlers(
   backend: ForkSafeBackend,
-  { now = Date.now }: { now?: () => number } = {},
+  {
+    now = Date.now,
+    fetchIssueLabels,
+  }: { now?: () => number; fetchIssueLabels?: (issueKey: string) => Promise<string[]> } = {},
 ): {
   getPanel(req: HandlerRequest): Promise<HandlerResult<PanelDataType>>;
   getReviewDetails(req: HandlerRequest): Promise<HandlerResult<{
@@ -96,6 +99,13 @@ export function createHandlers(
   requestMoreInvestigation(
     req: HandlerRequest,
   ): Promise<HandlerResult<MoreInvestigationResponseType>>;
+  issueCreated(
+    event: unknown,
+  ): Promise<
+    | { ok: true; mode: string; data: StartResponse }
+    | { ok: false; code: string; message: string }
+    | { ok: false; skipped: string }
+  >;
 } {
   return {
     async getPanel({ context }) {
@@ -281,8 +291,63 @@ export function createHandlers(
         return mapHandlerError(error);
       }
     },
+
+    async issueCreated(event) {
+      const parsed = IssueCreatedEvent.safeParse(event);
+      if (!parsed.success || !parsed.data.issue) {
+        return { ok: false, skipped: "not_an_issue_event" };
+      }
+      const { issue } = parsed.data;
+      let labelValues = (issue.fields.labels ?? []).map((label) =>
+        typeof label === "string"
+          ? label
+          : label && typeof label === "object" && "name" in label
+            ? String((label as { name?: unknown }).name ?? "")
+            : "",
+      );
+      if (labelValues.length === 0 && fetchIssueLabels) {
+        try {
+          labelValues = await fetchIssueLabels(issue.key);
+        } catch {
+          return { ok: false, skipped: "label_lookup_failed" };
+        }
+      }
+      const labels = labelValues.map((label) => label.trim().toLowerCase());
+      if (!labels.includes("forksafe")) {
+        return { ok: false, skipped: "missing_forsafe_label" };
+      }
+      try {
+        const request = StartInvestigationRequest.parse({
+          issueKey: issue.key,
+          issueId: issue.id,
+          projectKey: issue.fields.project.key,
+          title: (issue.fields.summary ?? `${issue.key} investigation`).slice(0, 200),
+          requestedEnvironments: 3,
+        });
+        const data = StartInvestigationResponse.parse(
+          await backend.startInvestigation(request),
+        );
+        return { ok: true, mode: data.mode, data };
+      } catch (error) {
+        return mapHandlerError(error);
+      }
+    },
   };
 }
+
+const IssueCreatedEvent = z.object({
+  issue: z
+    .object({
+      key: z.string().min(1),
+      id: z.string().min(1),
+      fields: z.object({
+        project: z.object({ key: z.string().min(1) }),
+        summary: z.string().min(1).optional(),
+        labels: z.array(z.unknown()).optional(),
+      }),
+    })
+    .optional(),
+});
 
 function issueContext(
   context: ForgeContext,
