@@ -136,7 +136,7 @@ export function NewSimulation({ onAccepted }: { onAccepted: (investigationId: st
           />
           <fieldset className={styles.taskChoices}>
             <legend className="visually-hidden">Task family</legend>
-            {TASK_FAMILIES.map((family) => {
+            {TASK_FAMILIES.filter((family) => family !== "bin_drop").map((family) => {
               const spec = TASK_FAMILY_SPECS[family];
               return (
                 <label className={styles.taskCard} data-selected={taskFamily === family || undefined} key={family}>

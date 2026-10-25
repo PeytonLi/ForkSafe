@@ -25,7 +25,7 @@ Two files. Neither file is optional when they choose import.
 }
 ```
 
-`taskFamily` is `divider_pick_place` or `push_through_gap`. `sceneOverrides` uses the existing slider keys and ranges. `seed` is a non-negative integer. Unknown keys, other task families, and other robots are refused.
+`taskFamily` is `divider_pick_place`, `push_through_gap`, or `bin_drop`. `sceneOverrides` uses that task's slider keys and ranges. `seed` is a non-negative integer. Unknown keys, other task families, and other robots are refused. `bin_drop` is not one of the stock New simulation choices; it arrives through this upload.
 
 **Controller Python**
 
@@ -53,7 +53,7 @@ They do not launch each experiment. They do accept or refuse the candidate at th
 
 ## Out of scope
 
-A diff of the imported plan before Start. A third task family. Arbitrary Python, ROS bags, URDF uploads, a new robot, learned policies, hardware deployment, and automatic merge.
+A diff of the imported plan before Start. Arbitrary Python, ROS bags, URDF uploads, a new robot, learned policies, hardware deployment, and automatic merge.
 
 ## Acceptance
 

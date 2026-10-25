@@ -188,6 +188,9 @@ def main(argv: list[str] | None = None) -> int:
         if family == "divider_pick_place":
             x_key, x_low, x_high = "dividerDx", -0.25, 0.25
             y_key, y_low, y_high = "dividerHeight", 0.03, 0.12
+        elif family == "bin_drop":
+            x_key, x_low, x_high = "binDx", -0.08, 0.08
+            y_key, y_low, y_high = "binWidth", 0.08, 0.16
         else:
             x_key, x_low, x_high = "gapDx", -0.08, 0.08
             y_key, y_low, y_high = "gapWidth", 0.05, 0.10

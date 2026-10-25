@@ -23,7 +23,7 @@ function pythonSet(name: string) {
 
 describe("scene family contracts", () => {
   it("defines known families and the default", () => {
-    expect(TASK_FAMILIES).toEqual(["divider_pick_place", "push_through_gap"]);
+    expect(TASK_FAMILIES).toEqual(["divider_pick_place", "push_through_gap", "bin_drop"]);
     expect(DEFAULT_TASK_FAMILY).toBe("divider_pick_place");
     expect(isTaskFamily("push_through_gap")).toBe(true);
     expect(isTaskFamily("toss_into_bin")).toBe(false);
@@ -59,6 +59,7 @@ describe("scene family contracts", () => {
     const parity = {
       divider_pick_place: "OVERRIDE_KEYS",
       push_through_gap: "PUSH_GAP_OVERRIDE_KEYS",
+      bin_drop: "BIN_DROP_OVERRIDE_KEYS",
     } as const;
     for (const [family, setName] of Object.entries(parity)) {
       expect(pythonSet(setName)).toEqual([...TASK_FAMILY_SPECS[family as keyof typeof parity].overrideKeys].sort());

@@ -13,6 +13,10 @@ const FIELD_GROUPS: Record<TaskFamily, { label: string; keys: SceneOverrideKey[]
     { label: "Cube", keys: ["cubeDx", "cubeDy"] },
     { label: "Target", keys: ["targetDx", "targetDy"] },
   ],
+  bin_drop: [
+    { label: "Bin", keys: ["binDx", "binDy", "binWidth"] },
+    { label: "Cube", keys: ["cubeDx", "cubeDy"] },
+  ],
 };
 
 interface Props {
@@ -32,7 +36,7 @@ interface Props {
 
 export function formatSceneValue(key: string, value: number): string {
   if (!Number.isFinite(value)) return "";
-  const digits = ["dividerHeight", "gapWidth", "speedScale"].includes(key) ? 2 : 3;
+  const digits = ["dividerHeight", "gapWidth", "binWidth", "speedScale"].includes(key) ? 2 : 3;
   return value.toFixed(digits);
 }
 

@@ -59,6 +59,19 @@ describe("validateImportedFailure", () => {
     expect(result.value.sceneOverrides).not.toBe(sceneOverrides);
   });
 
+  it("accepts a bin drop that is not one of the stock scenes", () => {
+    const result = validateImportedFailure(input({
+      title: "Cube released beside the open bin",
+      taskFamily: "bin_drop",
+      seed: 7,
+      sceneOverrides: { binWidth: 0.12, binDx: 0.03 },
+    }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.taskFamily).toBe("bin_drop");
+    expect(result.value.sceneOverrides).toEqual({ binWidth: 0.12, binDx: 0.03 });
+  });
+
   it("rejects a controller missing plan", () => {
     expect(validateImportedFailure(input({
       controllerSource: "def execute(scene):\n    return []\n",

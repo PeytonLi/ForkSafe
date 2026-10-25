@@ -1,4 +1,4 @@
-import { isTaskFamily, validateSceneOverrides } from "./scenes.js";
+import { isTaskFamily, validateSceneOverrides, type TaskFamily } from "./scenes.js";
 
 export const MAX_CONTROLLER_BYTES = 64 * 1024;
 
@@ -12,7 +12,7 @@ export type ImportedFailureInput = {
 
 export type ImportedFailure = {
   title: string;
-  taskFamily: "divider_pick_place" | "push_through_gap";
+  taskFamily: TaskFamily;
   seed: number;
   sceneOverrides: Record<string, number>;
   controllerSource: string;
