@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { useClient } from "../hooks";
 import { useBrowserAccess, type MemberRole } from "../services/browserAccess";
 import styles from "./MemberRoleControl.module.css";
@@ -12,6 +12,9 @@ const SEATS: { role: MemberRole; label: string }[] = [
 function seatError(error: unknown, fallback: string): string {
   const message = error instanceof Error ? error.message : "";
   if (message.includes("No account with that email")) return "No account with that email";
+  if (message.includes("You cannot change your own seat")) return "You cannot change your own seat.";
+  if (message.includes("Pick whose seat to change")) return "Enter an email to assign a seat.";
+  if (message.includes("last lead")) return "The last lead cannot leave that seat.";
   if (message.toLowerCase().includes("unauthorized")) return "You cannot change that seat.";
   return fallback;
 }
@@ -23,27 +26,9 @@ export function MemberRoleControl() {
   const [assignSeat, setAssignSeat] = useState<MemberRole>("reviewer");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-  const [pending, setPending] = useState<MemberRole | null>(null);
-  useEffect(() => { setPending(null); }, [access.role]);
   if (client.source.kind === "convex" && (!access.authenticated || !access.accessGranted)) return null;
   const convex = client.source.kind === "convex";
-  const role = pending ?? access.role;
-  const canChangeOwnSeat = !convex || access.role === "lead";
-
-  const choose = async (next: MemberRole) => {
-    if (next === role || saving) return;
-    setError("");
-    setPending(next);
-    setSaving(true);
-    try {
-      await access.setRole(next);
-    } catch (caught) {
-      setPending(null);
-      setError(seatError(caught, "Could not change seat."));
-    } finally {
-      setSaving(false);
-    }
-  };
+  const role = access.role;
 
   const assign = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -67,14 +52,14 @@ export function MemberRoleControl() {
       <div className={styles.options}>
         {SEATS.map(({ role: seat, label }) => (
           <label key={seat} className={styles.option}>
-            <input type="radio" name="member-role" value={seat} checked={role === seat} disabled={!canChangeOwnSeat} onChange={() => { void choose(seat); }} />
+            <input type="radio" name="member-role" value={seat} checked={role === seat} disabled readOnly />
             {label}
           </label>
         ))}
       </div>
       <p id="member-role-help" className={styles.help}>
         Operator runs investigations. Reviewer can only accept or refuse a controller hash. Lead does both.
-        {convex && access.role !== "lead" ? " A lead assigns seats." : ""}
+        {convex ? (access.role === "lead" ? " Assign seats to someone else by email. You cannot change your own." : " A lead assigns seats.") : ""}
       </p>
       {access.role === "lead" && (
         <form className={styles.assign} onSubmit={(event) => { void assign(event); }}>
