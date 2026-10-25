@@ -36,6 +36,16 @@ export const tick = internalMutation({
       await ctx.db.patch(attempt._id, { state: decision.attemptState, endedAtMs: now });
       await releaseAttemptModelTurns(ctx, attempt.appId, now, "attempt_expired");
       await markAttemptUsageUnknown(ctx, attempt.appId, job.environmentId, now);
+      // Prior attempt stages must not keep the timeline looking "in progress"
+      // after a lease dies before work_started / completion.
+      const priorStages = await ctx.db.query("handoffs")
+        .withIndex("by_operation", (q) => q.eq("operationId", job.operationId))
+        .collect();
+      for (const row of priorStages) {
+        if (!row.stale && row.attemptId === attempt.appId && row.stage !== "completion_acknowledged") {
+          await ctx.db.patch(row._id, { stale: true });
+        }
+      }
       await ctx.db.patch(job._id, {
         state: decision.jobState,
         ...(decision.pendingRevocation ? { pendingRevocation: decision.pendingRevocation } : {}),
@@ -56,7 +66,70 @@ export const tick = internalMutation({
           }
         }
       }
+      if (!decision.retry) {
+        const alreadyAcked = priorStages.some((row) =>
+          !row.stale && row.stage === "completion_acknowledged" && row.attemptId === attempt.appId,
+        );
+        if (!alreadyAcked) {
+          await ctx.db.insert("handoffs", {
+            operationId: job.operationId,
+            jobId: job.appId,
+            stage: "completion_acknowledged",
+            attemptId: attempt.appId,
+            detail: { outcome: "failed", error: "attempts_exhausted", reconciled: true },
+            atMs: now,
+            epoch: job.epoch,
+            stale: false,
+          });
+        }
+        if (job.kind === "factory_session") {
+          await ctx.scheduler.runAfter(0, internal.investigations.afterEnvironmentJobSettled, {
+            investigationId: job.investigationId,
+          });
+        }
+      }
       expired += 1;
+    }
+
+    // Heal jobs that already failed/cancelled without a completion handoff
+    // (older expire path left timeline bars stuck "in progress"). Cap per tick
+    // so a large terminal backlog cannot storm the scheduler.
+    const HEAL_SCAN = 200;
+    const HEAL_CAP = 20;
+    let healedCompletions = 0;
+    for (const state of ["failed", "cancelled"] as const) {
+      if (healedCompletions >= HEAL_CAP) break;
+      const terminal = await ctx.db.query("jobs").withIndex("by_state", (q) => q.eq("state", state)).take(HEAL_SCAN);
+      for (const job of terminal) {
+        if (healedCompletions >= HEAL_CAP) break;
+        const rows = await ctx.db.query("handoffs")
+          .withIndex("by_job", (q) => q.eq("jobId", job.appId))
+          .collect();
+        if (rows.some((row) => row.stage === "completion_acknowledged" && !row.stale)) continue;
+        for (const row of rows) {
+          if (!row.stale && row.stage !== "admission_reserved") await ctx.db.patch(row._id, { stale: true });
+        }
+        await ctx.db.insert("handoffs", {
+          operationId: job.operationId,
+          jobId: job.appId,
+          stage: "completion_acknowledged",
+          attemptId: job.activeAttemptId,
+          detail: {
+            outcome: state === "cancelled" ? "cancelled" : "failed",
+            error: job.lastError ?? state,
+            reconciled: true,
+          },
+          atMs: now,
+          epoch: job.epoch,
+          stale: false,
+        });
+        if (job.kind === "factory_session") {
+          await ctx.scheduler.runAfter(0, internal.investigations.afterEnvironmentJobSettled, {
+            investigationId: job.investigationId,
+          });
+        }
+        healedCompletions += 1;
+      }
     }
 
     const evidenceJobs = await ctx.db.query("jobs").withIndex("by_state", (q) => q.eq("state", "evidence_pending")).take(100);
@@ -177,7 +250,7 @@ export const tick = internalMutation({
     }
     await ctx.scheduler.runAfter(0, internal.sandboxes.admitQueued, {});
     if (args.scheduleNext) await ctx.scheduler.runAfter(5_000, internal.reconcile.tick, { scheduleNext: true });
-    return { expired, acknowledged, expiredModelTurns, finalizedCancellations, revocationsScheduled, checkedAtMs: now };
+    return { expired, acknowledged, expiredModelTurns, finalizedCancellations, revocationsScheduled, healedCompletions, checkedAtMs: now };
   },
 });
 
