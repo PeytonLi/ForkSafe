@@ -19,15 +19,12 @@ const GROUP_LABEL: Record<ReadinessGroup, string> = {
 const PURPOSE: Record<string, string> = {
   convex: "Keeps investigations, jobs and reviews in order.",
   spacetimedb: "Lets agents share findings with each other as they work.",
-  daytona: "Starts the sandboxes where experiments run.",
+  daytona: "Starts the sandboxes where physics runs and fixes are scored.",
   factory: "Runs the agents that investigate and propose fixes.",
-  simulator: "Records new baseline failures in physics.",
-  evaluator: "Checks every fix against the public and withheld test cases.",
   artifact_store: "Stores replays, logs and controller files.",
   elastic: "Powers evidence search.",
   elastic_agent_builder: "Answers “Why did this fail?” questions.",
   atlassian_jira: "Keeps the matching Jira issue up to date.",
-  atlassian_confluence: "Links evidence packs from Confluence.",
 };
 
 /** What stops working when the service is down. */
@@ -36,13 +33,10 @@ const IMPACT: Record<string, string> = {
   spacetimedb: "Agents can't share findings, so environments work alone.",
   daytona: "New environments can't start, so experiments won't run.",
   factory: "Agents can't investigate or propose fixes.",
-  simulator: "New baseline failures can't be recorded.",
-  evaluator: "Fixes can't be checked, so nothing can be reviewed.",
   artifact_store: "Replays and logs can't be saved or opened.",
   elastic: "Evidence search is unavailable.",
   elastic_agent_builder: "“Why did this fail?” can't answer questions.",
   atlassian_jira: "Jira issues won't be updated.",
-  atlassian_confluence: "Confluence pages won't get evidence links.",
 };
 
 export function healthNote(r: WebIntegrationReadiness): string {

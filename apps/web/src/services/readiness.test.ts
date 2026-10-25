@@ -14,7 +14,8 @@ describe("readiness response compatibility", () => {
     respond({ integrations });
     const parsed = await fetchReadiness();
     expect(parsed).toEqual(integrations);
-    expect(parsed.filter((item) => item.probed).map((item) => item.name).sort()).toEqual(["evaluator", "simulator", "spacetimedb"]);
+    expect(parsed.filter((item) => item.probed).map((item) => item.name).sort()).toEqual(["spacetimedb"]);
+    for (const name of ["simulator", "evaluator", "atlassian_confluence"]) expect(parsed.map((item) => item.name)).not.toContain(name);
   });
 
   it("defaults a missing probe flag to unverified", async () => {
