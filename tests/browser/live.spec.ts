@@ -69,44 +69,31 @@ test("fixture live stream advances, hands off to replay, and appears in environm
   await openEnvironments(page, mobile);
   const environmentGrid = page.getByTestId("environment-grid");
   await expect(environmentGrid).toBeVisible();
+  const switcher = environmentGrid.getByRole("tablist", { name: "Live environments" });
+  await expect(switcher.getByRole("tab")).toHaveCount(3);
   const firstEnvironment = page.getByTestId("env-tile-1");
   await expect(firstEnvironment.getByText("Active", { exact: true })).toBeVisible();
   await expect(firstEnvironment.getByText("1 active / 2", { exact: true })).toBeVisible();
-  if (mobile) {
-    const switcher = environmentGrid.getByRole("tablist", { name: "Live environments" });
-    await expect(switcher.getByRole("tab")).toHaveCount(3);
-    await expect(firstEnvironment.getByTestId("live-viewer")).toHaveAttribute("data-state", "streaming", { timeout: 25_000 });
-    await expect(firstEnvironment.getByTestId("live-viewer").getByText("Fixture stream", { exact: true })).toBeVisible({ timeout: 25_000 });
-    await expect(firstEnvironment.getByTestId("live-viewer").locator("[data-label]")).toHaveAttribute("data-label", /.+/);
-    await expect(firstEnvironment.getByTestId("live-viewer").locator("[data-label]")).not.toHaveAttribute("data-label", "Env 1");
-    for (const index of [2, 3]) {
-      await expect(page.getByTestId(`env-tile-${index}`).getByRole("button", { name: "Watch live" })).toBeVisible();
-      await expect(page.getByTestId(`env-tile-${index}`).getByTestId("live-viewer")).toHaveCount(0);
-    }
-    await page.screenshot({ path: evidencePath(info, "phone-environments-live.png") });
-    const secondEnvironment = page.getByTestId("env-tile-2");
-    await secondEnvironment.getByRole("button", { name: "Watch live" }).click();
-    await expect(switcher.getByRole("tab", { name: "Env 2" })).toHaveAttribute("aria-selected", "true");
-    await expect(secondEnvironment.getByTestId("live-viewer")).toHaveAttribute("data-state", "streaming", { timeout: 25_000 });
-    await expect(secondEnvironment.getByTestId("live-viewer").getByText("Fixture stream", { exact: true })).toBeVisible({ timeout: 25_000 });
-    await expect(firstEnvironment.getByRole("button", { name: "Watch live" })).toBeVisible();
-    await page.screenshot({ path: evidencePath(info, "phone-environments-watch-live.png") });
-    await switcher.getByRole("tab", { name: "Env 3" }).click();
-    await expect(page.getByTestId("env-tile-3").getByTestId("live-viewer")).toHaveCount(1);
-    await expect(secondEnvironment.getByRole("button", { name: "Watch live" })).toBeVisible();
-    await expect(firstEnvironment.getByTestId("live-viewer")).toHaveCount(0);
-  } else {
-    for (const index of [1, 2, 3]) {
-      const tile = page.getByTestId(`env-tile-${index}`);
-      const environmentViewer = tile.getByTestId("live-viewer");
-      await expect(environmentViewer).toHaveAttribute("data-state", "streaming", { timeout: 25_000 });
-      await expect(environmentViewer.getByText("Fixture stream", { exact: true })).toBeVisible({ timeout: 25_000 });
-      const canvasCaption = environmentViewer.locator("[data-label]");
-      await expect(canvasCaption).toHaveAttribute("data-label", /.+/);
-      expect(await canvasCaption.getAttribute("data-label")).not.toBe(`Env ${index}`);
-    }
-    await page.screenshot({ path: evidencePath(info, "environments-live-desktop.png") });
-  }
+  await expect(firstEnvironment.getByTestId("live-viewer")).toHaveAttribute("data-state", "streaming", { timeout: 25_000 });
+  await expect(firstEnvironment.getByTestId("live-viewer").getByText("Fixture stream", { exact: true })).toBeVisible({ timeout: 25_000 });
+  const firstCaption = firstEnvironment.getByTestId("live-viewer").locator("[data-label]");
+  await expect(firstCaption).toHaveAttribute("data-label", /.+/);
+  await expect(firstCaption).not.toHaveAttribute("data-label", "Env 1");
+  await expect(page.getByTestId("env-tile-2")).toHaveCount(0);
+  if (mobile) await page.screenshot({ path: evidencePath(info, "phone-environments-live.png") });
+
+  await switcher.getByRole("tab", { name: "Env 2" }).click();
+  const secondEnvironment = page.getByTestId("env-tile-2");
+  await expect(switcher.getByRole("tab", { name: "Env 2" })).toHaveAttribute("aria-selected", "true");
+  await expect(secondEnvironment.getByTestId("live-viewer")).toHaveAttribute("data-state", "streaming", { timeout: 25_000 });
+  await expect(secondEnvironment.getByTestId("live-viewer").getByText("Fixture stream", { exact: true })).toBeVisible({ timeout: 25_000 });
+  await expect(page.getByTestId("env-tile-1")).toHaveCount(0);
+  if (mobile) await page.screenshot({ path: evidencePath(info, "phone-environments-watch-live.png") });
+
+  await switcher.getByRole("tab", { name: "Env 3" }).click();
+  await expect(page.getByTestId("env-tile-3").getByTestId("live-viewer")).toHaveCount(1);
+  await expect(secondEnvironment).toHaveCount(0);
+  if (!mobile) await page.screenshot({ path: evidencePath(info, "environments-live-desktop.png") });
   const visibleViewers = await environmentGrid.getByTestId("live-viewer").evaluateAll((viewers) =>
     viewers.filter((viewer) => {
       const rect = viewer.getBoundingClientRect();

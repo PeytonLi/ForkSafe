@@ -12,32 +12,19 @@ type Experiment = InvestigationWorkspace["experiments"][number];
 type ExperimentWithReplay = Experiment & { replayArtifactId: string };
 
 export function EnvLiveSlot({
-  compact,
-  selected,
   experiment,
   finishedExperiment,
   investigationId,
   scene,
   taskFamily,
-  onSelectLive,
 }: {
-  compact: boolean;
-  selected: boolean;
   experiment: Experiment | undefined;
   /** Latest finished experiment for this env when nothing is running. */
   finishedExperiment?: ExperimentWithReplay;
   investigationId: string;
   scene: Record<string, number>;
   taskFamily?: string;
-  onSelectLive: (button: HTMLButtonElement) => void;
 }) {
-  if (compact && !selected) {
-    return (
-      <button type="button" className={styles.watchLive} onClick={(event) => onSelectLive(event.currentTarget)}>
-        {experiment ? "Watch live" : finishedExperiment ? "Watch replay" : "Watch live"}
-      </button>
-    );
-  }
   if (experiment) {
     return (
       <LiveViewer
@@ -46,7 +33,6 @@ export function EnvLiveSlot({
         scene={scene}
         taskFamily={taskFamily}
         label={experiment.simCase.caseId}
-        compact
       />
     );
   }
@@ -114,7 +100,6 @@ function CompactReplay({
         label={label}
         scene={scene}
         taskFamily={taskFamily as TaskFamily | undefined}
-        compact
       />
       <ReplayControls clock={clock} label={`${label} replay`} />
     </div>
