@@ -65,7 +65,10 @@ const MoreInvestigationPayload = z.object({
 
 export function createHandlers(
   backend: ForkSafeBackend,
-  { now = Date.now }: { now?: () => number } = {},
+  {
+    now = Date.now,
+    fetchIssueLabels,
+  }: { now?: () => number; fetchIssueLabels?: (issueKey: string) => Promise<string[]> } = {},
 ): {
   getPanel(req: HandlerRequest): Promise<HandlerResult<PanelDataType>>;
   getReviewDetails(req: HandlerRequest): Promise<HandlerResult<{
@@ -295,15 +298,21 @@ export function createHandlers(
         return { ok: false, skipped: "not_an_issue_event" };
       }
       const { issue } = parsed.data;
-      const labels = (issue.fields.labels ?? [])
-        .map((label) =>
-          typeof label === "string"
-            ? label
-            : label && typeof label === "object" && "name" in label
-              ? String((label as { name?: unknown }).name ?? "")
-              : "",
-        )
-        .map((label) => label.trim().toLowerCase());
+      let labelValues = (issue.fields.labels ?? []).map((label) =>
+        typeof label === "string"
+          ? label
+          : label && typeof label === "object" && "name" in label
+            ? String((label as { name?: unknown }).name ?? "")
+            : "",
+      );
+      if (labelValues.length === 0 && fetchIssueLabels) {
+        try {
+          labelValues = await fetchIssueLabels(issue.key);
+        } catch {
+          return { ok: false, skipped: "label_lookup_failed" };
+        }
+      }
+      const labels = labelValues.map((label) => label.trim().toLowerCase());
       if (!labels.includes("forksafe")) {
         return { ok: false, skipped: "missing_forsafe_label" };
       }
