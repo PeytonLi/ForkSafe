@@ -67,6 +67,7 @@ export interface CaptureDraft {
   requestedEnvironments: number;
   taskFamily: TaskFamily;
   controller?: ControllerChoiceValue;
+  controllerSource?: string;
 }
 
 export type ControllerChoiceValue = "approved" | "baseline";
@@ -149,6 +150,8 @@ export interface EvidenceCitation {
   docType: "finding" | "evidence" | "experiment_result";
   summary: string;
   environmentId?: string;
+  /** Simulation time recorded on an evidence locator. Absent when the evidence has none. */
+  tSec?: number;
 }
 
 /** Answer from the Elastic evidence agent, scoped to one investigation. */
@@ -200,7 +203,7 @@ export interface ForkSafeClient {
   cancelInvestigation(investigationId: string): Promise<void>;
   submitReview(input: ReviewInput): Promise<HumanReview>;
   requestCapture(draft: CaptureDraft): Promise<CaptureOutcome>;
-  findFailure(taskFamily: TaskFamily): Promise<FailureSearchOutcome>;
+  findFailure(taskFamily: TaskFamily, options?: { sceneOverrides?: Record<string, number>; seed?: number }): Promise<FailureSearchOutcome>;
   getLearning(investigationId: string): Promise<LearningView>;
   retryWithImprovedController(investigationId: string): Promise<CaptureOutcome>;
   getCurrentController(taskFamily?: string): Promise<CurrentController>;

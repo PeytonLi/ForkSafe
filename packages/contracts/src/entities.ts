@@ -81,6 +81,7 @@ export const InvestigationEnvironment = z.object({
   investigationId: InvestigationId,
   index: z.number().int().nonnegative(), // environment slot, stable
   state: EnvironmentState,
+  sceneVariant: SimCase.optional(),
   daytonaSandbox: VendorRef.optional(), // trusted runner sandbox
   budgets: z.object({
     maxExperiments: z.number().int().default(20),

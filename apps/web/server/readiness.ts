@@ -16,7 +16,6 @@ const MODE_VAR: Partial<Record<Name, string>> = {
   elastic: "ELASTIC_MODE",
   elastic_agent_builder: "ELASTIC_AGENT_BUILDER_MODE",
   atlassian_jira: "ATLASSIAN_MODE",
-  atlassian_confluence: "ATLASSIAN_MODE",
 };
 
 export type Probe = (url: string, timeoutMs: number) => Promise<{ ok: boolean; status?: number; error?: string }>;
@@ -32,7 +31,7 @@ export const httpProbe: Probe = async (url, timeoutMs) => {
 
 /** Builds the /api/readiness report. Credential-gated integrations report
  *  `blocked` with the missing variable *names* (never values). Integrations
- *  without credentials (SpacetimeDB, simulator, evaluator) are probed over
+ *  without credentials (SpacetimeDB) are probed over
  *  HTTP: unreachable means `blocked`, never `live`. Config-only `live` is
  *  labeled as "credentials present, not probed by web". */
 export async function buildReadiness(
@@ -71,11 +70,7 @@ export async function buildReadiness(
   };
 
   const stdbHttp = env.SPACETIMEDB_URI.replace(/^ws/, "http").replace(/\/$/, "");
-  await Promise.all([
-    probed("spacetimedb", "SPACETIMEDB_MODE", `${stdbHttp}/v1/database/${env.SPACETIMEDB_DATABASE}`, `SpacetimeDB database ${env.SPACETIMEDB_DATABASE}`),
-    probed("simulator", "SIMULATOR_MODE", `${env.SIMULATOR_URL.replace(/\/$/, "")}/health`, "Simulator"),
-    probed("evaluator", "SIMULATOR_MODE", `${env.EVALUATOR_URL.replace(/\/$/, "")}/health`, "Evaluator"),
-  ]);
+  await probed("spacetimedb", "SPACETIMEDB_MODE", `${stdbHttp}/v1/database/${env.SPACETIMEDB_DATABASE}`, `SpacetimeDB database ${env.SPACETIMEDB_DATABASE}`);
 
   const artifactMode = env.ARTIFACT_MODE;
   push(
@@ -84,6 +79,6 @@ export async function buildReadiness(
     artifactMode === "local" ? `Local filesystem at ${env.ARTIFACT_ROOT}` : `ARTIFACT_MODE=${artifactMode} (Convex file storage)`,
   );
 
-  const order: Name[] = ["convex", "spacetimedb", "daytona", "factory", "simulator", "evaluator", "artifact_store", "elastic", "elastic_agent_builder", "atlassian_jira", "atlassian_confluence"];
+  const order: Name[] = ["convex", "spacetimedb", "daytona", "factory", "artifact_store", "elastic", "elastic_agent_builder", "atlassian_jira"];
   return out.sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name));
 }

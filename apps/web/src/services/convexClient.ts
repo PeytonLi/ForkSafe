@@ -97,7 +97,7 @@ export const FailureSearch = z.union([
   z.object({
     mode: z.enum(["live", "local", "fixture", "blocked", "not_implemented"]),
     found: z.literal(true),
-    taskFamily: z.enum(["divider_pick_place", "push_through_gap"]),
+    taskFamily: z.enum(["divider_pick_place", "push_through_gap", "bin_drop"]),
     caseId: z.string(),
     sceneOverrides: z.record(z.string(), z.number()),
     seed: z.number().int().nonnegative(),
@@ -193,6 +193,7 @@ export const EvidenceAnswerSchema = z.object({
     docType: z.enum(["finding", "evidence", "experiment_result"]),
     summary: z.string(),
     environmentId: z.string().optional(),
+    tSec: z.number().nonnegative().optional(),
   })),
   withheld: z.array(z.object({ id: z.string().min(1), reason: z.string() })),
 });
@@ -319,9 +320,16 @@ export class ConvexForkSafeClient implements ForkSafeClient {
       mapError(e);
     }
   }
-  async findFailure(taskFamily: import("@forksafe/contracts").TaskFamily): Promise<FailureSearchOutcome> {
+  async findFailure(
+    taskFamily: import("@forksafe/contracts").TaskFamily,
+    options?: { sceneOverrides?: Record<string, number>; seed?: number },
+  ): Promise<FailureSearchOutcome> {
     try {
-      const result = await this.client.action(makeFunctionReference<"action">(CONVEX_FUNCTIONS.findFailure), { taskFamily });
+      const result = await this.client.action(makeFunctionReference<"action">(CONVEX_FUNCTIONS.findFailure), {
+        taskFamily,
+        ...(options?.sceneOverrides !== undefined ? { sceneOverrides: options.sceneOverrides } : {}),
+        ...(options?.seed !== undefined ? { seed: options.seed } : {}),
+      });
       return parse(CONVEX_RESPONSE_SCHEMAS.findFailure, result, "Failure search") as FailureSearchOutcome;
     } catch (e) {
       mapError(e);

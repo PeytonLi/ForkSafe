@@ -6,6 +6,8 @@ export const TABS = [
   ["timeline", "Timeline"],
   ["compare", "Compare & review"],
   ["learning", "What we learned"],
+  ["casefile", "Case file"],
+  ["scope", "Search width"],
 ] as const;
 
 export type SectionKey = (typeof TABS)[number][0];

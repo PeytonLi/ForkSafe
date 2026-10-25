@@ -4,6 +4,7 @@ import { httpAction } from "./_generated/server.js";
 import { internal } from "./_generated/api.js";
 import { requireServiceToken } from "./lib/auth.js";
 import { GRANT_TTL_MS } from "./lib/constants.js";
+import { failureSummaryFor } from "./lib/failureBrief.js";
 import { verifyRunnerSignature } from "./lib/runnerAuth.js";
 import { traceLog } from "./lib/tracing.js";
 
@@ -12,6 +13,24 @@ import { traceLog } from "./lib/tracing.js";
  *  secret never leave Convex. */
 
 const MAX_BODY_BYTES = 512 * 1024;
+
+function isPayloadSimCase(value: unknown): value is { caseId: string; sceneOverrides: Record<string, unknown> } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as { caseId?: unknown; sceneOverrides?: unknown };
+  return typeof record.caseId === "string"
+    && !!record.sceneOverrides
+    && typeof record.sceneOverrides === "object"
+    && !Array.isArray(record.sceneOverrides);
+}
+
+/** The repair brief uses the environment scene on the job when it is a case. */
+export function baselineCaseFromJobPayload<T>(payload: unknown, investigationBaseline: T): T {
+  const simCase = payload && typeof payload === "object" && !Array.isArray(payload)
+    ? (payload as { simCase?: unknown }).simCase
+    : undefined;
+  return isPayloadSimCase(simCase) ? simCase as T : investigationBaseline;
+}
+
 const TOOL_NAMES = ["inspect_failure", "read_source", "apply_patch", "fork_candidate", "request_subtask", "run_experiment", "propose_controller_revision", "submit_candidate", "read_findings", "write_finding", "request_evidence"] as const;
 const INVALID_ARGUMENT_MESSAGE = "Request does not match the expected runner contract.";
 
@@ -116,14 +135,32 @@ export function registerRunnerRoutes(router: HttpRouter): void {
           const baselineBlob = baselineBundle?.storageId ? await ctx.storage.get(baselineBundle.storageId) : null;
           baselineControllerSource = baselineBlob ? (await baselineBlob.text()).slice(0, 20_000) : undefined;
         }
+        const suppliedFailureSummary = job.payload?.failureSummary;
+        let failureSummary = typeof suppliedFailureSummary === "string" && suppliedFailureSummary.trim()
+          ? suppliedFailureSummary
+          : "";
+        if (!failureSummary) {
+          try {
+            const baseline = await ctx.runQuery(internal.evidence.getExperiment, {
+              experimentId: investigation.baselineExperimentId,
+            });
+            failureSummary = failureSummaryFor(baseline ? {
+              taskFamily: baseline.simCase?.taskFamily,
+              failureKinds: baseline.failureKinds,
+              firstFailure: baseline.firstFailure ?? null,
+            } : {});
+          } catch {
+            failureSummary = failureSummaryFor({});
+          }
+        }
         const payload = {
           ...(job.payload ?? {}),
           ...(job.attemptsUsed > 1 && checkpoint ? { resume: checkpoint } : {}),
           repair: {
-            investigationTitle: investigation.title, environmentIndex: environment.index, baselineCase: investigation.baselineCase,
+            investigationTitle: investigation.title, environmentIndex: environment.index, baselineCase: baselineCaseFromJobPayload(job.payload, investigation.baselineCase),
             ...(baselineControllerSource ? { baselineControllerSource } : {}),
             priorHints: job.payload?.priorHints ?? [],
-            failureSummary: job.payload?.failureSummary ?? "The baseline controller collides with the divider while carrying the cube.",
+            failureSummary,
             findingsDigest: "Call read_findings to see what other environments found.",
             budgets: { maxExperiments: environment.budgets.maxExperiments, experimentsUsed: environment.experimentsUsed, maxCandidates: environment.budgets.maxCandidates, candidatesUsed: environment.candidatesUsed },
           },

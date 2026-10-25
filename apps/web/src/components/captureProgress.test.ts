@@ -44,6 +44,12 @@ describe("capture progress mapping", () => {
       currentTitle: "Recording didn't work",
       currentDetail: "baseline_engine_error",
     });
+    const mismatch = captureProgressFor({
+      captureStatus: "failed",
+      investigationState: "failed",
+      lastError: "controller_sha_mismatch",
+    });
+    expect(mismatch?.currentDetail).toMatch(/Franka model/);
     expect(captureProgressFor({
       captureStatus: "recorded",
       baselineStatus: "constraint_violation",

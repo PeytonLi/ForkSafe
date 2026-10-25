@@ -10,6 +10,7 @@
 .column { min-width: 0; min-height: 100vh; padding-left: var(--sb); transition: padding-left 220ms var(--ease-slide); }
 .topbar { position: sticky; top: 0; z-index: 15; height: 56px; border-bottom: 1px solid var(--line); background: rgba(255, 255, 255, 0.82); backdrop-filter: saturate(180%) blur(12px); -webkit-backdrop-filter: saturate(180%) blur(12px); }
 .topInner { display: flex; height: 100%; max-width: calc(var(--page) + 2 * var(--gutter)); align-items: center; justify-content: space-between; gap: 16px; margin: 0 auto; padding: 0 var(--gutter); }
+.topActions { display: flex; min-width: 0; align-items: center; gap: 8px; }
 .crumbs { min-width: 0; }
 .crumbs ol { display: flex; min-width: 0; align-items: center; margin: 0; padding: 0; list-style: none; color: var(--ink); font-size: var(--text-sm); font-weight: 550; white-space: nowrap; }
 .crumbs li { min-width: 0; overflow: hidden; text-overflow: ellipsis; }

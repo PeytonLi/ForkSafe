@@ -1,6 +1,7 @@
+import type { Finding } from "@forksafe/contracts";
 import { describe, expect, it } from "vitest";
+import { citationTime, fixtureAnswer, scopedQuestion, withheldReason } from "./ask";
 import { FixtureClient } from "./fixtureClient";
-import { fixtureAnswer, scopedQuestion, withheldReason } from "./ask";
 
 const INV = "3b7d9303-7082-4b73-a3b6-1391b3e2fc4d";
 const OTHER = "9e9efe34-0000-4000-8000-000000000000";
@@ -35,6 +36,40 @@ describe("fixture answers", () => {
     for (const c of a.citations) expect(ids.has(c.id)).toBe(true);
     expect(a.withheld).toEqual([expect.objectContaining({ reason: "revoked" })]);
     expect(ids.has(a.withheld[0]!.id)).toBe(false);
+  });
+
+  it("copies a locator time onto the citation and omits tSec when the evidence has none", () => {
+    const env = "e95d4081-af90-49fb-afb3-f445b6504d97";
+    const timed = {
+      id: "11111111-1111-4111-8111-111111111111",
+      investigationId: INV,
+      environmentId: env,
+      kind: "collision_frame",
+      summary: "The cube hit the divider.",
+      evidence: [{ kind: "contact_event", locator: { tSec: 1.8 } }],
+      createdAtMs: 2,
+    } satisfies Finding;
+    const plain = {
+      id: "22222222-2222-4222-8222-222222222222",
+      investigationId: INV,
+      environmentId: env,
+      kind: "behavioral_note",
+      summary: "The cube hit the divider at 9.9 seconds.",
+      evidence: [{ kind: "log_excerpt", locator: { frame: 3 } }],
+      createdAtMs: 1,
+    } satisfies Finding;
+    const a = fixtureAnswer([timed, plain], "Why did the cube hit the divider?");
+    expect(a.citations.find((c) => c.id === timed.id)?.tSec).toBe(1.8);
+    expect(a.citations.find((c) => c.id === plain.id)).not.toHaveProperty("tSec");
+    expect(citationTime({
+      ...timed,
+      evidence: [
+        { kind: "metric", locator: { timeSec: 4.4, tSec: Number.NaN } },
+        { kind: "contact_event", locator: { failureTSec: 2.2, tSec: "9.9" } },
+        { kind: "trace_frame", locator: { tSec: 1.8 } },
+      ],
+    })).toBe(1.8);
+    expect(citationTime(plain)).toBeUndefined();
   });
 
   it("says when the evidence doesn't cover a question instead of guessing", () => {

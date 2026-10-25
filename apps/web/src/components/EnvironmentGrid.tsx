@@ -1,8 +1,10 @@
 import { useState } from "react";
-import { fmtDuration, shortSha, useCompact } from "../hooks";
+import { fmtDuration, shortId, shortSha, useCompact, useLoad } from "../hooks";
 import type { InvestigationWorkspace } from "../services";
-import { LiveViewer } from "../viewer/LiveViewer";
 import { Badge } from "./Panel";
+import { EnvLiveSlot } from "./EnvLiveSlot";
+import { environmentExchange } from "./environmentExchange";
+import { HypothesisEditor } from "./HypothesisEditor";
 import { SegThumb } from "./SegThumb";
 import { human, stateTone } from "./tone";
 import styles from "./EnvironmentGrid.module.css";
@@ -14,63 +16,29 @@ export function EnvironmentGrid({ workspace: w }: { workspace: InvestigationWork
   const [showAll, setShowAll] = useState(false);
   const [selectedLiveEnv, setSelectedLiveEnv] = useState(w.environments[0]?.id);
   const compact = useCompact();
+  const findingsState = useLoad((c) => c.listFindings(w.investigation.id), [w.investigation.id], w.investigation.id);
+  const findings = findingsState.data ?? [];
   if (!w.environments.length)
     return <p className={styles.empty} data-testid="empty-state">No environments have been provisioned for this investigation yet.</p>;
   const selected = w.environments.find((e) => e.id === selectedLiveEnv) ?? w.environments[0]!;
-  const currentExperiment = (environmentId: string) => w.experiments
-    .filter((x) => x.environmentId === environmentId && (x.status === "running" || x.status === "queued"))
-    .sort((a, b) => b.startedAtMs - a.startedAtMs)[0];
   return (
     <div className={styles.environmentContent} data-testid="environment-grid">
-      <section className={styles.liveWall} data-testid="live-wall" aria-labelledby="live-wall-title">
-        <h2 id="live-wall-title">Live view</h2>
-        {compact ? (
-          <>
-            <div className={`seg ${styles.liveSwitcher}`} role="tablist" aria-label="Live environments">
-              <SegThumb active={selected.id} />
-              {w.environments.map((environment) => (
-                <button
-                  key={environment.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={selected.id === environment.id}
-                  onClick={() => setSelectedLiveEnv(environment.id)}
-                >
-                  Env {environment.index + 1}
-                </button>
-              ))}
-            </div>
-            <div role="tabpanel" aria-label={`Env ${selected.index + 1} live view`}>
-              {currentExperiment(selected.id) ? (
-                <LiveViewer
-                  key={currentExperiment(selected.id)!.id}
-                  experimentId={currentExperiment(selected.id)!.id}
-                  scene={w.investigation.baselineCase.sceneOverrides}
-                  label={`Env ${selected.index + 1}`}
-                  compact
-                />
-              ) : <p className={styles.idle}>Idle — no experiment running</p>}
-            </div>
-          </>
-        ) : (
-          <div className={styles.liveGrid}>
-            {w.environments.map((environment) => {
-              const experiment = currentExperiment(environment.id);
-              return experiment ? (
-                <LiveViewer
-                  key={experiment.id}
-                  experimentId={experiment.id}
-                  scene={w.investigation.baselineCase.sceneOverrides}
-                  label={`Env ${environment.index + 1}`}
-                  compact
-                />
-              ) : (
-                <article key={environment.id} className={styles.idle}>Idle — no experiment running</article>
-              );
-            })}
-          </div>
-        )}
-      </section>
+      {compact && (
+        <div className={`seg ${styles.liveSwitcher}`} role="tablist" aria-label="Live environments">
+          <SegThumb active={selected.id} />
+          {w.environments.map((environment) => (
+            <button
+              key={environment.id}
+              type="button"
+              role="tab"
+              aria-selected={selected.id === environment.id}
+              onClick={() => setSelectedLiveEnv(environment.id)}
+            >
+              Env {environment.index + 1}
+            </button>
+          ))}
+        </div>
+      )}
       <div className={styles.grid}>
       {w.environments.map((e) => {
         const sessions = w.sessions.filter((s) => s.environmentId === e.id);
@@ -86,17 +54,68 @@ export function EnvironmentGrid({ workspace: w }: { workspace: InvestigationWork
         const maxSessions = e.budgets.maxFactorySessions;
         const usedSessions = Math.min(sessions.length, maxSessions);
         const experimentCount = Math.min(exps.length, e.budgets.maxExperiments);
+        const exchange = environmentExchange(e.id, w, findings);
+        const shownFindings = exchange.authored.slice(0, 3);
         return (
           <article key={e.id} className={styles.tile} data-testid={`env-tile-${e.index + 1}`} aria-labelledby={`env-${e.id}`}>
             <header className={styles.tileHead}>
               <h3 id={`env-${e.id}`}>Env {e.index + 1}</h3>
               <Badge tone={stateTone(e.state)}>{human(e.state)}</Badge>
             </header>
+            <EnvLiveSlot
+              compact={compact}
+              selected={selected.id === e.id}
+              experiment={current}
+              scene={w.investigation.baselineCase.sceneOverrides}
+              taskFamily={w.investigation.baselineCase.taskFamily}
+              onSelectLive={(button) => {
+                setSelectedLiveEnv(e.id);
+                button.closest("article")?.scrollIntoView({
+                  behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+                  block: "nearest",
+                });
+              }}
+            />
+            <HypothesisEditor investigationId={w.investigation.id} environmentId={e.id} initial="" />
+            {shownFindings.length > 0 && (
+              <section className={styles.exchange} aria-label={`Findings from Env ${e.index + 1}`}>
+                <h4>Findings from this environment</h4>
+                <ul className={styles.findings}>
+                  {shownFindings.map((finding) => {
+                    const cites = exchange.citedBy.filter((cite) => cite.findingId === finding.id);
+                    return (
+                      <li key={finding.id} className={styles.finding}>
+                        <p>{finding.summary}</p>
+                        {cites.length > 0 && (
+                          <ul className={styles.cites}>
+                            {cites.map((cite) => (
+                              <li key={`${cite.candidateId}:${cite.findingId}`}>
+                                Env {cite.environmentIndex + 1} used this <code>{shortId(cite.findingId)}</code>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            )}
             <dl className={styles.stats}>
               <dt>Agents</dt>
               <dd>{activeAgents} active / {sessions.length}</dd>
               <dt>Current</dt>
               <dd>{current ? current.simCase.caseId : "idle"}</dd>
+              {e.sceneVariant && (
+                <>
+                  <dt>Scene</dt>
+                  <dd>
+                    {e.index > 0 && e.sceneVariant.description
+                      ? e.sceneVariant.description
+                      : `seed ${e.sceneVariant.seed} · ${e.sceneVariant.caseId}`}
+                  </dd>
+                </>
+              )}
               <dt>Elapsed</dt>
               <dd>{elapsed !== undefined ? fmtDuration(elapsed) : "not started"}</dd>
               <dt>Experiments</dt>

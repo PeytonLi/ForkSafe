@@ -28,6 +28,68 @@ def _axis_values(low: float, high: float, count: int) -> list[float]:
     ]
 
 
+# Editor ranges from the scene contracts. Used only when --center-overrides is set.
+_EDITOR_RANGES: dict[str, tuple[float, float]] = {
+    "dividerDx": (-0.10, 0.10),
+    "dividerDy": (-0.10, 0.10),
+    "cubeDx": (-0.10, 0.10),
+    "cubeDy": (-0.10, 0.10),
+    "targetDx": (-0.10, 0.10),
+    "targetDy": (-0.10, 0.10),
+    "gapDx": (-0.10, 0.10),
+    "dividerHeight": (0.02, 0.25),
+    "gapWidth": (0.05, 0.20),
+    "speedScale": (0.5, 2.0),
+}
+
+
+def _clamp_editor(key: str, value: float) -> float:
+    span = _EDITOR_RANGES.get(key)
+    if span is None:
+        return float(value)
+    low, high = span
+    return float(min(high, max(low, value)))
+
+
+def _parse_center_overrides(raw: str | None) -> dict[str, float] | None:
+    if raw is None:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"--center-overrides must be a JSON object of numbers ({exc.msg})"
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise ValueError("--center-overrides must be a JSON object of numbers")
+    overrides: dict[str, float] = {}
+    for key, value in parsed.items():
+        if not isinstance(key, str):
+            raise ValueError("--center-overrides keys must be strings")
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+        ):
+            raise ValueError(f"--center-overrides {key} must be a finite number")
+        overrides[key] = float(value)
+    return overrides
+
+
+def _centered_axis(
+    key: str,
+    low: float,
+    high: float,
+    count: int,
+    overrides: dict[str, Any],
+) -> list[float]:
+    values = _axis_values(low, high, count)
+    if key in overrides:
+        shift = float(overrides[key]) - (low + high) / 2.0
+        values = [value + shift for value in values]
+    return [_clamp_editor(key, value) for value in values]
+
+
 def _run_sample(job: dict[str, Any]) -> dict[str, Any]:
     started = time.perf_counter()
     sample = {
@@ -85,6 +147,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--around", required=True)
     parser.add_argument("--n", type=int, default=64)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--center-overrides")
     parser.add_argument("--workers", type=int)
     parser.add_argument("--out", type=Path)
     parser.add_argument("--svg", type=Path)
@@ -108,6 +171,7 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("--workers must be at least 1")
         if args.timeout_sec <= 0:
             raise ValueError("--timeout-sec must be positive")
+        center_overrides = _parse_center_overrides(args.center_overrides)
 
         controller_dir = args.controller.resolve()
         controller_path = controller_dir / "task_controller.py"
@@ -124,6 +188,9 @@ def main(argv: list[str] | None = None) -> int:
         if family == "divider_pick_place":
             x_key, x_low, x_high = "dividerDx", -0.25, 0.25
             y_key, y_low, y_high = "dividerHeight", 0.03, 0.12
+        elif family == "bin_drop":
+            x_key, x_low, x_high = "binDx", -0.08, 0.08
+            y_key, y_low, y_high = "binWidth", 0.08, 0.16
         else:
             x_key, x_low, x_high = "gapDx", -0.08, 0.08
             y_key, y_low, y_high = "gapWidth", 0.05, 0.10
@@ -133,6 +200,10 @@ def main(argv: list[str] | None = None) -> int:
         rng = np.random.default_rng(args.seed)
         around_doc = around.model_dump(by_alias=True, exclude_none=True)
         base_overrides = dict(around.scene_overrides)
+        if center_overrides is not None:
+            base_overrides.update(center_overrides)
+            x_values = _centered_axis(x_key, x_low, x_high, cols, base_overrides)
+            y_values = _centered_axis(y_key, y_low, y_high, rows, base_overrides)
         base_cube_dx = float(base_overrides.get("cubeDx", 0.0))
         base_cube_dy = float(base_overrides.get("cubeDy", 0.0))
         jobs = []
@@ -149,6 +220,10 @@ def main(argv: list[str] | None = None) -> int:
             overrides["cubeDy"] = round(
                 base_cube_dy + float(rng.uniform(-0.01, 0.01)), 5
             )
+            if center_overrides is not None:
+                for key, value in list(overrides.items()):
+                    if key in _EDITOR_RANGES and isinstance(value, (int, float)):
+                        overrides[key] = _clamp_editor(key, float(value))
             sample_seed = int(rng.integers(0, 2**31 - 1))
             case_doc = dict(around_doc)
             case_doc["sceneOverrides"] = overrides
