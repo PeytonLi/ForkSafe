@@ -279,9 +279,9 @@ export class SessionManager {
           toolCalls.push({ name: message.name, toolCallId: message.toolCallId, isError: false });
           await this.logMessage(session, "tool_call", message.name);
         } else if (message.type === "tool_result") {
-          const call = toolCalls.at(-1);
-          if (call) call.isError = message.isError;
-          await this.logMessage(session, "tool_result", message.isError ? "error" : "ok");
+          const call = (message.toolCallId ? toolCalls.find((c) => c.toolCallId === message.toolCallId) : undefined) ?? toolCalls.at(-1);
+          if (call) call.isError = message.isError || isRejectedToolResult(message.text);
+          await this.logMessage(session, "tool_result", call?.isError ? "error" : "ok");
         } else if (message.type === "error") {
           await this.logMessage(session, "error", message.message);
         } else if (message.type === "result") finalResult = message;
@@ -533,6 +533,15 @@ export class SessionManager {
     const next = this.waiters.shift();
     if (next) next.resolve();
     else this.activeTurns -= 1;
+  }
+}
+
+function isRejectedToolResult(text?: string): boolean {
+  if (!text) return false;
+  try {
+    return (JSON.parse(text) as { status?: unknown })?.status === "rejected";
+  } catch {
+    return false;
   }
 }
 

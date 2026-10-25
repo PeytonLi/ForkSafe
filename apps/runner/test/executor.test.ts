@@ -9,7 +9,7 @@ import {
   PeriodicExportingMetricReader,
 } from "@opentelemetry/sdk-metrics";
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base";
-import { ActivityLog, FixtureFactoryAdapter, SessionManager, UsageLedger, type AdapterSession, type AdapterSessionOptions } from "@forksafe/agents";
+import { ActivityLog, FixtureFactoryAdapter, SessionManager, SessionMissingError, UsageLedger, type AdapterSession, type AdapterSessionOptions, type FactoryAdapter } from "@forksafe/agents";
 import { Job } from "@forksafe/contracts";
 import { initTelemetry } from "@forksafe/telemetry";
 import { RunnerTelemetry } from "../src/telemetry.js";
@@ -66,7 +66,7 @@ afterEach(async () => {
 describe("RunnerExecutor", () => {
   it("includes prior hints in the first repair turn", async () => {
     const adapter = new PromptCapturingAdapter();
-    const { manager } = await setup(adapter);
+    const { manager } = await setup(adapter as unknown as FixtureFactoryAdapter);
     const lease = sampleLease();
     lease.job.payload = {
       repair: {
@@ -318,7 +318,7 @@ describe("RunnerExecutor", () => {
         return gate;
       },
     });
-    const { manager } = await setup(adapter);
+    const { manager } = await setup(adapter as unknown as FixtureFactoryAdapter);
     const baseLease = sampleLease();
     const siblingLease = (): typeof baseLease => {
       const lease = structuredClone(baseLease);
@@ -442,6 +442,79 @@ describe("RunnerExecutor", () => {
     expect(turnSpy.mock.calls[1]?.[1]).toContain("about two turns total");
     expect(turnSpy.mock.calls[1]?.[1]).toContain("submit_candidate");
     expect(checkpoints.map((checkpoint) => checkpoint.turnIndex)).toEqual([0, 1, 2, 3]);
+  });
+
+  it("does not end the session on a rejected submit_candidate", async () => {
+    let streams = 0;
+    const adapter: FactoryAdapter = {
+      mode: "live",
+      async createSession() {
+        const vendorId = "live-reject-1";
+        return {
+          vendorId,
+          async *stream() {
+            streams += 1;
+            yield { type: "assistant" as const, text: "submitting" };
+            yield { type: "tool_call" as const, name: "submit_candidate", toolCallId: "c1" };
+            yield { type: "tool_result" as const, isError: false, toolCallId: "c1", text: '{"status":"rejected","reason":"finding_missing"}' };
+            yield {
+              type: "result" as const, sessionId: vendorId, durationMs: 1, tokenUsage: null,
+              text: "rejected", turnCount: 1, success: true, subtype: "success",
+            };
+          },
+          async interrupt() {},
+          async close() {},
+        };
+      },
+      async resumeSession(vendorId: string) { throw new SessionMissingError(vendorId); },
+    };
+    const { manager } = await setup(adapter as unknown as FixtureFactoryAdapter);
+    const lease = sampleLease();
+    const completions: any[] = [];
+    const source = {
+      heartbeat: vi.fn(async () => ({ ok: true as const, leasedUntilMs: Date.now() + 30_000, epoch: 0 })),
+      complete: vi.fn(async (completion: any) => { completions.push(completion); return { accepted: true }; }),
+    };
+    const executor = new RunnerExecutor({ sessions: manager, source: source as never, log: new ActivityLog() });
+    await expect(executor.execute(lease)).resolves.toMatchObject({ accepted: true });
+    expect(streams).toBe(4);
+    expect(completions[0].result.candidateSubmitted).toBe(false);
+  });
+
+  it("stops after an accepted submit_candidate", async () => {
+    let streams = 0;
+    const adapter: FactoryAdapter = {
+      mode: "live",
+      async createSession() {
+        const vendorId = "live-accept-1";
+        return {
+          vendorId,
+          async *stream() {
+            streams += 1;
+            yield { type: "tool_call" as const, name: "submit_candidate", toolCallId: "c1" };
+            yield { type: "tool_result" as const, isError: false, toolCallId: "c1", text: '{"status":"submitted","candidateId":"abc"}' };
+            yield {
+              type: "result" as const, sessionId: vendorId, durationMs: 1, tokenUsage: null,
+              text: "submitted", turnCount: 1, success: true, subtype: "success",
+            };
+          },
+          async interrupt() {},
+          async close() {},
+        };
+      },
+      async resumeSession(vendorId: string) { throw new SessionMissingError(vendorId); },
+    };
+    const { manager } = await setup(adapter as unknown as FixtureFactoryAdapter);
+    const lease = sampleLease();
+    const completions: any[] = [];
+    const source = {
+      heartbeat: vi.fn(async () => ({ ok: true as const, leasedUntilMs: Date.now() + 30_000, epoch: 0 })),
+      complete: vi.fn(async (completion: any) => { completions.push(completion); return { accepted: true }; }),
+    };
+    const executor = new RunnerExecutor({ sessions: manager, source: source as never, log: new ActivityLog() });
+    await expect(executor.execute(lease)).resolves.toMatchObject({ accepted: true });
+    expect(streams).toBe(1);
+    expect(completions[0].result.candidateSubmitted).toBe(true);
   });
 
   it("replaces a missing checkpoint vendor session while preserving lineage", async () => {

@@ -646,12 +646,15 @@ export const setCapture = internalMutation({
     await ctx.db.patch(investigation._id, {
       captureStatus: args.captureStatus, updatedAtMs: now, version: investigation.version + 1,
       // A late/duplicate "recorded" must not pull an already-started investigation back to admitted.
-      // promote defaults true. A solved baseline passes false and stays in its current state.
+      // promote defaults true. A solved baseline (no failure to repair) passes false and completes.
       ...(args.captureStatus === "recorded" && promote && investigation.retryOfInvestigationId
         ? { state: "completed" as const, finishedAtMs: now }
         : args.captureStatus === "recorded" && promote && ["created", "capturing", "admitted"].includes(investigation.state)
           ? { state: "admitted" as const }
-          : {}),
+          : args.captureStatus === "recorded" && !promote && investigation.state === "capturing"
+            // Baseline completed without failing: nothing to repair, so finish instead of spinning forever.
+            ? { state: "completed" as const, finishedAtMs: now }
+            : {}),
       ...(args.captureStatus === "failed" ? { state: "failed" as const, lastError: args.error ?? "capture_failed", finishedAtMs: now } : {}),
     });
     if (args.captureStatus === "failed") {
