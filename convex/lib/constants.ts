@@ -1,6 +1,7 @@
 export const HEARTBEAT_INTERVAL_MS = 5_000;
-export const LEASE_EXPIRY_MS = 30_000;
-export const MAX_ATTEMPTS = 2;
+/** Attempt leases must cover claim + Factory session open before the first heartbeat. */
+export const LEASE_EXPIRY_MS = 120_000;
+export const MAX_ATTEMPTS = 3;
 export const GRANT_INSTALL_TIMEOUT_MS = 15_000;
 export const HARD_STOP_DEADLINE_MS = 30_000;
 export const MODEL_TURN_MAX_MS = 600_000;

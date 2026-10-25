@@ -501,7 +501,14 @@ export const markGrantInstalled = internalMutation({
   handler: async (ctx, args) => {
     const credential = await requireCredential(ctx, args.credentialId);
     const { attempt, job } = await requireLease(ctx, credential, args.attemptId, args.epoch);
-    return await recordStageRow(ctx, job, attempt, args.epoch, "grant_installed", { grantId: args.grantId, bridgeMode: args.bridgeMode });
+    const stage = await recordStageRow(ctx, job, attempt, args.epoch, "grant_installed", { grantId: args.grantId, bridgeMode: args.bridgeMode });
+    // Claim + bridge install already burned part of the original lease. Refresh so
+    // the runner still has a full window to open Factory before the first heartbeat.
+    const now = Date.now();
+    const leasedUntilMs = now + LEASE_EXPIRY_MS;
+    await ctx.db.patch(attempt._id, { leasedUntilMs, lastHeartbeatMs: now });
+    await ctx.db.patch(job._id, { leaseExpiresAtMs: leasedUntilMs, updatedAtMs: now });
+    return { ...stage, leasedUntilMs };
   },
 });
 

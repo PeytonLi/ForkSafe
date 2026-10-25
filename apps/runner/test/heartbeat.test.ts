@@ -18,6 +18,7 @@ describe("lease heartbeat", () => {
 
   it("abandons revoked, expired, and near-deadline leases", () => {
     const lease = sampleLease(1_000);
+    // Grant expires at 31_000; margin is one heartbeat interval.
     expect(shouldAbandon(lease, 26_001)).toBe(true);
     expect(shouldAbandon(lease, 31_000)).toBe(true);
     lease.grant.revokedAtMs = 2_000;
@@ -31,8 +32,10 @@ describe("lease heartbeat", () => {
     const source = { heartbeat: vi.fn(async () => ({ ok: true as const, leasedUntilMs: 50_000, epoch: 0 })) };
     const keeper = new LeaseKeeper(lease, source);
     keeper.start();
-    await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS);
+    await Promise.resolve();
     expect(source.heartbeat).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS);
+    expect(source.heartbeat).toHaveBeenCalledTimes(2);
     expect(lease.attempt.leasedUntilMs).toBe(50_000);
     expect(lease.grant.expiresAtMs).toBe(40_000);
     keeper.stop();
@@ -41,7 +44,7 @@ describe("lease heartbeat", () => {
       heartbeat: async () => ({ ok: false as const, reason: "fenced" as const }),
     });
     fenced.start();
-    await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS);
+    await Promise.resolve();
     expect(fenced.signal.aborted).toBe(true);
     expect(fenced.signal.reason).toBe("fenced");
   });

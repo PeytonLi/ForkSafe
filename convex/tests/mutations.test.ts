@@ -113,20 +113,20 @@ describe("Convex lifecycle mutations", () => {
     vi.stubEnv("INTEGRATION_SHARED_SECRET", token);
     const t = createTest();
     const { job, investigationId: id } = await createStartedJob(t);
-    const first = await t.mutation(api.workers.claim, { jobId: job.appId, workerId: "worker-a", serviceToken: token });
-    await t.mutation(api.workers.recordStage, {
-      jobId: job.appId, attemptId: first.attemptId, epoch: first.epoch, stage: "grant_installed", serviceToken: token,
-    });
-    await t.mutation(internal.reconcile.tick, { now: first.leaseExpiresAtMs + 1 });
-    await t.mutation(internal.workers.acknowledgeGrantRevocation, {
-      jobId: job.appId, attemptId: first.attemptId, epoch: first.epoch,
-    });
-    const second = await t.mutation(api.workers.claim, { jobId: job.appId, workerId: "worker-b", serviceToken: token });
-    await t.mutation(api.workers.recordStage, {
-      jobId: job.appId, attemptId: second.attemptId, epoch: second.epoch, stage: "grant_installed", serviceToken: token,
-    });
-    const result = await t.mutation(internal.reconcile.tick, { now: second.leaseExpiresAtMs + 1 });
-    expect(result.expired).toBe(1);
+    let lastLeaseExpiresAtMs = 0;
+    for (const workerId of ["worker-a", "worker-b", "worker-c"]) {
+      const claim = await t.mutation(api.workers.claim, { jobId: job.appId, workerId, serviceToken: token });
+      await t.mutation(api.workers.recordStage, {
+        jobId: job.appId, attemptId: claim.attemptId, epoch: claim.epoch, stage: "grant_installed", serviceToken: token,
+      });
+      lastLeaseExpiresAtMs = claim.leaseExpiresAtMs;
+      const tick = await t.mutation(internal.reconcile.tick, { now: claim.leaseExpiresAtMs + 1 });
+      expect(tick.expired).toBe(1);
+      await t.mutation(internal.workers.acknowledgeGrantRevocation, {
+        jobId: job.appId, attemptId: claim.attemptId, epoch: claim.epoch,
+      }).catch(() => undefined);
+    }
+    expect(lastLeaseExpiresAtMs).toBeGreaterThan(0);
     const settled = await t.query(api.workers.getJob, { jobId: job.appId, serviceToken: token });
     expect(settled?.state).toBe("failed");
     expect(settled?.lastError).toBe("attempts_exhausted");

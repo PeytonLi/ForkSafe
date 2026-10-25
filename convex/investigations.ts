@@ -198,7 +198,7 @@ async function startHandler(ctx: MutationCtx, args: { investigationId: string; e
         idempotencyKey: `${investigation.appId}:factory:${index}`,
         payload: { environmentIndex: index, priorHints, simCase: sceneVariant },
         attemptsUsed: 0,
-        maxAttempts: 2,
+        maxAttempts: 3,
         operationId,
         admittedCancelEpoch: investigation.cancelEpoch,
         dependsOn: [],
