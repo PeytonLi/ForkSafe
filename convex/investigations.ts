@@ -6,7 +6,7 @@ import { mutation, query, internalMutation, internalQuery, type MutationCtx } fr
 import { readLimits } from "./lib/constants.js";
 import { countsTowardCapacity } from "./lib/reservations.js";
 import { accessGrantedForUser, hasPrivateAccess, isPublicInvestigation, requireInvestigationRead, requireOperateIdentity } from "./lib/webAccess.js";
-import { ensurePersonalWorkspace, memberships } from "./lib/workspaces.js";
+import { memberships, workspaceIdForCaller } from "./lib/workspaces.js";
 import { appId, assertUUID } from "./lib/validators.js";
 import { webFailureKinds } from "./lib/webFailureKinds.js";
 import { MoreInvestigationRequest } from "./forgeProtocolExt.js";
@@ -32,7 +32,9 @@ export const requestMoreFromForge = internalMutation({
       appId: followUpInvestigationId, parentInvestigationId: parent.appId,
       title: `Follow-up: ${parent.title}`.slice(0, 200), state: "admitted", cancelStatus: "none", cancelEpoch: 0, version: 1,
       requestedEnvironments: extraEnvironments, baselineCase: parent.baselineCase, baselineExperimentId: parent.baselineExperimentId,
-      ...(parent.jiraIssueKey ? { jiraIssueKey: parent.jiraIssueKey } : {}), budget: parent.budget,
+      ...(parent.jiraIssueKey ? { jiraIssueKey: parent.jiraIssueKey } : {}),
+      ...(parent.workspaceId ? { workspaceId: parent.workspaceId } : {}),
+      budget: parent.budget,
       idempotencyKey: `forge-request:${request.idempotencyKey}`, createdAtMs: now, updatedAtMs: now,
     });
     const result = { requestId, accepted: true, state: "admitted" as const };
@@ -85,6 +87,7 @@ export const create = mutation({
       sceneOverrides: {},
     };
     if (args.baselineExperimentId) assertUUID(args.baselineExperimentId, "baselineExperimentId");
+    const workspaceId = await workspaceIdForCaller(ctx);
     await ctx.db.insert("investigations", {
       appId: investigationId,
       title: args.title.trim(),
@@ -103,6 +106,7 @@ export const create = mutation({
         maxFinalCandidates: 3,
       },
       idempotencyKey: args.idempotencyKey,
+      ...(workspaceId ? { workspaceId } : {}),
       createdAtMs: now,
       updatedAtMs: now,
     });
@@ -232,6 +236,7 @@ export const start = mutation({
   args: { investigationId: v.string(), expectedVersion: v.number(), serviceToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
     await requireOperateIdentity(ctx, args.serviceToken);
+    await requireInvestigationRead(ctx, args.investigationId, args.serviceToken);
     return await startHandler(ctx, args);
   },
 });
@@ -348,6 +353,7 @@ export const cancel = mutation({
   args: { investigationId: v.string(), expectedVersion: v.optional(v.number()), serviceToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
     await requireOperateIdentity(ctx, args.serviceToken);
+    await requireInvestigationRead(ctx, args.investigationId, args.serviceToken);
     assertUUID(args.investigationId, "investigationId");
     const investigation = await ctx.db.query("investigations")
       .withIndex("by_appId", (q) => q.eq("appId", args.investigationId))
@@ -464,7 +470,7 @@ export const list = query({
       if (isPublicInvestigation(row.appId) || service) listed.push(full(row));
       else if (row.workspaceId) { if (userId && mine.has(row.workspaceId)) listed.push(full(row)); }
       else if (privateAccess && (!userId || !user || accessGrantedForUser(user))) listed.push(full(row));
-      else listed.push({ id: row.appId, title: "Restricted investigation", state: "restricted" });
+      else if (mine.size === 0) listed.push({ id: row.appId, title: "Restricted investigation", state: "restricted" });
     }
     return listed;
   },
@@ -568,6 +574,7 @@ export const capture = mutation({
     const now = Date.now();
     const investigationId = appId();
     const baselineExperimentId = appId();
+    const workspaceId = await workspaceIdForCaller(ctx);
     const useApproved = requestedChoice === "approved" && current?.source === "approved";
     await ctx.db.insert("investigations", {
       appId: investigationId, title: args.title.trim().slice(0, 200), state: "capturing", cancelStatus: "none", cancelEpoch: 0, version: 1,
@@ -579,14 +586,7 @@ export const capture = mutation({
       baselineExperimentId,
       budget: { wallTimeMs: 600_000, maxExperimentsPerEnv: 20, maxCandidatesPerEnv: 2, maxFinalCandidates: 3 },
       idempotencyKey, captureStatus: "pending", autoStart: args.autoStart ?? true,
-      ...(await (async () => {
-        const identity = await ctx.auth.getUserIdentity();
-        const userId = identity ? ctx.db.normalizeId("users", identity.subject.split("|")[0] ?? "") : null;
-        const user = userId ? await ctx.db.get(userId) : null;
-        if (!user) return {};
-        const workspace = await ensurePersonalWorkspace(ctx, user);
-        return workspace ? { workspaceId: workspace.appId } : {};
-      })()),
+      ...(workspaceId ? { workspaceId } : {}),
       taskFamily,
       controllerSha256: useApproved ? current!.controllerSha256 : baseline.sha256,
       controllerVersion: useApproved ? current!.version : 1,

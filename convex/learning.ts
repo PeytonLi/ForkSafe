@@ -223,8 +223,10 @@ export const view = query({
       ? orderedLineage.find((row) => row.controllerSha256 === thisRunSha)
       : undefined;
     const thisRunVersion = runLineage?.version ?? (baseline?.sha256 === thisRunSha ? 1 : null);
-    const choice = investigation.controllerChoice
-      ?? (thisRunSha && baseline?.sha256 === thisRunSha ? "baseline" : runLineage ? "approved" : null);
+    const storedChoice = investigation.controllerChoice;
+    const choice = storedChoice === "approved" || storedChoice === "baseline"
+      ? storedChoice
+      : (thisRunSha && baseline?.sha256 === thisRunSha ? "baseline" : runLineage ? "approved" : null);
     const gate = retryGate(investigation.state, current, thisRunSha);
     const retries = await ctx.db.query("investigations")
       .withIndex("by_retryOf", (q) => q.eq("retryOfInvestigationId", investigation.appId))
@@ -292,6 +294,7 @@ export const retry = mutation({
   args: { investigationId: v.string(), idempotencyKey: v.optional(v.string()), serviceToken: v.optional(v.string()) },
   handler: async (ctx, args): Promise<{ accepted: true; investigationId: string } | { accepted: false; mode: string; reason: string }> => {
     await requireOperateIdentity(ctx, args.serviceToken);
+    await requireInvestigationRead(ctx, args.investigationId, args.serviceToken);
     assertUUID(args.investigationId, "investigationId");
     const source = await ctx.db.query("investigations")
       .withIndex("by_appId", (q) => q.eq("appId", args.investigationId))
@@ -344,6 +347,7 @@ export const retry = mutation({
       controllerVersion: current!.version,
       controllerChoice: "approved",
       retryOfInvestigationId: source.appId,
+      ...(source.workspaceId ? { workspaceId: source.workspaceId } : {}),
       createdAtMs: now,
       updatedAtMs: now,
     });

@@ -29,6 +29,16 @@ export async function ensurePersonalWorkspace(ctx: any, user: NonNullable<UserDo
   return await ctx.db.query("workspaces").withIndex("by_appId", (q: any) => q.eq("appId", id)).unique();
 }
 
+export async function workspaceIdForCaller(ctx: any): Promise<string | undefined> {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) return undefined;
+  const userId = ctx.db.normalizeId("users", identity.subject.split("|")[0] ?? "");
+  const user = userId ? await ctx.db.get(userId) : null;
+  if (!user) return undefined;
+  const workspace = await ensurePersonalWorkspace(ctx, user);
+  return workspace?.appId;
+}
+
 export async function workspaceForUser(ctx: any, userId: Id<"users">) {
   const member = await ctx.db.query("workspaceMembers").withIndex("by_user", (q: any) => q.eq("userId", userId)).first();
   if (!member) return null;

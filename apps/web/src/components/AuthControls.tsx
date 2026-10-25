@@ -12,6 +12,7 @@ export function AuthControls() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [inviteCode, setInviteCode] = useState("");
+  const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!access.open) return;
     const onPointer = (event: PointerEvent) => {
@@ -84,6 +85,9 @@ export function AuthControls() {
         void access.createInvite().then(setInviteCode).catch(() => setError("Could not create an invite.")).finally(() => setBusy(false));
       }}>{busy ? "Please wait…" : "Invite someone"}</button>
       {inviteCode && <p className={styles.code} data-testid="workspace-invite">{inviteCode}</p>}
+      {inviteCode && <button type="button" className={styles.textButton} onClick={() => {
+        void navigator.clipboard.writeText(inviteCode).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1500); });
+      }}>{copied ? "Copied" : "Copy code"}</button>}
       <form onSubmit={submitInvite}>
         <label>Join with a code <input name="inviteCode" type="text" autoComplete="off" required /></label>
         <button type="submit" disabled={busy}>Join workspace</button>
