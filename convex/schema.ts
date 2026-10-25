@@ -9,6 +9,7 @@ const simCase = v.object({
   suite: v.union(v.literal("original"), v.literal("public"), v.literal("withheld")),
   seed: v.number(),
   sceneOverrides: v.record(v.string(), v.number()),
+  taskFamily: v.optional(v.string()),
   description: v.optional(v.string()),
 });
 const resources = v.object({ cpu: v.number(), memoryGiB: v.number(), diskGiB: v.number() });
@@ -23,8 +24,44 @@ const attemptState = v.union(
   v.literal("succeeded"), v.literal("failed"), v.literal("expired"), v.literal("fenced"),
 );
 
+const { users: _authUsers, ...authTablesWithoutUsers } = authTables;
+
 export default defineSchema({
-  ...authTables,
+  ...authTablesWithoutUsers,
+  users: defineTable({
+    name: v.optional(v.string()),
+    image: v.optional(v.string()),
+    email: v.optional(v.string()),
+    emailVerificationTime: v.optional(v.number()),
+    phone: v.optional(v.string()),
+    phoneVerificationTime: v.optional(v.number()),
+    isAnonymous: v.optional(v.boolean()),
+    // False until a new Google account redeems the shared invite. Absent on
+    // accounts created before Google sign-in, which already passed the invite.
+    accessGranted: v.optional(v.boolean()),
+    inviteFailures: v.optional(v.number()),
+    inviteFailureWindowStartMs: v.optional(v.number()),
+    // Absent means lead: the account can operate and review. Existing accounts
+    // stay leads so this field does not take access away.
+    memberRole: v.optional(v.union(v.literal("lead"), v.literal("operator"), v.literal("reviewer"))),
+  }).index("email", ["email"]).index("phone", ["phone"]),
+  workspaces: defineTable({
+    appId: uuid,
+    name: v.string(),
+    createdAtMs: v.number(),
+  }).index("by_appId", ["appId"]),
+  workspaceMembers: defineTable({
+    workspaceId: uuid,
+    userId: v.id("users"),
+    role: v.union(v.literal("lead"), v.literal("operator"), v.literal("reviewer")),
+    createdAtMs: v.number(),
+  }).index("by_user", ["userId"]).index("by_workspace_user", ["workspaceId", "userId"]),
+  workspaceInvites: defineTable({
+    code: v.string(),
+    workspaceId: uuid,
+    createdBy: v.id("users"),
+    createdAtMs: v.number(),
+  }).index("by_code", ["code"]).index("by_workspace", ["workspaceId"]),
   forgeRequests: defineTable({
     idempotencyKey: v.string(), payload: v.string(), requestId: uuid,
     parentInvestigationId: uuid, followUpInvestigationId: uuid,
@@ -43,7 +80,7 @@ export default defineSchema({
     appId: uuid,
     taskFamily: v.optional(v.string()),
     controllerSha256: v.optional(v.string()),
-    controllerChoice: v.optional(v.union(v.literal("approved"), v.literal("baseline"))),
+    controllerChoice: v.optional(v.union(v.literal("approved"), v.literal("baseline"), v.literal("imported"))),
     controllerVersion: v.optional(v.number()),
     retryOfInvestigationId: v.optional(uuid),
     title: v.string(),
@@ -66,6 +103,7 @@ export default defineSchema({
       maxFinalCandidates: v.number(),
     }),
     idempotencyKey: v.string(),
+    workspaceId: v.optional(uuid),
     workflowId: v.optional(v.string()),
     createdAtMs: v.number(),
     updatedAtMs: v.number(),
@@ -82,6 +120,7 @@ export default defineSchema({
     appId: uuid,
     investigationId: uuid,
     index: v.number(),
+    sceneVariant: v.optional(simCase),
     state: v.union(
       v.literal("provisioning"), v.literal("active"), v.literal("paused"),
       v.literal("closing"), v.literal("closed"), v.literal("error"),
@@ -634,4 +673,26 @@ export default defineSchema({
     revisionHeadId: v.optional(uuid), tokenUsage: v.optional(v.any()), createdAtMs: v.number(),
   }).index("by_session_turn", ["sessionId", "turnIndex"])
     .index("by_environment_job", ["environmentId", "jobId"]),
+
+  /** One starting hypothesis pinned to a single environment. It does not change scores. */
+  environmentHypotheses: defineTable({
+    investigationId: uuid,
+    environmentId: uuid,
+    hypothesis: v.string(),
+    updatedAtMs: v.number(),
+    updatedBy: v.string(),
+  }).index("by_environment", ["environmentId"]).index("by_investigation", ["investigationId"]),
+
+  /** An extra case a person asked to score later. Status stays pending until a real physics run exists. */
+  challengeRequests: defineTable({
+    investigationId: uuid,
+    candidateId: uuid,
+    caseId: v.string(),
+    seed: v.number(),
+    sceneOverrides: v.record(v.string(), v.number()),
+    note: v.string(),
+    requestedBy: v.string(),
+    createdAtMs: v.number(),
+    status: v.literal("pending_physics"),
+  }).index("by_investigation", ["investigationId"]).index("by_candidate", ["candidateId"]),
 });

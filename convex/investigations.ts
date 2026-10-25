@@ -1,14 +1,19 @@
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
+import { DEFAULT_TASK_FAMILY, TASK_FAMILY_SPECS, isTaskFamily, sceneVariantFor, validateSceneOverrides } from "@forksafe/contracts";
+import { validateImportedFailure } from "../packages/contracts/src/importedFailure.js";
 import { internal } from "./_generated/api.js";
 import { mutation, query, internalMutation, internalQuery, type MutationCtx } from "./_generated/server.js";
 import { readLimits } from "./lib/constants.js";
 import { countsTowardCapacity } from "./lib/reservations.js";
-import { hasPrivateAccess, isPublicInvestigation, requireInvestigationRead, requireWriteIdentity } from "./lib/webAccess.js";
+import { accessGrantedForUser, hasPrivateAccess, isPublicInvestigation, requireInvestigationRead, requireOperateIdentity } from "./lib/webAccess.js";
+import { sha256Hex } from "./lib/controllerDiff.js";
+import { memberships, workspaceIdForCaller } from "./lib/workspaces.js";
 import { appId, assertUUID } from "./lib/validators.js";
+import { webFailureKinds } from "./lib/webFailureKinds.js";
 import { MoreInvestigationRequest } from "./forgeProtocolExt.js";
 import { finalizeCancelledJob } from "./lib/jobOps.js";
-import { currentControllerForFamily, DEFAULT_TASK_FAMILY, selectPriorHints } from "./learning.js";
+import { currentControllerForFamily, selectPriorHints } from "./learning.js";
 
 export const requestMoreFromForge = internalMutation({
   args: { request: v.any(), installationId: v.string(), requestedBy: v.string() },
@@ -29,7 +34,9 @@ export const requestMoreFromForge = internalMutation({
       appId: followUpInvestigationId, parentInvestigationId: parent.appId,
       title: `Follow-up: ${parent.title}`.slice(0, 200), state: "admitted", cancelStatus: "none", cancelEpoch: 0, version: 1,
       requestedEnvironments: extraEnvironments, baselineCase: parent.baselineCase, baselineExperimentId: parent.baselineExperimentId,
-      ...(parent.jiraIssueKey ? { jiraIssueKey: parent.jiraIssueKey } : {}), budget: parent.budget,
+      ...(parent.jiraIssueKey ? { jiraIssueKey: parent.jiraIssueKey } : {}),
+      ...(parent.workspaceId ? { workspaceId: parent.workspaceId } : {}),
+      budget: parent.budget,
       idempotencyKey: `forge-request:${request.idempotencyKey}`, createdAtMs: now, updatedAtMs: now,
     });
     const result = { requestId, accepted: true, state: "admitted" as const };
@@ -46,6 +53,7 @@ const simCase = v.object({
   suite: v.union(v.literal("original"), v.literal("public"), v.literal("withheld")),
   seed: v.number(),
   sceneOverrides: v.record(v.string(), v.number()),
+  taskFamily: v.optional(v.string()),
   description: v.optional(v.string()),
 });
 
@@ -60,7 +68,7 @@ export const create = mutation({
     serviceToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    await requireWriteIdentity(ctx, args.serviceToken);
+    await requireOperateIdentity(ctx, args.serviceToken);
     const existing = await ctx.db.query("investigations")
       .withIndex("by_idempotencyKey", (q) => q.eq("idempotencyKey", args.idempotencyKey))
       .unique();
@@ -81,6 +89,7 @@ export const create = mutation({
       sceneOverrides: {},
     };
     if (args.baselineExperimentId) assertUUID(args.baselineExperimentId, "baselineExperimentId");
+    const workspaceId = await workspaceIdForCaller(ctx);
     await ctx.db.insert("investigations", {
       appId: investigationId,
       title: args.title.trim(),
@@ -99,6 +108,7 @@ export const create = mutation({
         maxFinalCandidates: 3,
       },
       idempotencyKey: args.idempotencyKey,
+      ...(workspaceId ? { workspaceId } : {}),
       createdAtMs: now,
       updatedAtMs: now,
     });
@@ -151,10 +161,12 @@ async function startHandler(ctx: MutationCtx, args: { investigationId: string; e
       const jobId = appId();
       jobIds.push(jobId);
       const operationId = appId();
+      const sceneVariant = sceneVariantFor(index, investigation.baselineCase);
       await ctx.db.insert("environments", {
         appId: environmentId,
         investigationId: investigation.appId,
         index,
+        sceneVariant,
         state: "provisioning",
         budgets: {
           maxExperiments: investigation.budget.maxExperimentsPerEnv,
@@ -184,9 +196,9 @@ async function startHandler(ctx: MutationCtx, args: { investigationId: string; e
         environmentId,
         epoch: 0,
         idempotencyKey: `${investigation.appId}:factory:${index}`,
-        payload: { environmentIndex: index, priorHints },
+        payload: { environmentIndex: index, priorHints, simCase: sceneVariant },
         attemptsUsed: 0,
-        maxAttempts: 2,
+        maxAttempts: 3,
         operationId,
         admittedCancelEpoch: investigation.cancelEpoch,
         dependsOn: [],
@@ -225,7 +237,8 @@ async function startHandler(ctx: MutationCtx, args: { investigationId: string; e
 export const start = mutation({
   args: { investigationId: v.string(), expectedVersion: v.number(), serviceToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    await requireWriteIdentity(ctx, args.serviceToken);
+    await requireOperateIdentity(ctx, args.serviceToken);
+    await requireInvestigationRead(ctx, args.investigationId, args.serviceToken);
     return await startHandler(ctx, args);
   },
 });
@@ -341,7 +354,8 @@ export const attachWorkflowId = internalMutation({
 export const cancel = mutation({
   args: { investigationId: v.string(), expectedVersion: v.optional(v.number()), serviceToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    await requireWriteIdentity(ctx, args.serviceToken);
+    await requireOperateIdentity(ctx, args.serviceToken);
+    await requireInvestigationRead(ctx, args.investigationId, args.serviceToken);
     assertUUID(args.investigationId, "investigationId");
     const investigation = await ctx.db.query("investigations")
       .withIndex("by_appId", (q) => q.eq("appId", args.investigationId))
@@ -435,6 +449,8 @@ function toInvestigation(row: any) {
   return {
     id: row.appId, state: row.state, title: row.title, baselineCase: row.baselineCase, baselineExperimentId: row.baselineExperimentId,
     ...(row.jiraIssueKey ? { jiraIssueKey: row.jiraIssueKey } : {}), requestedEnvironments: row.requestedEnvironments,
+    ...(row.captureStatus ? { captureStatus: row.captureStatus } : {}),
+    ...(row.lastError ? { lastError: row.lastError } : {}),
     createdAtMs: row.createdAtMs, updatedAtMs: row.updatedAtMs,
   };
 }
@@ -444,10 +460,21 @@ export const list = query({
   args: { serviceToken: v.optional(v.string()) },
   handler: async (ctx, args) => {
     const privateAccess = await hasPrivateAccess(ctx, args.serviceToken);
+    const identity = await ctx.auth.getUserIdentity();
+    const service = !identity && privateAccess;
+    const userId = identity ? ctx.db.normalizeId("users", identity.subject.split("|")[0] ?? "") : null;
+    const user = userId ? await ctx.db.get(userId) : null;
+    const mine = userId ? new Set((await memberships(ctx, userId)).map((member: { workspaceId: string }) => member.workspaceId)) : new Set<string>();
     const rows = await ctx.db.query("investigations").order("desc").take(100);
-    return rows.map((row) => privateAccess || isPublicInvestigation(row.appId)
-      ? { id: row.appId, title: row.title, state: row.state, requestedEnvironments: row.requestedEnvironments, updatedAtMs: row.updatedAtMs }
-      : { id: row.appId, title: "Restricted investigation", state: "restricted" as const });
+    const full = (row: typeof rows[number]) => ({ id: row.appId, title: row.title, state: row.state, requestedEnvironments: row.requestedEnvironments, updatedAtMs: row.updatedAtMs });
+    const listed: Array<{ id: string; title: string; state: string; requestedEnvironments?: number; updatedAtMs?: number }> = [];
+    for (const row of rows) {
+      if (isPublicInvestigation(row.appId) || service) listed.push(full(row));
+      else if (row.workspaceId) { if (userId && mine.has(row.workspaceId)) listed.push(full(row)); }
+      else if (privateAccess && (!userId || !user || accessGrantedForUser(user))) listed.push(full(row));
+      else if (mine.size === 0) listed.push({ id: row.appId, title: "Restricted investigation", state: "restricted" });
+    }
+    return listed;
   },
 });
 
@@ -474,6 +501,7 @@ export const workspace = query({
       investigation: toInvestigation(investigation),
       environments: environments.sort((a, b) => a.index - b.index).map((row) => ({
         id: row.appId, investigationId: id, index: row.index, state: row.state,
+        ...(row.sceneVariant ? { sceneVariant: row.sceneVariant } : {}),
         ...(row.daytonaSandbox ? { daytonaSandbox: row.daytonaSandbox } : {}), budgets: row.budgets,
         ...(row.startedAtMs !== undefined ? { startedAtMs: row.startedAtMs } : {}), ...(row.closedAtMs !== undefined ? { closedAtMs: row.closedAtMs } : {}),
       })),
@@ -485,7 +513,7 @@ export const workspace = query({
       experiments: experiments.filter((row) => row.suite !== "withheld").map((row) => ({
         id: row.appId, investigationId: id, ...(row.environmentId ? { environmentId: row.environmentId } : {}),
         ...(row.candidateId ? { candidateId: row.candidateId } : {}), attemptId: row.attemptId, epoch: row.epoch, simCase: row.simCase,
-        status: row.status, failureKinds: row.failureKinds, completed: row.completed,
+        status: row.status, failureKinds: webFailureKinds(row.failureKinds), completed: row.completed,
         ...(row.completionTimeSec !== undefined ? { completionTimeSec: row.completionTimeSec } : {}), changedFunctions: row.changedFunctions,
         ...(row.traceArtifactId ? { traceArtifactId: row.traceArtifactId } : {}), ...(row.replayArtifactId ? { replayArtifactId: row.replayArtifactId } : {}),
         engineVersion: row.engineVersion, assetsSha256: sha64(row.assetsSha256), controllerSha256: sha64(row.controllerSha256),
@@ -499,7 +527,7 @@ export const workspace = query({
       evaluations: evaluations.map((row) => ({
         id: row.appId, candidateId: row.candidateId, investigationId: id, evaluatorAttemptId: row.evaluatorAttemptId, suite: row.suite,
         cases: row.cases.map((item) => ({ caseId: item.caseId, status: item.status, ...(item.experimentId ? { experimentId: item.experimentId } : {}),
-          ...(item.completionTimeSec !== undefined ? { completionTimeSec: item.completionTimeSec } : {}), failureKinds: item.failureKinds })),
+          ...(item.completionTimeSec !== undefined ? { completionTimeSec: item.completionTimeSec } : {}), failureKinds: webFailureKinds(item.failureKinds) })),
         allRequiredPassed: row.allRequiredPassed, ...(row.medianCompletionTimeSec !== undefined ? { medianCompletionTimeSec: row.medianCompletionTimeSec } : {}),
         status: row.status, ...(row.reportArtifactId ? { reportArtifactId: row.reportArtifactId } : {}), createdAtMs: row.createdAtMs,
       })),
@@ -520,28 +548,41 @@ export const capture = mutation({
   args: {
     title: v.string(), seed: v.number(), sceneOverrides: v.record(v.string(), v.number()), requestedEnvironments: v.number(),
     taskFamily: v.optional(v.string()), controller: v.optional(v.union(v.literal("approved"), v.literal("baseline"))),
+    controllerSource: v.optional(v.string()),
     autoStart: v.optional(v.boolean()), idempotencyKey: v.optional(v.string()), serviceToken: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<{ accepted: true; investigationId: string } | { accepted: false; mode: string; reason: string }> => {
-    await requireWriteIdentity(ctx, args.serviceToken);
+    await requireOperateIdentity(ctx, args.serviceToken);
     const limits = readLimits();
-    if (!args.title.trim()) return { accepted: false, mode: "live", reason: "title is required" };
-    if (!Number.isInteger(args.seed) || args.seed < 0) return { accepted: false, mode: "live", reason: "seed must be a non-negative integer" };
+    let title = args.title;
+    let taskFamily = args.taskFamily ?? DEFAULT_TASK_FAMILY;
+    let seed = args.seed;
+    let sceneOverrides = args.sceneOverrides;
+    let controllerText: string | undefined;
+    if (args.controllerSource !== undefined) {
+      const imported = validateImportedFailure({
+        title: args.title, taskFamily, seed: args.seed, sceneOverrides: args.sceneOverrides, controllerSource: args.controllerSource,
+      });
+      if (!imported.ok) return { accepted: false, mode: "live", reason: imported.reason };
+      title = imported.value.title;
+      taskFamily = imported.value.taskFamily;
+      seed = imported.value.seed;
+      sceneOverrides = imported.value.sceneOverrides;
+      controllerText = imported.value.controllerSource;
+    }
+    const validation = validateSceneOverrides(taskFamily, sceneOverrides);
+    if (!validation.ok) return { accepted: false, mode: "live", reason: validation.reason };
+    if (!isTaskFamily(taskFamily)) return { accepted: false, mode: "live", reason: `Unknown task "${taskFamily}".` };
+    if (!title.trim()) return { accepted: false, mode: "live", reason: "title is required" };
+    if (!Number.isInteger(seed) || seed < 0) return { accepted: false, mode: "live", reason: "seed must be a non-negative integer" };
     if (!Number.isInteger(args.requestedEnvironments) || args.requestedEnvironments < 1 || args.requestedEnvironments > limits.maxEnvironments) {
       return { accepted: false, mode: "live", reason: `requestedEnvironments must be 1-${limits.maxEnvironments}` };
-    }
-    for (const [key, value] of Object.entries(args.sceneOverrides)) {
-      if (!/^[A-Za-z][A-Za-z0-9_]{0,40}$/.test(key) || !Number.isFinite(value)) return { accepted: false, mode: "live", reason: `invalid scene override ${key}` };
     }
     if (process.env.DAYTONA_MODE !== "cloud" || !process.env.DAYTONA_API_KEY) {
       return { accepted: false, mode: process.env.DAYTONA_MODE === "local" ? "local" : "blocked", reason: "capture needs a Daytona execution sandbox; DAYTONA_API_KEY is not configured" };
     }
-    const taskFamily = args.taskFamily ?? DEFAULT_TASK_FAMILY;
-    if (!["divider_pick_place", "push_through_gap"].includes(taskFamily)) {
-      return { accepted: false, mode: "live", reason: "taskFamily must be divider_pick_place or push_through_gap" };
-    }
     const requestedChoice = args.controller ?? "approved";
-    const current = await currentControllerForFamily(ctx, taskFamily);
+    const current = controllerText === undefined ? await currentControllerForFamily(ctx, taskFamily) : null;
     const bundle = await ctx.db.query("bundles").withIndex("by_key", (q) => q.eq("key", "simulator")).unique();
     const baseline = await ctx.db.query("bundles").withIndex("by_key", (q) => q.eq("key", "baseline_controller")).unique();
     if (!bundle || !baseline) return { accepted: false, mode: "blocked", reason: "simulator bundle not published (run apps/runner publish-bundles)" };
@@ -551,18 +592,35 @@ export const capture = mutation({
     const now = Date.now();
     const investigationId = appId();
     const baselineExperimentId = appId();
-    const useApproved = requestedChoice === "approved" && current?.source === "approved";
+    const workspaceId = await workspaceIdForCaller(ctx);
+    const useApproved = controllerText === undefined && requestedChoice === "approved" && current?.source === "approved";
+    const controllerSha256 = controllerText !== undefined
+      ? await sha256Hex(controllerText)
+      : useApproved ? current!.controllerSha256 : baseline.sha256;
+    if (controllerText !== undefined) {
+      const prior = await ctx.db.query("controllerSources").withIndex("by_sha", (q) => q.eq("controllerSha256", controllerSha256)).unique();
+      if (!prior) {
+        await ctx.db.insert("controllerSources", {
+          controllerSha256, artifactId: appId(), source: controllerText,
+          bytes: new TextEncoder().encode(controllerText).byteLength, createdAtMs: now, investigationId,
+        });
+      }
+    }
     await ctx.db.insert("investigations", {
-      appId: investigationId, title: args.title.trim().slice(0, 200), state: "capturing", cancelStatus: "none", cancelEpoch: 0, version: 1,
+      appId: investigationId, title: title.trim().slice(0, 200), state: "capturing", cancelStatus: "none", cancelEpoch: 0, version: 1,
       requestedEnvironments: args.requestedEnvironments,
-      baselineCase: { caseId: "original-divider-collision", suite: "original", seed: args.seed, sceneOverrides: args.sceneOverrides, description: "Captured baseline failure" },
+      baselineCase: {
+        caseId: TASK_FAMILY_SPECS[taskFamily].baseCaseId, suite: "original", seed,
+        sceneOverrides, taskFamily, description: "Captured baseline failure",
+      },
       baselineExperimentId,
       budget: { wallTimeMs: 600_000, maxExperimentsPerEnv: 20, maxCandidatesPerEnv: 2, maxFinalCandidates: 3 },
       idempotencyKey, captureStatus: "pending", autoStart: args.autoStart ?? true,
+      ...(workspaceId ? { workspaceId } : {}),
       taskFamily,
-      controllerSha256: useApproved ? current!.controllerSha256 : baseline.sha256,
+      controllerSha256,
       controllerVersion: useApproved ? current!.version : 1,
-      controllerChoice: useApproved ? "approved" : "baseline",
+      controllerChoice: controllerText !== undefined ? "imported" : useApproved ? "approved" : "baseline",
       createdAtMs: now, updatedAtMs: now,
     });
     await ctx.scheduler.runAfter(0, internal.capture.run, { investigationId });
@@ -576,19 +634,27 @@ export const getByAppId = internalQuery({
 });
 
 export const setCapture = internalMutation({
-  args: { investigationId: v.string(), captureStatus: v.union(v.literal("running"), v.literal("recorded"), v.literal("failed")), error: v.optional(v.string()) },
+  args: {
+    investigationId: v.string(), captureStatus: v.union(v.literal("running"), v.literal("recorded"), v.literal("failed")),
+    error: v.optional(v.string()), promote: v.optional(v.boolean()),
+  },
   handler: async (ctx, args) => {
     const investigation = await ctx.db.query("investigations").withIndex("by_appId", (q) => q.eq("appId", args.investigationId)).unique();
     if (!investigation) throw new ConvexError("investigation_not_found");
     const now = Date.now();
+    const promote = args.promote ?? true;
     await ctx.db.patch(investigation._id, {
       captureStatus: args.captureStatus, updatedAtMs: now, version: investigation.version + 1,
       // A late/duplicate "recorded" must not pull an already-started investigation back to admitted.
-      ...(args.captureStatus === "recorded" && investigation.retryOfInvestigationId
+      // promote defaults true. A solved baseline (no failure to repair) passes false and completes.
+      ...(args.captureStatus === "recorded" && promote && investigation.retryOfInvestigationId
         ? { state: "completed" as const, finishedAtMs: now }
-        : args.captureStatus === "recorded" && ["created", "capturing", "admitted"].includes(investigation.state)
+        : args.captureStatus === "recorded" && promote && ["created", "capturing", "admitted"].includes(investigation.state)
           ? { state: "admitted" as const }
-          : {}),
+          : args.captureStatus === "recorded" && !promote && investigation.state === "capturing"
+            // Baseline completed without failing: nothing to repair, so finish instead of spinning forever.
+            ? { state: "completed" as const, finishedAtMs: now }
+            : {}),
       ...(args.captureStatus === "failed" ? { state: "failed" as const, lastError: args.error ?? "capture_failed", finishedAtMs: now } : {}),
     });
     if (args.captureStatus === "failed") {

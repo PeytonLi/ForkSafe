@@ -195,11 +195,12 @@ def _contact_pairs(scene: BuiltScene) -> tuple[set[tuple[int, int]], set[tuple[i
         for name in scene.geom_ids
         if name in {"wall_near", "wall_far", "wall_left", "wall_right"}
     }
-    barrier_names.update(
-        {"gap_wall_left", "gap_wall_right"}
-        if scene.task_family == "push_through_gap"
-        else {"divider"}
-    )
+    if scene.task_family == "push_through_gap":
+        barrier_names.update({"gap_wall_left", "gap_wall_right"})
+    elif scene.task_family == "bin_drop":
+        barrier_names.update({"bin_px", "bin_nx", "bin_py", "bin_ny"})
+    else:
+        barrier_names.update({"divider"})
     barriers = {scene.geom_ids[name] for name in barrier_names}
     forbidden = {
         tuple(sorted((robot_geom, barrier)))
@@ -211,7 +212,7 @@ def _contact_pairs(scene: BuiltScene) -> tuple[set[tuple[int, int]], set[tuple[i
             tuple(sorted((scene.cube_geom_id, scene.geom_ids[name])))
             for name in ("gap_wall_left", "gap_wall_right")
         )
-    else:
+    elif scene.task_family == "divider_pick_place":
         forbidden.add(tuple(sorted((scene.cube_geom_id, scene.geom_ids["divider"]))))
     hand_body = mujoco.mj_name2id(
         scene.model, mujoco.mjtObj.mjOBJ_BODY, "hand"
@@ -273,6 +274,15 @@ def _controller_scene(scene: BuiltScene, data: mujoco.MjData) -> dict[str, Any]:
             "gapWidth": float(scene.config["gapWidth"]),
             "wallHeight": float(scene.config["wallHeight"]),
             "wallHalfThickness": float(scene.config["wallHalfThickness"]),
+        }
+    if scene.task_family == "bin_drop":
+        return {
+            "taskFamily": scene.task_family,
+            "cubePos": data.xpos[scene.cube_body_id].copy().tolist(),
+            "targetPos": list(target),
+            "binCenter": list(scene.config["binCenter"]),
+            "binWidth": float(scene.config["binWidth"]),
+            "binHeight": float(scene.config["binHeight"]),
         }
     divider = scene.config["dividerCenter"]
     return {

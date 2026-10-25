@@ -1,9 +1,8 @@
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api.js";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server.js";
-import publicManifest from "../evaluation/public/manifest.json";
-import withheldManifest from "../evaluation/withheld/manifest.json";
 import { MAX_FINALISTS } from "./lib/constants.js";
+import { publicCasesFor, withheldApplies, withheldCasesFor } from "./lib/evaluationCases.js";
 import { caseStatus, classifyExperiment, median, rankCandidates } from "./lib/experimentStatus.js";
 import { loadTrustedKeys, verifySignedEvaluation } from "./lib/signedEvaluation.js";
 import { byAppId, claimJob, completeJob, heartbeatAttempt, recordStageRow } from "./lib/jobOps.js";
@@ -15,11 +14,6 @@ import { evaluatorBackend } from "./lib/evaluatorBackend.js";
  *  Convex-owned lease with its own environment-independent grant. Withheld
  *  cases never leave this module: agents only ever see case ids. */
 
-type ManifestCase = { caseId: string; suite: "public" | "withheld"; seed: number; sceneOverrides: Record<string, number>; description?: string };
-const suites: Record<"public" | "withheld", ManifestCase[]> = {
-  public: (publicManifest as { cases: ManifestCase[] }).cases,
-  withheld: (withheldManifest as { cases: ManifestCase[] }).cases,
-};
 const EVALUATOR_WORKER = "convex-evaluator";
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const MAX_EVALUATION_RECONCILES = 10;
@@ -246,6 +240,15 @@ export const advance = internalMutation({
         await scheduleReviewIssue(ctx, args.investigationId);
         return { action: "awaiting_review_no_finalists" };
       }
+      if (!withheldApplies(investigation)) {
+        for (const finalist of finalists) {
+          const candidate = candidates.find((item) => item.appId === finalist.id);
+          if (candidate) await ctx.db.patch(candidate._id, { status: "evaluated", updatedAtMs: now });
+        }
+        await ctx.db.patch(investigation._id, { state: "awaiting_review", version: investigation.version + 1, updatedAtMs: now });
+        await scheduleReviewIssue(ctx, args.investigationId);
+        return { action: "awaiting_review" };
+      }
       for (const finalist of finalists) {
         const operationId = appId();
         const jobId = appId();
@@ -348,10 +351,13 @@ export const evaluateNext = internalAction({
     const signingKeys = new Set<string>();
     const trustedKeys = backend === "v3" ? loadTrustedKeys(process.env) : null;
     try {
-      for (const manifestCase of suites[suite]) {
+      const investigation = await ctx.runQuery(internal.investigations.getByAppId, { investigationId: args.investigationId });
+      const manifestCases = suite === "public" ? publicCasesFor(investigation ?? {}) : withheldCasesFor(investigation ?? {});
+      for (const manifestCase of manifestCases) {
         const beat = await ctx.runMutation(internal.evaluation.heartbeatEvaluation, { jobId, attemptId: claimed.attemptId, epoch: claimed.epoch });
         if (!beat.ok) { fenced = true; break; }
-        if (backend === "v3") {
+        const direct = manifestCase.execution === "direct" || manifestCase.taskFamily === "push_through_gap";
+        if (backend === "v3" && !direct) {
           const signedRun = await ctx.runAction(internal.execution.runSignedCase, {
             sandboxOpId: sandbox.appId, investigationId: args.investigationId, candidateId: candidate.appId, attemptId: claimed.attemptId,
             caseId: manifestCase.caseId, suite, controllerSource: source, controllerSha256: candidate.controllerSha256,
@@ -367,7 +373,7 @@ export const evaluateNext = internalAction({
           }
           signingKeys.add(verified.keyId);
           for (const signed of verified.cases) {
-            const simCase = { caseId: manifestCase.caseId, suite, seed: manifestCase.seed, sceneOverrides: manifestCase.sceneOverrides ?? {}, ...(manifestCase.description ? { description: manifestCase.description } : {}) };
+            const simCase = { caseId: manifestCase.caseId, suite, seed: manifestCase.seed, sceneOverrides: manifestCase.sceneOverrides ?? {}, ...(manifestCase.taskFamily ? { taskFamily: manifestCase.taskFamily } : {}), ...(manifestCase.description ? { description: manifestCase.description } : {}) };
             const completed = signed.status === "passed" || signed.completionTimeSec !== undefined;
             const experimentStatus = signed.status === "passed" ? "succeeded" : signed.status === "invalid" ? "invalid" : classifyExperiment({ completed: false, failureKinds: signed.failureKinds });
             await ctx.runMutation(internal.evidence.reserveExperiment, {
@@ -397,7 +403,7 @@ export const evaluateNext = internalAction({
           continue;
         }
         const experimentId = appId();
-        const simCase = { caseId: manifestCase.caseId, suite, seed: manifestCase.seed, sceneOverrides: manifestCase.sceneOverrides ?? {}, ...(manifestCase.description ? { description: manifestCase.description } : {}) };
+        const simCase = { caseId: manifestCase.caseId, suite: direct ? manifestCase.suite : suite, seed: manifestCase.seed, sceneOverrides: manifestCase.sceneOverrides ?? {}, ...(manifestCase.taskFamily ? { taskFamily: manifestCase.taskFamily } : {}), ...(manifestCase.description ? { description: manifestCase.description } : {}) };
         await ctx.runMutation(internal.evidence.reserveExperiment, {
           experimentId, investigationId: args.investigationId, candidateId: candidate.appId, attemptId: claimed.attemptId, epoch: claimed.epoch,
           grantId: grant.grantId, purpose: "evaluation", simCase, controllerSha256: candidate.controllerSha256, sandboxOpId: sandbox.appId, changedFunctions: candidate.changedFunctions,

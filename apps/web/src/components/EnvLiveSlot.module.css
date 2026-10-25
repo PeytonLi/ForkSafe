@@ -1,0 +1,2 @@
+.idle { display: grid; width: 100%; min-width: 0; aspect-ratio: 1 / 0.62; box-sizing: border-box; place-items: center; padding: 0.65rem; border: 1px dashed var(--line-strong); border-radius: 13px; background: linear-gradient(145deg, #f0f7f5 0%, #f8f8f5 48%, #edf3f8 100%); color: var(--muted); font-size: var(--text-sm); text-align: center; }
+.replay { display: grid; gap: 0.35rem; min-width: 0; }

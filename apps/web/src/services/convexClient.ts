@@ -9,6 +9,9 @@ import {
   InvestigationEnvironment,
   SimFrame,
   SimRunResult,
+  isTaskFamily,
+  validateSceneOverrides,
+  type DescribeOutcome,
 } from "@forksafe/contracts";
 import { ConvexReactClient } from "convex/react";
 import { makeFunctionReference } from "convex/server";
@@ -19,6 +22,7 @@ import { scopedQuestion } from "./ask";
 import type {
   CaptureDraft,
   CaptureOutcome,
+  FailureSearchOutcome,
   EvidenceAnswer,
   ForkSafeClient,
   HandoffEvent,
@@ -43,6 +47,8 @@ export const CONVEX_FUNCTIONS = {
   candidateDiff: "candidates:diff",
   cancel: "investigations:cancel",
   capture: "investigations:capture",
+  findFailure: "sceneSearch:findFailure",
+  describeScene: "describe:describeScene",
   recordReview: "reviews:record",
 } as const;
 
@@ -83,6 +89,26 @@ export const Workspace = z.object({
 export const Capture = z.union([
   z.object({ accepted: z.literal(true), investigationId: z.string().uuid() }),
   z.object({ accepted: z.literal(false), mode: z.enum(["live", "local", "fixture", "blocked", "not_implemented"]), reason: z.string() }),
+]);
+export const FailureSearch = z.union([
+  z.object({
+    mode: z.enum(["live", "local", "fixture", "blocked", "not_implemented"]),
+    found: z.literal(false),
+    samples: z.number().int().nonnegative(),
+    failures: z.number().int().nonnegative(),
+    reason: z.string(),
+  }),
+  z.object({
+    mode: z.enum(["live", "local", "fixture", "blocked", "not_implemented"]),
+    found: z.literal(true),
+    taskFamily: z.enum(["divider_pick_place", "push_through_gap", "bin_drop"]),
+    caseId: z.string(),
+    sceneOverrides: z.record(z.string(), z.number()),
+    seed: z.number().int().nonnegative(),
+    samples: z.number().int().nonnegative(),
+    failures: z.number().int().nonnegative(),
+    failureKind: z.string().optional(),
+  }),
 ]);
 
 const LearningExperiment = z.object({
@@ -171,6 +197,7 @@ export const EvidenceAnswerSchema = z.object({
     docType: z.enum(["finding", "evidence", "experiment_result"]),
     summary: z.string(),
     environmentId: z.string().optional(),
+    tSec: z.number().nonnegative().optional(),
   })),
   withheld: z.array(z.object({ id: z.string().min(1), reason: z.string() })),
 });
@@ -194,6 +221,15 @@ export const LiveStreamResponseSchema = z.object({
   })),
 }).nullable();
 
+const DescribeResponse = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("matched"), taskFamily: z.string().refine(isTaskFamily), overrides: z.record(z.number().finite()), explanation: z.string() }),
+  z.object({ status: z.literal("unsupported"), explanation: z.string() }),
+]).and(z.object({ mode: z.enum(["llm", "rules"]), fallback: z.boolean().optional() })).superRefine((result, ctx) => {
+  if (result.status === "matched" && !validateSceneOverrides(result.taskFamily, result.overrides).ok) {
+    ctx.addIssue({ code: "custom", message: "Invalid described scene" });
+  }
+});
+
 export const CONVEX_RESPONSE_SCHEMAS = {
   listInvestigations: z.array(ListItem),
   workspace: Workspace,
@@ -202,6 +238,8 @@ export const CONVEX_RESPONSE_SCHEMAS = {
   candidateReplay: SimRunResult,
   candidateDiff: z.string(),
   capture: Capture,
+  findFailure: FailureSearch,
+  describeScene: DescribeResponse,
   recordReview: HumanReview,
 };
 
@@ -292,6 +330,29 @@ export class ConvexForkSafeClient implements ForkSafeClient {
     try {
       const r = await this.client.mutation(makeFunctionReference<"mutation">(CONVEX_FUNCTIONS.capture), { ...draft });
       return parse(CONVEX_RESPONSE_SCHEMAS.capture, r, "Capture outcome");
+    } catch (e) {
+      mapError(e);
+    }
+  }
+  async describeScene(text: string): Promise<DescribeOutcome> {
+    try {
+      const result = await this.client.action(makeFunctionReference<"action">(CONVEX_FUNCTIONS.describeScene), { text });
+      return parse(CONVEX_RESPONSE_SCHEMAS.describeScene, result, "Description") as DescribeOutcome;
+    } catch (error) {
+      mapError(error);
+    }
+  }
+  async findFailure(
+    taskFamily: import("@forksafe/contracts").TaskFamily,
+    options?: { sceneOverrides?: Record<string, number>; seed?: number },
+  ): Promise<FailureSearchOutcome> {
+    try {
+      const result = await this.client.action(makeFunctionReference<"action">(CONVEX_FUNCTIONS.findFailure), {
+        taskFamily,
+        ...(options?.sceneOverrides !== undefined ? { sceneOverrides: options.sceneOverrides } : {}),
+        ...(options?.seed !== undefined ? { seed: options.seed } : {}),
+      });
+      return parse(CONVEX_RESPONSE_SCHEMAS.findFailure, result, "Failure search") as FailureSearchOutcome;
     } catch (e) {
       mapError(e);
     }

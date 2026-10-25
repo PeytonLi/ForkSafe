@@ -2,12 +2,15 @@
 
 import { ConvexError, v } from "convex/values";
 import { Daytona } from "@daytonaio/sdk";
-import type { VendorRef } from "@forksafe/contracts";
+import { isTaskFamily, TASK_FAMILY_SPECS, type VendorRef } from "@forksafe/contracts";
 import { CloudDaytonaProvider, loadDaytonaConfig } from "@forksafe/daytona";
 import { internal } from "./_generated/api.js";
 import { internalAction } from "./_generated/server.js";
+import { caseJsonFor } from "./lib/caseJson.js";
 import { classifyExperiment } from "./lib/experimentStatus.js";
 import { signedCaseCommand } from "./lib/evaluatorBackend.js";
+import { FIND_FAILURE_BUDGET, fuzzSearchFlags, pickFirstFailure, type FailureSearchResult, type FuzzGrid } from "./lib/sceneSearch.js";
+import { ensureExecutionSandbox } from "./capture.js";
 import { isStreamFlagUnsupported, LIVE_CHUNK_READER_PYTHON, parseChunkLines } from "./lib/liveRelay.js";
 import withheldManifest from "../evaluation/withheld/manifest.json";
 import manifestsLock from "../evaluation/manifests.lock.json";
@@ -37,6 +40,28 @@ const SAFE_URL = /^https:\/\/[A-Za-z0-9.-]+\/[A-Za-z0-9._\/?=&%-]*$/;
 
 type TrustedSandbox = { sandbox: Awaited<ReturnType<Daytona["get"]>>; purpose: "execution" | "runner" | "evaluator" };
 
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, code: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new ConvexError(code)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function boundedExec(
+  daytona: CloudDaytonaProvider,
+  ref: VendorRef,
+  options: Parameters<CloudDaytonaProvider["exec"]>[1],
+) {
+  return withTimeout(daytona.exec(ref, options), options.timeoutSec * 1000, "daytona_exec_timed_out");
+}
+
 async function trustedSandbox(ref: VendorRef): Promise<TrustedSandbox> {
   const config = loadDaytonaConfig();
   if (config.mode !== "cloud" || !config.apiKey) throw new ConvexError("daytona_cloud_provider_blocked");
@@ -64,53 +89,64 @@ async function trustedExecLarge(trusted: TrustedSandbox, command: string, timeou
   }
 }
 
-async function putSmallFile(_daytona: unknown, ref: VendorRef, remotePath: string, bytes: Uint8Array): Promise<void> {
+async function putSmallFile(_daytona: unknown, ref: VendorRef, remotePath: string, bytes: Uint8Array, timeoutSec = 60): Promise<void> {
   if (bytes.byteLength > 96_000) throw new ConvexError("file_too_large_for_inline_transfer");
   // The inline writer takes the payload as argv; an empty payload drops the argument and fails remotely.
   if (bytes.byteLength === 0) throw new ConvexError("file_transfer_empty");
   const encoded = Buffer.from(bytes).toString("base64");
   if (!SAFE_REMOTE_PATH.test(remotePath) || !SAFE_BASE64.test(encoded)) throw new ConvexError("file_transfer_input_rejected");
-  const trusted = await trustedSandbox(ref);
-  const command = trusted.purpose === "runner" ? `node -e '${JS_WRITE_B64}' ${remotePath} ${encoded}` : `python3 -c '${PY_WRITE_B64}' ${remotePath} ${encoded}`;
-  const result = await trustedExec(trusted, command, 60);
-  if (result.exitCode !== 0) throw new ConvexError(`file_write_failed:${remotePath}`);
+  await withTimeout((async () => {
+    const trusted = await trustedSandbox(ref);
+    const command = trusted.purpose === "runner" ? `node -e '${JS_WRITE_B64}' ${remotePath} ${encoded}` : `python3 -c '${PY_WRITE_B64}' ${remotePath} ${encoded}`;
+    const result = await trustedExec(trusted, command, timeoutSec);
+    if (result.exitCode !== 0) throw new ConvexError(`file_write_failed:${remotePath}`);
+  })(), timeoutSec * 1000, "file_write_timed_out");
 }
 
 // Artifact pull: the sandbox POSTs the file to a one-shot Convex storage upload URL (write-only,
 // single use) and Convex reads it back from storage. sandbox.fs.downloadFile from the Convex Node
 // runtime failed intermittently on ~0.5 MB files, so it is only the fallback.
 // No single quotes inside: the snippet is wrapped in single quotes on the sandbox shell.
-const PY_PUSH = "import sys,urllib.request; r=urllib.request.Request(sys.argv[1], data=open(sys.argv[2],\"rb\").read(), headers={\"Content-Type\":\"application/json\"}, method=\"POST\"); print(urllib.request.urlopen(r, timeout=120).read().decode())";
-const JS_PUSH = "const [u,p]=process.argv.slice(1);const fs=require(\"fs\");fetch(u,{method:\"POST\",headers:{\"Content-Type\":\"application/json\"},body:fs.readFileSync(p)}).then(r=>r.text()).then(t=>console.log(t)).catch(e=>{console.error(e.message);process.exit(1)})";
+const PY_PUSH = "import sys,urllib.request; r=urllib.request.Request(sys.argv[1], data=open(sys.argv[2],\"rb\").read(), headers={\"Content-Type\":\"application/json\"}, method=\"POST\"); print(urllib.request.urlopen(r, timeout=int(sys.argv[3])).read().decode())";
+const JS_PUSH = "const [u,p,t]=process.argv.slice(1);const fs=require(\"fs\");fetch(u,{method:\"POST\",headers:{\"Content-Type\":\"application/json\"},body:fs.readFileSync(p),signal:AbortSignal.timeout(Number(t)*1000)}).then(r=>r.text()).then(t=>console.log(t)).catch(e=>{console.error(e.message);process.exit(1)})";
 
-async function pullFile(ctx: { runMutation: Function; storage: { get: Function; delete: Function } }, daytona: { downloadFile: Function }, ref: VendorRef, remotePath: string): Promise<Uint8Array> {
+async function pullFile(ctx: { runMutation: Function; storage: { get: Function; delete: Function } }, daytona: { downloadFile: Function }, ref: VendorRef, remotePath: string, timeoutSec = 180): Promise<Uint8Array> {
   if (!SAFE_REMOTE_PATH.test(remotePath)) throw new ConvexError("file_transfer_input_rejected");
+  const deadline = Date.now() + timeoutSec * 1000;
   try {
-    const uploadUrl = (await ctx.runMutation(internal.bundles.createUploadUrl, {})) as string;
-    if (!SAFE_URL.test(uploadUrl)) throw new ConvexError("upload_url_rejected");
-    const trusted = await trustedSandbox(ref);
-    const command = trusted.purpose === "runner" ? `node -e '${JS_PUSH}' '${uploadUrl}' ${remotePath}` : `python3 -c '${PY_PUSH}' '${uploadUrl}' ${remotePath}`;
-    const result = await trustedExec(trusted, command, 180);
-    const match = /"storageId"\s*:\s*"([A-Za-z0-9_-]+)"/.exec(result.output);
-    if (result.exitCode !== 0 || !match) throw new ConvexError(`artifact_push_failed:${remotePath}`);
-    const storageId = match[1];
-    const blob = await ctx.storage.get(storageId);
-    if (!blob) throw new ConvexError("artifact_storage_missing");
-    const bytes = new Uint8Array(await blob.arrayBuffer());
-    await ctx.storage.delete(storageId);
-    return bytes;
+    return await withTimeout((async () => {
+      const uploadUrl = (await ctx.runMutation(internal.bundles.createUploadUrl, {})) as string;
+      if (!SAFE_URL.test(uploadUrl)) throw new ConvexError("upload_url_rejected");
+      const trusted = await trustedSandbox(ref);
+      const command = trusted.purpose === "runner"
+        ? `node -e '${JS_PUSH}' '${uploadUrl}' ${remotePath} ${timeoutSec}`
+        : `python3 -c '${PY_PUSH}' '${uploadUrl}' ${remotePath} ${timeoutSec}`;
+      const result = await trustedExec(trusted, command, timeoutSec);
+      const match = /"storageId"\s*:\s*"([A-Za-z0-9_-]+)"/.exec(result.output);
+      if (result.exitCode !== 0 || !match) throw new ConvexError(`artifact_push_failed:${remotePath}`);
+      const storageId = match[1];
+      const blob = await ctx.storage.get(storageId);
+      if (!blob) throw new ConvexError("artifact_storage_missing");
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      await ctx.storage.delete(storageId);
+      return bytes;
+    })(), timeoutSec * 1000, "artifact_pull_timed_out");
   } catch (error) {
     console.log("pullFile:storage_path_failed", remotePath, error instanceof Error ? error.message.slice(0, 160) : "unknown");
-    return (await daytona.downloadFile(ref, remotePath)) as Uint8Array;
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) throw error;
+    return await withTimeout(daytona.downloadFile(ref, remotePath) as Promise<Uint8Array>, remainingMs, "artifact_pull_timed_out");
   }
 }
 
-async function fetchToFile(_daytona: unknown, ref: VendorRef, url: string, remotePath: string): Promise<void> {
+async function fetchToFile(_daytona: unknown, ref: VendorRef, url: string, remotePath: string, timeoutSec = 300): Promise<void> {
   if (!SAFE_REMOTE_PATH.test(remotePath) || !SAFE_URL.test(url)) throw new ConvexError("file_transfer_input_rejected");
-  const trusted = await trustedSandbox(ref);
-  const command = trusted.purpose === "runner" ? `node -e '${JS_FETCH}' '${url}' ${remotePath}` : `python3 -c '${PY_FETCH}' '${url}' ${remotePath}`;
-  const result = await trustedExec(trusted, command, 300);
-  if (result.exitCode !== 0) throw new ConvexError(`file_fetch_failed:${remotePath}:${result.output.slice(-120)}`);
+  await withTimeout((async () => {
+    const trusted = await trustedSandbox(ref);
+    const command = trusted.purpose === "runner" ? `node -e '${JS_FETCH}' '${url}' ${remotePath}` : `python3 -c '${PY_FETCH}' '${url}' ${remotePath}`;
+    const result = await trustedExec(trusted, command, timeoutSec);
+    if (result.exitCode !== 0) throw new ConvexError(`file_fetch_failed:${remotePath}:${result.output.slice(-120)}`);
+  })(), timeoutSec * 1000, "file_fetch_timed_out");
 }
 
 function provider(): CloudDaytonaProvider {
@@ -132,8 +168,17 @@ async function readyRef(ctx: any, sandboxOpId: string): Promise<{ ref: VendorRef
 
 /** Uploads and extracts the simulator bundle once per sandbox. */
 export const ensureSimBundle = internalAction({
-  args: { sandboxOpId: v.string() },
+  args: {
+    sandboxOpId: v.string(),
+    timeouts: v.optional(v.object({
+      fetchSec: v.number(),
+      extractSec: v.number(),
+      depsSec: v.number(),
+      preflightSec: v.number(),
+    })),
+  },
   handler: async (ctx, args): Promise<{ ready: boolean; bundleSha256?: string; assetsSha256?: string; detail?: string }> => {
+    const timeouts = args.timeouts ?? { fetchSec: 300, extractSec: 120, depsSec: 180, preflightSec: 120 };
     const { ref, op } = await readyRef(ctx, args.sandboxOpId);
     const bundle = await ctx.runQuery(internal.bundles.get, { key: "simulator" });
     if (!bundle) throw new ConvexError("simulator_bundle_missing");
@@ -141,24 +186,24 @@ export const ensureSimBundle = internalAction({
     const bundleUrl = await ctx.storage.getUrl(bundle.storageId);
     if (!bundleUrl) throw new ConvexError("simulator_bundle_missing");
     const daytona = provider();
-    await fetchToFile(daytona, ref, bundleUrl, "/workspace/sim.tar");
+    await fetchToFile(daytona, ref, bundleUrl, "/workspace/sim.tar", timeouts.fetchSec);
     // Extraction is idempotent, so one retry absorbs a transient sandbox exec failure.
-    let extract = await daytona.exec(ref, { command: `python3 -m tarfile -e /workspace/sim.tar ${SIM_ROOT}`, cwd: "/workspace", timeoutSec: 120 });
+    let extract = await boundedExec(daytona, ref, { command: `python3 -m tarfile -e /workspace/sim.tar ${SIM_ROOT}`, cwd: "/workspace", timeoutSec: timeouts.extractSec });
     if (extract.exitCode !== 0) {
       console.log("ensureSimBundle:extract_retry", extract.exitCode, extract.output.slice(-160));
-      extract = await daytona.exec(ref, { command: `python3 -m tarfile -e /workspace/sim.tar ${SIM_ROOT}`, cwd: "/workspace", timeoutSec: 120 });
+      extract = await boundedExec(daytona, ref, { command: `python3 -m tarfile -e /workspace/sim.tar ${SIM_ROOT}`, cwd: "/workspace", timeoutSec: timeouts.extractSec });
     }
     if (extract.exitCode !== 0) throw new ConvexError("simulator_bundle_extract_failed");
     // forksafe-exec-v1 ships mujoco+numpy only; the simulator also imports pydantic, so install it into
     // a bundle-local target dir (deterministic regardless of HOME) until the execution image adds it.
-    const deps = await daytona.exec(ref, {
+    const deps = await boundedExec(daytona, ref, {
       command: `python3 -m pip install --quiet --no-cache-dir --target ${SIM_ROOT}/pydeps pydantic==2.14.1`,
-      cwd: SIM_ROOT, env: { PYTHONPATH: SIM_PYTHONPATH }, timeoutSec: 180,
+      cwd: SIM_ROOT, env: { PYTHONPATH: SIM_PYTHONPATH }, timeoutSec: timeouts.depsSec,
     });
     if (deps.exitCode !== 0) return { ready: false, detail: `pydeps_install_failed:${deps.output.slice(-300)}` };
-    const preflight = await daytona.exec(ref, {
+    const preflight = await boundedExec(daytona, ref, {
       command: `python3 ${SIM_ROOT}/forksafe_preflight.py`, cwd: SIM_ROOT,
-      env: { PYTHONPATH: SIM_PYTHONPATH }, timeoutSec: 120,
+      env: { PYTHONPATH: SIM_PYTHONPATH }, timeoutSec: timeouts.preflightSec,
     });
     if (preflight.exitCode !== 0) {
       return { ready: false, detail: preflight.output.slice(-400) };
@@ -171,7 +216,7 @@ export const ensureSimBundle = internalAction({
 
 const simCase = v.object({
   caseId: v.string(), suite: v.union(v.literal("original"), v.literal("public"), v.literal("withheld")),
-  seed: v.number(), sceneOverrides: v.record(v.string(), v.number()), description: v.optional(v.string()),
+  seed: v.number(), sceneOverrides: v.record(v.string(), v.number()), taskFamily: v.optional(v.string()), description: v.optional(v.string()),
 });
 
 const LIVE_RELAY_SLEEP_MS = 1_000;
@@ -221,10 +266,7 @@ export const runCase = internalAction({
     console.log("runCase:stage", "put_controller", args.experimentId);
     await putSmallFile(daytona, ref, `${runDir}/controller/task_controller.py`, encoder.encode(args.controllerSource));
     console.log("runCase:stage", "put_case", args.experimentId);
-    await putSmallFile(daytona, ref, `${runDir}/case.json`, encoder.encode(JSON.stringify({
-      caseId: args.simCase.caseId, suite: args.simCase.suite, seed: args.simCase.seed,
-      sceneOverrides: args.simCase.sceneOverrides, ...(args.simCase.description ? { description: args.simCase.description } : {}),
-    })));
+    await putSmallFile(daytona, ref, `${runDir}/case.json`, encoder.encode(JSON.stringify(caseJsonFor(args.simCase))));
     console.log("runCase:stage", "exec_simulator", args.experimentId);
     const timeoutSec = Math.min(60, Math.max(1, args.timeoutSec ?? 30));
     const liveEnabled = args.simCase.suite !== "withheld";
@@ -417,6 +459,73 @@ export const runCase = internalAction({
       ...(traceArtifactId ? { traceArtifactId } : {}),
       ...(replayArtifactId ? { replayArtifactId, replayBytes: resultBytes.byteLength } : {}),
     };
+  },
+});
+
+export const runFuzz = internalAction({
+  args: {
+    searchId: v.string(),
+    taskFamily: v.string(),
+    seed: v.number(),
+    controllerSource: v.string(),
+    centerOverrides: v.optional(v.record(v.string(), v.number())),
+  },
+  handler: async (ctx, args): Promise<FailureSearchResult> => {
+    const built = fuzzSearchFlags({
+      seed: args.seed,
+      ...(args.centerOverrides !== undefined ? { centerOverrides: args.centerOverrides } : {}),
+    });
+    if (!built.ok) throw new ConvexError(built.reason);
+    const scratchInvestigationId = args.searchId;
+    try {
+      const family = args.taskFamily;
+      if (!isTaskFamily(family)) throw new ConvexError("unknown_task_family");
+      const baseCaseId = TASK_FAMILY_SPECS[family].baseCaseId;
+      const { sandbox, ref } = await withTimeout((async () => {
+        const sandbox = await ensureExecutionSandbox(ctx, scratchInvestigationId, FIND_FAILURE_BUDGET.sandboxReadyMs);
+        const { ref } = await readyRef(ctx, sandbox.appId);
+        return { sandbox, ref };
+      })(),
+        FIND_FAILURE_BUDGET.sandboxReadyMs,
+        "execution_sandbox_timed_out",
+      );
+      const ensured = await withTimeout(ctx.runAction(internal.execution.ensureSimBundle, {
+        sandboxOpId: sandbox.appId,
+        timeouts: {
+          fetchSec: FIND_FAILURE_BUDGET.bundleFetchSec,
+          extractSec: FIND_FAILURE_BUDGET.bundleExtractSec,
+          depsSec: FIND_FAILURE_BUDGET.bundleDepsSec,
+          preflightSec: FIND_FAILURE_BUDGET.bundlePreflightSec,
+        },
+      }), FIND_FAILURE_BUDGET.bundleSec * 1000, "simulator_bundle_timed_out");
+      if (!ensured.ready) throw new ConvexError(ensured.detail ?? "simulator_bundle_not_ready");
+      const daytona = provider();
+      const manifestCheck = await boundedExec(daytona, ref, {
+        command: `python3 -c 'from pathlib import Path; required=[Path("evaluation/public/manifest.json"),Path("evaluation/push_gap/manifest.json")]; missing=[str(p) for p in required if not p.is_file()]; print("missing manifests: "+", ".join(missing) if missing else "required manifests present"); raise SystemExit(bool(missing))'`,
+        cwd: SIM_ROOT,
+        env: { PYTHONPATH: SIM_PYTHONPATH },
+        timeoutSec: FIND_FAILURE_BUDGET.manifestCheckSec,
+      });
+      if (manifestCheck.exitCode !== 0) throw new ConvexError(manifestCheck.output.slice(-300));
+      const runDir = `${RUN_ROOT}/${args.searchId}`;
+      await putSmallFile(daytona, ref, `${runDir}/controller/task_controller.py`, new TextEncoder().encode(args.controllerSource), FIND_FAILURE_BUDGET.controllerUploadSec);
+      const outputPath = `${runDir}/fuzz.json`;
+      const fuzz = await boundedExec(daytona, ref, {
+        command: `python3 -m simulator.fuzz --controller ${runDir}/controller --around ${baseCaseId} --n ${FIND_FAILURE_BUDGET.fuzzSamples} --workers ${FIND_FAILURE_BUDGET.fuzzWorkers} --out ${outputPath} --timeout-sec ${FIND_FAILURE_BUDGET.fuzzCaseTimeoutSec} ${built.flags}`,
+        cwd: SIM_ROOT,
+        env: { PYTHONPATH: SIM_PYTHONPATH, PYTHONDONTWRITEBYTECODE: "1" },
+        timeoutSec: FIND_FAILURE_BUDGET.fuzzExecSec,
+      });
+      if (fuzz.exitCode !== 0) throw new ConvexError(`simulator_fuzz_failed:${fuzz.output.slice(-400)}`);
+      const resultBytes = await pullFile(ctx, daytona, ref, outputPath, FIND_FAILURE_BUDGET.pullSec);
+      const grid = JSON.parse(new TextDecoder().decode(resultBytes)) as FuzzGrid;
+      return pickFirstFailure(grid, family, args.seed);
+    } finally {
+      await ctx.runMutation(internal.sandboxes.terminateInvestigationOps, {
+        investigationId: scratchInvestigationId,
+        reason: "failure_search_complete",
+      });
+    }
   },
 });
 

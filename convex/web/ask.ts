@@ -10,7 +10,8 @@ import { AgentBuilder, agentBuilderReadiness, toDocuments, type CanonicalRecord,
 
 /** Web: `web/ask:ask`. "Why did this fail?" — an investigation-scoped,
  *  read-only question to the Elastic evidence agent. Requires a signed-in
- *  identity; answers are evidence-only and never affect scores. */
+ *  identity with access, or a public investigation; answers are evidence-only
+ *  and never affect scores. */
 export const ask = action({
   args: { investigationId: v.string(), question: v.string() },
   handler: async (ctx, args): Promise<WebAnswer> => {
@@ -18,6 +19,7 @@ export const ask = action({
     const { investigationId, question, mentionedIds } = parseAsk(args);
     const scope = await ctx.runQuery(internal.web.askData.scope, { investigationId, ids: mentionedIds });
     if (!scope.exists) throw new ConvexError("investigation_not_found");
+    if (!await ctx.runQuery(internal.workspaces.canRead, { investigationId })) throw new UnauthorizedError();
     if (scope.foreign.length) throw new ConvexError("out_of_scope");
 
     const parsedEnv = EnvConfig.safeParse(Object.fromEntries(Object.entries(process.env).filter(([, value]) => value !== "")));

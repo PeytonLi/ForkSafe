@@ -12,6 +12,7 @@ import type {
   SimFrame,
   SimCase,
   SimRunResult,
+  TaskFamily,
 } from "@forksafe/contracts";
 
 export type WebIntegrationReadiness = import("@forksafe/contracts").IntegrationReadiness & { probed: boolean };
@@ -64,7 +65,9 @@ export interface CaptureDraft {
   seed: number;
   sceneOverrides: Record<string, number>;
   requestedEnvironments: number;
+  taskFamily: TaskFamily;
   controller?: ControllerChoiceValue;
+  controllerSource?: string;
 }
 
 export type ControllerChoiceValue = "approved" | "baseline";
@@ -126,6 +129,10 @@ export type CaptureOutcome =
   | { accepted: true; investigationId: string }
   | { accepted: false; mode: IntegrationMode; reason: string };
 
+export type FailureSearchOutcome =
+  | { mode: IntegrationMode; found: false; samples: number; failures: number; reason: string }
+  | { mode: IntegrationMode; found: true; taskFamily: TaskFamily; caseId: string; sceneOverrides: Record<string, number>; seed: number; samples: number; failures: number; failureKind?: string };
+
 /** Pipeline counters for the health page (Convex-owned bookkeeping). */
 export interface PipelineHealth {
   mode: IntegrationMode;
@@ -143,6 +150,8 @@ export interface EvidenceCitation {
   docType: "finding" | "evidence" | "experiment_result";
   summary: string;
   environmentId?: string;
+  /** Simulation time recorded on an evidence locator. Absent when the evidence has none. */
+  tSec?: number;
 }
 
 /** Answer from the Elastic evidence agent, scoped to one investigation. */
@@ -194,6 +203,8 @@ export interface ForkSafeClient {
   cancelInvestigation(investigationId: string): Promise<void>;
   submitReview(input: ReviewInput): Promise<HumanReview>;
   requestCapture(draft: CaptureDraft): Promise<CaptureOutcome>;
+  describeScene(text: string): Promise<import("@forksafe/contracts").DescribeOutcome>;
+  findFailure(taskFamily: TaskFamily, options?: { sceneOverrides?: Record<string, number>; seed?: number }): Promise<FailureSearchOutcome>;
   getLearning(investigationId: string): Promise<LearningView>;
   retryWithImprovedController(investigationId: string): Promise<CaptureOutcome>;
   getCurrentController(taskFamily?: string): Promise<CurrentController>;

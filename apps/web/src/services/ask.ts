@@ -44,6 +44,22 @@ const SYNONYMS: Record<string, string[]> = {
   slow: ["slowing", "speed"],
 };
 
+const TIME_KEYS = ["tSec", "timeSec", "failureTSec"] as const;
+
+/** Smallest finite simulation time on a finding's evidence locators, if any recorded one. */
+export function citationTime(finding: Finding): number | undefined {
+  let best: number | undefined;
+  for (const item of finding.evidence) {
+    const locator = item.locator;
+    if (!locator || typeof locator !== "object") continue;
+    for (const key of TIME_KEYS) {
+      const value = locator[key];
+      if (typeof value === "number" && Number.isFinite(value) && (best === undefined || value < best)) best = value;
+    }
+  }
+  return best;
+}
+
 const stem = (w: string) => w.replace(/'/g, "").replace(/(ing|ed|es|s)$/, "");
 function tokens(text: string): string[] {
   return text.toLowerCase().split(/[^a-z0-9_']+/).map(stem).filter((w) => w.length >= 3 && !STOP.has(w));
@@ -71,7 +87,11 @@ export function fixtureAnswer(findings: Finding[], question: string): EvidenceAn
     ...common,
     enoughEvidence: true,
     answer: strong.map(({ f }) => f.summary).join(" "),
-    citations: strong.map(({ f }) => ({ id: f.id, docType: "finding" as const, summary: f.summary, environmentId: f.environmentId })),
+    citations: strong.map(({ f }) => {
+      const tSec = citationTime(f);
+      const citation = { id: f.id, docType: "finding" as const, summary: f.summary, environmentId: f.environmentId };
+      return tSec === undefined ? citation : { ...citation, tSec };
+    }),
     withheld: FIXTURE_WITHHELD.topic.test(question) ? [{ id: FIXTURE_WITHHELD.id, reason: FIXTURE_WITHHELD.reason }] : [],
   };
 }

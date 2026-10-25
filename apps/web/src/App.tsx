@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { AuthControls } from "./components/AuthControls";
 import { ReadinessStrip } from "./components/ReadinessStrip";
 import { InvestigationView } from "./components/InvestigationView";
 import { HealthPage } from "./components/HealthPage";
 import { Overview } from "./components/Overview";
+import { NewSimulation } from "./components/NewSimulation";
 import { Sidebar } from "./components/Sidebar";
 import { CommandPalette } from "./components/CommandPalette";
 import { BrandMark, Icon } from "./components/Icon";
@@ -109,7 +111,7 @@ export function App() {
 
   const items = investigations.data ?? [];
   const current = items.find((i) => i.id === route.investigationId);
-  const page = route.page === "health" ? "health" : route.investigationId ? "investigation" : "home";
+  const page = route.page === "health" ? "health" : route.page === "new" ? "new" : route.investigationId ? "investigation" : "home";
   const sidebarProps = { route, go, investigations, onSearch: openPalette };
 
   return (
@@ -170,13 +172,16 @@ export function App() {
                   ) : (
                     <>
                       <li className={styles.crumbQuiet}>Workspace</li>
-                      <li aria-current="page">{page === "health" ? "Service health" : "Overview"}</li>
+                      <li aria-current="page">{page === "health" ? "Service health" : page === "new" ? "New simulation" : "Overview"}</li>
                     </>
                   )}
                 </ol>
               </nav>
             )}
-            <ReadinessStrip clientSource={client.source} />
+            <div className={styles.topActions}>
+              <ReadinessStrip clientSource={client.source} />
+              <AuthControls />
+            </div>
           </div>
         </header>
 
@@ -203,6 +208,11 @@ export function App() {
           <div key={`${page}|${route.investigationId ?? ""}`} className={`${styles.content} page-enter`}>
             {page === "health" ? (
               <HealthPage />
+            ) : page === "new" ? (
+              <NewSimulation onAccepted={(id) => {
+                investigations.reload();
+                go({ investigationId: id, tab: "capture" });
+              }} />
             ) : page === "investigation" ? (
               <InvestigationView
                 key={route.investigationId}

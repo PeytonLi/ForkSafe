@@ -9,8 +9,11 @@ export const TOSS_BIN_OVERRIDES = [
   { key: "objectMass", label: "Object mass", kind: "value", min: 0.01, max: 0.5, default: 0.05, step: 0.01, unit: "kg" },
   { key: "speedScale", label: "Speed scale", kind: "value", min: 0.5, max: 1.5, default: 1, step: 0.05, unit: "×" },
 ] as const;
+export type TossBinOverrideKey = (typeof TOSS_BIN_OVERRIDES)[number]["key"];
+export const TOSS_BIN_OVERRIDE_KEYS = TOSS_BIN_OVERRIDES.map(({ key }) => key) as readonly TossBinOverrideKey[];
 
 export const TOSS_BIN_DEFAULTS = {
+  objectStart: [0.45, -0.10, 0.02] as const,
   binHalfExtents: [0.1, 0.1] as const,
   binWallHalfThickness: 0.005,
   binWallHeight: 0.08,

@@ -57,18 +57,20 @@ export interface Route {
   tab: string;
   /** Optional row to bring into view inside the tab (e.g. a cited finding). */
   focus?: string;
-  page?: "health";
+  page?: "health" | "new";
 }
 
 export function parseHash(hash: string): Route {
   const parts = hash.replace(/^#\/?/, "").split("/").filter(Boolean).map((p) => decodeURIComponent(p));
   if (parts[0] === "health") return { tab: "", page: "health" };
+  if (parts[0] === "new") return { tab: "", page: "new" };
   if (parts[0] === "investigations" && parts[1]) return { investigationId: parts[1], tab: parts[2] ?? "capture", focus: parts[3] };
   return { tab: "" };
 }
 
 export function routeHref(r: Route): string {
   if (r.page === "health") return "#/health";
+  if (r.page === "new") return "#/new";
   if (!r.investigationId) return "#/";
   const tail = r.focus ? `/${encodeURIComponent(r.focus)}` : "";
   return `#/investigations/${encodeURIComponent(r.investigationId)}/${r.tab || "capture"}${tail}`;

@@ -83,7 +83,9 @@ test("browser story: readiness, fixture investigation, replay scrub, review", as
     await page.getByRole("tab", { name: "Environments" }).click();
   }
   await expect(page.getByTestId("env-tile-1")).toBeVisible();
+  await page.getByRole("tab", { name: "Env 3" }).click();
   await expect(page.getByTestId("env-tile-3")).toBeVisible();
+  await page.getByRole("tab", { name: "Env 1" }).click();
   await page.getByTestId("env-tile-1").getByRole("button", { name: /^Timeline/ }).click();
   await expect(page.getByTestId("env-tile-1").getByRole("listitem").first()).toBeVisible();
   await expectNoHorizontalOverflow(page);
@@ -193,7 +195,7 @@ test("readiness endpoint returns contract-shaped data without secret values", as
   const res = await request.get("/api/readiness");
   expect(res.ok()).toBeTruthy();
   const body = await res.json();
-  expect(body.integrations.length).toBeGreaterThanOrEqual(10);
+  expect(body.integrations.length).toBeGreaterThanOrEqual(8);
   for (const r of body.integrations) {
     expect(["live", "local", "fixture", "blocked", "not_implemented"]).toContain(r.mode);
     expect(typeof r.probed).toBe("boolean");

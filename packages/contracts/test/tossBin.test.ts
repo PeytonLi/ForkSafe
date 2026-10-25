@@ -33,6 +33,7 @@ describe("toss bin contract", () => {
       }).taskFamily,
     ).toBe("toss_into_bin");
     expect(TOSS_BIN_DEFAULTS).toEqual({
+      objectStart: config.objectStart,
       binHalfExtents: config.binHalfExtents,
       binWallHalfThickness: config.binWallHalfThickness,
       binWallHeight: config.binWallHeight,

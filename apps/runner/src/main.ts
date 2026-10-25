@@ -92,7 +92,11 @@ export async function main(): Promise<void> {
         totalTokens: Number.isSafeInteger(Number(process.env.RUNNER_MAX_TOKENS_PER_INVESTIGATION))
           && Number(process.env.RUNNER_MAX_TOKENS_PER_INVESTIGATION) > 0
           ? Number(process.env.RUNNER_MAX_TOKENS_PER_INVESTIGATION)
-          : 100_000,
+          : 500_000,
+        outputTokens: Number.isSafeInteger(Number(process.env.RUNNER_MAX_OUTPUT_TOKENS_PER_INVESTIGATION))
+          && Number(process.env.RUNNER_MAX_OUTPUT_TOKENS_PER_INVESTIGATION) > 0
+          ? Number(process.env.RUNNER_MAX_OUTPUT_TOKENS_PER_INVESTIGATION)
+          : 80_000,
       }),
       workspaceRoot,
       maxActiveTurns: maxActiveModelCalls,

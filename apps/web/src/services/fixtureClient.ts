@@ -9,6 +9,8 @@ import {
   InvestigationEnvironment,
   SimFrame,
   SimRunResult,
+  describeScene,
+  type DescribeOutcome,
 } from "@forksafe/contracts";
 import { z } from "zod";
 import raw from "../fixtures/demo.json";
@@ -19,6 +21,7 @@ import type {
   CancellationState,
   CaptureDraft,
   CaptureOutcome,
+  FailureSearchOutcome,
   CurrentController,
   EvidenceAnswer,
   ForkSafeClient,
@@ -548,12 +551,30 @@ export class FixtureClient implements ForkSafeClient {
     });
   }
 
-  requestCapture(_draft: CaptureDraft): Promise<CaptureOutcome> {
+  requestCapture(draft: CaptureDraft): Promise<CaptureOutcome> {
     return this.wait(() => ({
       accepted: false as const,
       mode: "fixture" as const,
-      reason:
-        "Fixture mode cannot run physics. Connect the simulator and Convex (set VITE_CONVEX_URL) to record a new baseline.",
+      reason: draft.controllerSource
+        ? "Fixture mode cannot run an imported controller because it cannot run physics."
+        : "Fixture mode cannot run physics. Connect the simulator and Convex (set VITE_CONVEX_URL) to record a new baseline.",
+    }));
+  }
+
+  describeScene(text: string): Promise<DescribeOutcome> {
+    return this.wait(() => ({ ...describeScene(text), mode: "fixture" as const }));
+  }
+
+  findFailure(
+    _taskFamily: import("@forksafe/contracts").TaskFamily,
+    _options?: { sceneOverrides?: Record<string, number>; seed?: number },
+  ): Promise<FailureSearchOutcome> {
+    return this.wait(() => ({
+      mode: "fixture" as const,
+      found: false as const,
+      samples: 0,
+      failures: 0,
+      reason: "Fixture mode cannot search for a failure because it cannot run physics. Connect the simulator and Convex (set VITE_CONVEX_URL) to search.",
     }));
   }
 

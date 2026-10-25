@@ -34,6 +34,7 @@ describe("readiness probes", () => {
     for (const name of remoteNames) expect(entries.find((r) => r.name === name)).toMatchObject({ mode: "live", probed: true });
     expect(entries.find((r) => r.name === "convex")).toMatchObject({ mode: "live", probed: true });
     expect(entries.find((r) => r.name === "factory")).toMatchObject({ mode: "live", probed: false });
+    for (const name of ["simulator", "evaluator", "atlassian_confluence"]) expect(entries.map((r) => r.name)).not.toContain(name);
     expect(fetch).toHaveBeenCalledTimes(5);
     expect(fetch.mock.calls.find(([url]) => url.includes("/sql"))?.[1]).toMatchObject({ method: "POST", body: "SELECT * FROM finding LIMIT 1" });
   });

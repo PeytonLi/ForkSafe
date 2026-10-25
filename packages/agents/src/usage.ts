@@ -53,7 +53,7 @@ export class UsageLedger {
     limits: Partial<UsageLimits> = {},
     defaultReservation: Partial<ReservationSize> = {},
   ) {
-    this.limits = { totalTokens: 100_000, outputTokens: 20_000, ...limits };
+    this.limits = { totalTokens: 500_000, outputTokens: 80_000, ...limits };
     this.defaultReservation = { total: 10_000, output: 4_000, ...defaultReservation };
   }
 

@@ -34,20 +34,41 @@ interface AgentAnswerLike {
   droppedCitations?: { id: string; reason: string }[];
 }
 
-function summarize(docType: string, canonical: unknown): { summary: string; environmentId?: string } {
+function finiteTime(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+/** Smallest locator time on a finding or experiment. Missing times stay missing. */
+export function citationTime(canonical: unknown): number | undefined {
+  const record = (canonical ?? {}) as Record<string, unknown>;
+  const times = [finiteTime(record.tSec), finiteTime(record.timeSec), finiteTime(record.failureTSec)];
+  const evidence = Array.isArray(record.evidence) ? record.evidence : [];
+  for (const item of evidence) {
+    if (!item || typeof item !== "object") continue;
+    const locator = (item as { locator?: unknown }).locator;
+    if (!locator || typeof locator !== "object") continue;
+    const fields = locator as Record<string, unknown>;
+    times.push(finiteTime(fields.tSec), finiteTime(fields.timeSec), finiteTime(fields.failureTSec));
+  }
+  const found = times.filter((time): time is number => time !== undefined);
+  return found.length ? Math.min(...found) : undefined;
+}
+
+function summarize(docType: string, canonical: unknown): { summary: string; environmentId?: string; tSec?: number } {
   const r = (canonical ?? {}) as Record<string, unknown>;
   const environmentId = typeof r.environmentId === "string" ? r.environmentId : undefined;
+  const tSec = citationTime(canonical);
   const base = docType === "experiment_result"
     ? `${String(r.status ?? "experiment")}${Array.isArray(r.failureKinds) && r.failureKinds.length ? `: ${r.failureKinds.join(", ")}` : ""}`
     : String(r.summary ?? "Recorded evidence");
-  return { summary: base.slice(0, 500), ...(environmentId ? { environmentId } : {}) };
+  return { summary: base.slice(0, 500), ...(environmentId ? { environmentId } : {}), ...(tSec !== undefined ? { tSec } : {}) };
 }
 
 /** Maps the Elastic AgentBuilder answer to the web's EvidenceAnswer. Only a
  *  live answer with validated citations and nothing withheld counts as enough. */
 export interface WebAnswer {
   mode: Mode; enoughEvidence: boolean; answer?: string; label?: string; reason?: string;
-  citations: { id: string; docType: "finding" | "evidence" | "experiment_result"; summary: string; environmentId?: string }[];
+  citations: { id: string; docType: "finding" | "evidence" | "experiment_result"; summary: string; environmentId?: string; tSec?: number }[];
   withheld: { id: string; reason: string }[];
 }
 

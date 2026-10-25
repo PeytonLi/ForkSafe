@@ -57,6 +57,11 @@ export class RunnerExecutor {
     const checkpoint = lease.job.payload.resume as {
       sessionId?: string; vendorSessionId?: string; turnIndex?: number; revisionHeadId?: string;
     } | undefined;
+    // Heartbeats must start before Factory session open — claim already consumed part of the lease.
+    const keeper = new LeaseKeeper(lease, this.options.source, clock);
+    keeper.start();
+    await keeper.beat().catch(() => undefined);
+    if (keeper.signal.aborted) return null;
     let sessionId = this.options.sessions.idleSessionFor(lease.job.investigationId, environmentId);
     if (!sessionId) {
       try {
@@ -71,6 +76,7 @@ export class RunnerExecutor {
           : await openSession();
         sessionId = created.sessionId;
       } catch (error) {
+        keeper.stop();
         // Any session-open failure is reported on the lease instead of being left to expire:
         // the cap is a terminal "failed", everything else (e.g. a missing droid executable) is
         // infrastructure and gets the single infra retry.
@@ -90,8 +96,10 @@ export class RunnerExecutor {
         }, clock, "unknown", traceContext, jobSpan);
       }
     }
-    const keeper = new LeaseKeeper(lease, this.options.source, clock);
-    keeper.start();
+    if (keeper.signal.aborted) {
+      keeper.stop();
+      return null;
+    }
     let turn: TurnOutcome | undefined;
     let failure: string | undefined;
     let infrastructureFailure = false;
@@ -309,12 +317,19 @@ export class RunnerExecutor {
   }
 }
 
-const CONTINUE_PROMPT = "You have about two turns total. If you have not submitted yet, promptly complete the remaining sequence in one Script: inspect_failure → read_source(task_controller.py) → apply_patch using the returned expected head → run_experiment on a public case → submit_candidate with your best measured revision, even if it does not pass. There is no shell or direct filesystem access. Load deferred schemas with ToolSearch `select:forksafe___<name>`, then call them from Script via `tools.forksafe___<name>(...)`. Report only measured results.";
+const CONTINUE_PROMPT = "You have about two turns total. If you have not submitted yet, promptly complete the remaining sequence in one Script: inspect_failure → read_source(task_controller.py) → apply_patch using the returned expected head → run_experiment on a public case → write_finding → submit_candidate with your best measured revision and that finding id, even if the experiment does not pass. There is no shell or direct filesystem access. Load deferred schemas with ToolSearch `select:forksafe___<name>`, then call them from Script via `tools.forksafe___<name>(...)`. Report only measured results.";
 
 function submittedCandidate(turn: TurnOutcome): boolean {
   return (turn.toolCalls ?? []).some((call: unknown) => {
-    const name = typeof call === "string" ? call : (call as { name?: string; tool?: string })?.name ?? (call as { tool?: string })?.tool;
-    return name === "submit_candidate" || name === "mcp__forksafe__submit_candidate";
+    const name = typeof call === "string" ? call : (call as { name?: string; tool?: string; isError?: boolean })?.name ?? (call as { tool?: string })?.tool;
+    if (!name) return false;
+    const ok = typeof call === "object" && call !== null && (call as { isError?: boolean }).isError !== true;
+    if (!ok) return false;
+    return name === "submit_candidate"
+      || name === "mcp__forksafe__submit_candidate"
+      || name === "forksafe___submit_candidate"
+      || name.endsWith("__submit_candidate")
+      || name.endsWith("___submit_candidate");
   });
 }
 

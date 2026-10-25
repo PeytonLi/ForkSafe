@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { SIM } from "@forksafe/contracts";
-import { shortSha, useClient, useLoad } from "../hooks";
+import { DEFAULT_TASK_FAMILY, SIM, TASK_FAMILY_SPECS, validateSceneOverrides, type TaskFamily } from "@forksafe/contracts";
+import { shortSha, useClient, useHashRoute, useLoad } from "../hooks";
 import type { CaptureOutcome, InvestigationWorkspace } from "../services";
 import { ReplayControls } from "../viewer/ReplayControls";
 import { ReplayViewer } from "../viewer/ReplayViewer";
@@ -11,6 +11,10 @@ import { Badge, Panel } from "./Panel";
 import { human, stateTone, words } from "./tone";
 import styles from "./CapturePanel.module.css";
 import { useBrowserAccess } from "../services/browserAccess";
+import { sceneActionMessage } from "../services/sceneActionMessage";
+import { changedOverrides, defaultOverride } from "../scene";
+import { SceneFields } from "./SceneFields";
+import { CaptureProgress } from "./CaptureProgress";
 
 export function CapturePanel({ workspace }: { workspace: InvestigationWorkspace }) {
   const inv = workspace.investigation;
@@ -41,6 +45,8 @@ export function CapturePanel({ workspace }: { workspace: InvestigationWorkspace 
   }, [replayId, showLive]);
 
   return (
+    <>
+    <CaptureProgress workspace={workspace} />
     <div className={styles.grid}>
       <Panel
         title="Baseline replay"
@@ -54,12 +60,19 @@ export function CapturePanel({ workspace }: { workspace: InvestigationWorkspace 
           <LiveViewer
             experimentId={inv.baselineExperimentId}
             scene={inv.baselineCase.sceneOverrides}
+            taskFamily={inv.baselineCase.taskFamily}
             label="Original controller"
             onFinished={finishLive}
             onProgress={noteLiveProgress}
           />
         ) : r ? (
-          <BaselineReplay replay={r} scene={inv.baselineCase.sceneOverrides} initialT={handoff?.atSec ?? 0} />
+          <BaselineReplay
+            replay={r}
+            scene={inv.baselineCase.sceneOverrides}
+            taskFamily={inv.baselineCase.taskFamily}
+            initialT={handoff?.atSec ?? 0}
+            investigationId={inv.id}
+          />
         ) : null}
       </Panel>
       <div className={styles.side}>
@@ -71,8 +84,13 @@ export function CapturePanel({ workspace }: { workspace: InvestigationWorkspace 
             <dt>Seed</dt>
             <dd data-testid="baseline-seed">{inv.baselineCase.seed}</dd>
             <dt>Result</dt>
-            <dd>{baseline ? <Badge tone={stateTone(baseline.status)}>{human(baseline.status)}</Badge> : "missing"}</dd>
-            {baseline?.failureKinds.length ? (
+            <dd>{showLive ? <Badge tone="blue">Running</Badge> : baseline ? <Badge tone={stateTone(baseline.status)}>{human(baseline.status)}</Badge> : "missing"}</dd>
+            {showLive ? (
+              <>
+                <dt>Failure</dt>
+                <dd>Not known yet</dd>
+              </>
+            ) : baseline?.failureKinds.length ? (
               <>
                 <dt>Failure</dt>
                 <dd>{baseline.failureKinds.map(words).join(", ")}</dd>
@@ -85,10 +103,11 @@ export function CapturePanel({ workspace }: { workspace: InvestigationWorkspace 
             <dt>Engine</dt>
             <dd>{baseline?.engineVersion ?? "—"}</dd>
           </dl>
-          {inv.baselineCase.description && <p className={styles.note}>{inv.baselineCase.description}</p>}
+          {!showLive && inv.baselineCase.description && <p className={styles.note}>{inv.baselineCase.description}</p>}
           <footer className={styles.cardFooter}>
             <SceneEditor
               scene={inv.baselineCase.sceneOverrides}
+              taskFamily={inv.baselineCase.taskFamily}
               seed={inv.baselineCase.seed}
               envs={inv.requestedEnvironments}
               open={editorOpen}
@@ -99,15 +118,16 @@ export function CapturePanel({ workspace }: { workspace: InvestigationWorkspace 
         </section>
       </div>
     </div>
+    </>
   );
 }
 
-function BaselineReplay({ replay, scene, initialT }: { replay: NonNullable<Awaited<ReturnType<ReturnType<typeof useClient>["getReplay"]>>>; scene: Record<string, number>; initialT: number }) {
-  const clock = useReplayClock(replayDuration(replay.frames), initialT);
+function BaselineReplay({ replay, scene, taskFamily, initialT, investigationId }: { replay: NonNullable<Awaited<ReturnType<ReturnType<typeof useClient>["getReplay"]>>>; scene: Record<string, number>; taskFamily?: string; initialT: number; investigationId: string }) {
+  const clock = useReplayClock(replayDuration(replay.frames), initialT, investigationId);
   const markers = replay.firstFailure ? [{ tSec: replay.firstFailure.tSec, label: human(replay.firstFailure.kind) }] : [];
   return (
     <div>
-      <ReplayViewer replay={replay} t={clock.t} label="Original controller" scene={scene} />
+      <ReplayViewer replay={replay} t={clock.t} label="Original controller" scene={scene} taskFamily={taskFamily as TaskFamily | undefined} />
       <ReplayControls clock={clock} markers={markers} label="Baseline replay" />
       {replay.firstFailure && (
         <p className={styles.failure}>
@@ -119,28 +139,23 @@ function BaselineReplay({ replay, scene, initialT }: { replay: NonNullable<Await
   );
 }
 
-const FIELDS: [string, string, number][] = [
-  ["divider_x", "Position x (m)", 0.005],
-  ["divider_y", "Position y (m)", 0.005],
-  ["divider_height", "Height (m)", 0.005],
-  ["cube_start_x", "Start x (m)", 0.005],
-  ["cube_start_y", "Start y (m)", 0.005],
-  ["target_x", "Position x (m)", 0.005],
-  ["target_y", "Position y (m)", 0.005],
-];
-
 /** Named parameters change between runs only; recording goes through the client. */
-function SceneEditor({ scene, seed, envs, open, onOpen, onClose }: { scene: Record<string, number>; seed: number; envs: number; open: boolean; onOpen: () => void; onClose: () => void }) {
+function SceneEditor({ scene, taskFamily: taskFamilyInput, seed, envs, open, onOpen, onClose }: { scene: Record<string, number>; taskFamily?: string; seed: number; envs: number; open: boolean; onOpen: () => void; onClose: () => void }) {
   const client = useClient();
   const access = useBrowserAccess();
-  const [draft, setDraft] = useState<Record<string, number>>(() => ({ ...scene }));
+  const [taskFamily] = useState<TaskFamily>(() => taskFamilyInput === "push_through_gap" ? "push_through_gap" : DEFAULT_TASK_FAMILY);
+  const legacy = Object.keys(scene).some((key) => ["divider_x", "divider_y", "divider_height", "divider_length", "cube_start_x", "cube_start_y", "target_x", "target_y"].includes(key));
+  const [draft, setDraft] = useState<Record<string, number>>(() => defaultOverride(taskFamily));
   const [draftSeed, setDraftSeed] = useState(seed);
-  const [envCount, setEnvCount] = useState(envs);
+  const [envCount, setEnvCount] = useState(Math.min(4, Math.max(1, envs)));
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<CaptureOutcome | { error: string } | null>(null);
+  const [, go] = useHashRoute();
+  const validation = validateSceneOverrides(taskFamily, draft);
+  const seedValid = Number.isInteger(draftSeed) && draftSeed >= 0;
   const sheetRef = useRef<HTMLElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
-  const changed = useMemo(() => FIELDS.filter(([k]) => draft[k] !== scene[k]).map(([k]) => k), [draft, scene]);
+  const changed = useMemo(() => Object.keys(changedOverrides(taskFamily, draft)), [draft, taskFamily]);
 
   useEffect(() => {
     if (!open) return;
@@ -157,12 +172,19 @@ function SceneEditor({ scene, seed, envs, open, onOpen, onClose }: { scene: Reco
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!access.canWrite) { access.showSignIn(); return; }
+    if (access.canOperate === false || !validation.ok || !seedValid) return;
     setBusy(true);
     setOutcome(null);
     try {
-      setOutcome(
-        await client.requestCapture({ title: `Capture seed ${draftSeed}`, seed: draftSeed, sceneOverrides: draft, requestedEnvironments: envCount }),
-      );
+      const result = await client.requestCapture({
+        title: `Capture seed ${draftSeed}`,
+        seed: draftSeed,
+        sceneOverrides: changedOverrides(taskFamily, draft),
+        requestedEnvironments: envCount,
+        taskFamily,
+      });
+      setOutcome(result);
+      if (result.accepted) go({ investigationId: result.investigationId, tab: "capture" });
     } catch (err) {
       setOutcome({ error: (err as Error).message });
     } finally {
@@ -204,53 +226,30 @@ function SceneEditor({ scene, seed, envs, open, onOpen, onClose }: { scene: Reco
           </div>
           <button type="button" className={styles.closeSheet} onClick={onClose} aria-label="Close scenario editor">×</button>
         </header>
-        <p className={styles.note}>
-          Adjust the setup and run settings. Timeout {SIM.timeoutSec} s; completion radius {SIM.completionRadiusM * 1000} mm.
-        </p>
+        <p className={styles.note}>{TASK_FAMILY_SPECS[taskFamily].description} Timeout {SIM.timeoutSec} s; completion radius {SIM.completionRadiusM * 1000} mm.</p>
         <form onSubmit={submit} data-testid="scene-editor">
-          <div className={styles.fields}>
-            <fieldset className={styles.fieldGroup}>
-              <legend>Divider</legend>
-              {FIELDS.slice(0, 3).map(([k, label, step]) => (
-                <label key={k} className={styles.field}>
-                  <span>{label}</span>
-                  <input type="number" step={step} value={draft[k] ?? ""} onChange={(e) => setDraft((d) => ({ ...d, [k]: Number(e.target.value) }))} />
-                </label>
-              ))}
-            </fieldset>
-            <fieldset className={styles.fieldGroup}>
-              <legend>Cube</legend>
-              {FIELDS.slice(3, 5).map(([k, label, step]) => (
-                <label key={k} className={styles.field}>
-                  <span>{label}</span>
-                  <input type="number" step={step} value={draft[k] ?? ""} onChange={(e) => setDraft((d) => ({ ...d, [k]: Number(e.target.value) }))} />
-                </label>
-              ))}
-            </fieldset>
-            <fieldset className={styles.fieldGroup}>
-              <legend>Target</legend>
-              {FIELDS.slice(5).map(([k, label, step]) => (
-                <label key={k} className={styles.field}>
-                  <span>{label}</span>
-                  <input type="number" step={step} value={draft[k] ?? ""} onChange={(e) => setDraft((d) => ({ ...d, [k]: Number(e.target.value) }))} />
-                </label>
-              ))}
-            </fieldset>
-            <fieldset className={styles.fieldGroup}>
-              <legend>Run</legend>
-              <label className={styles.field}>
-                <span>Seed</span>
-                <input type="number" min={0} step={1} value={draftSeed} onChange={(e) => setDraftSeed(Math.max(0, Math.round(Number(e.target.value))))} />
-              </label>
-              <label className={styles.field}>
-                <span>Environments (1–10)</span>
-                <input type="number" min={1} max={10} value={envCount} onChange={(e) => setEnvCount(Math.min(10, Math.max(1, Math.round(Number(e.target.value)))))} />
-              </label>
-            </fieldset>
-          </div>
+          <SceneFields
+            taskFamily={taskFamily}
+            values={draft}
+            onChange={(key, value) => setDraft((current) => ({ ...current, [key]: value }))}
+            seed={draftSeed}
+            onSeedChange={setDraftSeed}
+            environments={envCount}
+            onEnvironmentsChange={setEnvCount}
+            onReset={() => {
+              setDraft(defaultOverride(taskFamily));
+              setDraftSeed(0);
+              setEnvCount(1);
+              setOutcome(null);
+            }}
+            legacy={legacy}
+            preview={<ReplayViewer taskFamily={taskFamily} scene={draft} compact />}
+          />
+          {!validation.ok && <p className={styles.warn} role="alert">{validation.reason}</p>}
+          {!seedValid && <p className={styles.warn} role="alert">Seed must be a non-negative integer.</p>}
           <div className={styles.actions}>
-            <button type={access.canWrite ? "submit" : "button"} onClick={access.canWrite ? undefined : access.showSignIn} className="primary" disabled={busy}>
-              {!access.canWrite ? "Sign in to capture" : busy ? "Requesting…" : "Record baseline run"}
+            <button type={access.canWrite && access.canOperate !== false ? "submit" : "button"} onClick={access.canWrite ? undefined : access.showSignIn} className="primary" disabled={busy || !validation.ok || !seedValid || (access.canWrite && access.canOperate === false)}>
+              {!access.canWrite ? "Sign in to capture" : access.canOperate === false ? "Operator seat required" : busy ? "Requesting…" : "Record baseline run"}
             </button>
             <button type="button" onClick={onClose}>Cancel</button>
             {changed.length > 0 && <span className={styles.note}>{changed.length} parameter(s) changed</span>}
@@ -259,10 +258,16 @@ function SceneEditor({ scene, seed, envs, open, onOpen, onClose }: { scene: Reco
         {outcome && (
           <p role="status" className={"error" in outcome || !outcome.accepted ? styles.warn : styles.ok} data-testid="capture-outcome">
             {"error" in outcome
-              ? `Request failed: ${outcome.error}`
+              ? <>
+                  <span className={styles.modeBadge}>{sceneActionMessage("blocked", outcome.error, "capture").label}</span>
+                  {sceneActionMessage("blocked", outcome.error, "capture").message}
+                </>
               : outcome.accepted
                 ? `Capture accepted as investigation ${outcome.investigationId.slice(0, 8)}.`
-                : `Not recorded (${human(outcome.mode)}): ${outcome.reason}`}
+                : <>
+                    <span className={styles.modeBadge}>{sceneActionMessage(outcome.mode, outcome.reason, "capture").label}</span>
+                    {sceneActionMessage(outcome.mode, outcome.reason, "capture").message}
+                  </>}
           </p>
         )}
       </section>

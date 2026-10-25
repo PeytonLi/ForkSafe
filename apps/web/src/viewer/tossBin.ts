@@ -86,3 +86,11 @@ export function placeTossBin(group: THREE.Group, body?: SampledBody): void {
   group.position.set(...mjToThreePos(body.pos));
   group.quaternion.set(...mjToThreeQuat(body.quat));
 }
+
+export function setTossBinHeight(group: THREE.Group, wallHeight: number): void {
+  for (const child of group.children) {
+    if (!child.name.startsWith("bin_wall_")) continue;
+    child.scale.y = wallHeight / TOSS_BIN_DEFAULTS.binWallHeight;
+    child.position.y = wallHeight / 2;
+  }
+}

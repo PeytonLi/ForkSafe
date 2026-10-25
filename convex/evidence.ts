@@ -9,7 +9,7 @@ import { appId, assertUUID } from "./lib/validators.js";
 
 const simCase = v.object({
   caseId: v.string(), suite: v.union(v.literal("original"), v.literal("public"), v.literal("withheld")),
-  seed: v.number(), sceneOverrides: v.record(v.string(), v.number()), description: v.optional(v.string()),
+  seed: v.number(), sceneOverrides: v.record(v.string(), v.number()), taskFamily: v.optional(v.string()), description: v.optional(v.string()),
 });
 
 export const reserveExperiment = internalMutation({
@@ -195,7 +195,13 @@ export const insertCandidate = internalMutation({
     for (const findingId of args.basedOnFindings) {
       assertUUID(findingId, "findingId");
       const finding = await ctx.db.query("findings").withIndex("by_appId", (q) => q.eq("appId", findingId)).unique();
-      if (!finding || finding.investigationId !== args.investigationId) throw new ConvexError("finding_missing");
+      if (!finding) throw new ConvexError("finding_missing");
+      // Cross-run citations are allowed when the finding was offered to this environment as a prior hint.
+      if (finding.investigationId !== args.investigationId) {
+        const offer = await ctx.db.query("priorHintOffers").withIndex("by_environment_finding", (q) =>
+          q.eq("environmentId", args.environmentId).eq("findingId", findingId)).unique();
+        if (!offer) throw new ConvexError("finding_missing");
+      }
     }
     const now = Date.now();
     await ctx.db.patch(environment._id, { candidatesUsed: environment.candidatesUsed + 1 });

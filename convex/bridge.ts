@@ -265,7 +265,7 @@ export const recordExperiment = internalAction({
     candidateId: v.optional(v.string()),
     simCase: v.object({
       caseId: v.string(), suite: v.string(), seed: v.number(),
-      sceneOverrides: v.record(v.string(), v.number()), description: v.optional(v.string()),
+      sceneOverrides: v.record(v.string(), v.number()), taskFamily: v.optional(v.string()), description: v.optional(v.string()),
     }),
     status: v.string(),
     failureKinds: v.array(v.string()),

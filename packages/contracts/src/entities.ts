@@ -52,9 +52,9 @@ export const SIM = {
 export const SimCase = z.object({
   caseId: z.string().min(1),
   suite: z.enum(["original", "public", "withheld"]),
-  taskFamily: z.enum(["divider_pick_place", "push_through_gap", "toss_into_bin"]).optional(),
   seed: z.number().int().nonnegative(),
   sceneOverrides: z.record(z.number()).default({}),
+  taskFamily: z.string().optional(),
   description: z.string().optional(),
 });
 export type SimCase = z.infer<typeof SimCase>;
@@ -69,6 +69,8 @@ export const Investigation = z.object({
   jiraIssueKey: z.string().optional(), // vendor ref, not an application id
   confluencePageId: z.string().optional(),
   requestedEnvironments: z.number().int().min(1).max(10),
+  captureStatus: z.enum(["pending", "running", "recorded", "failed"]).optional(),
+  lastError: z.string().optional(),
   createdAtMs: z.number().int(),
   updatedAtMs: z.number().int(),
 });
@@ -79,6 +81,7 @@ export const InvestigationEnvironment = z.object({
   investigationId: InvestigationId,
   index: z.number().int().nonnegative(), // environment slot, stable
   state: EnvironmentState,
+  sceneVariant: SimCase.optional(),
   daytonaSandbox: VendorRef.optional(), // trusted runner sandbox
   budgets: z.object({
     maxExperiments: z.number().int().default(20),

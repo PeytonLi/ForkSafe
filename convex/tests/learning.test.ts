@@ -14,10 +14,10 @@ const findingId = "66666666-6666-4666-8666-666666666666";
 const artifactId = "77777777-7777-4777-8777-777777777777";
 const baselineSha = "b".repeat(64);
 const approvedSha = "c".repeat(64);
-const simCase = { caseId: "seed-1042", suite: "original" as const, seed: 1042, sceneOverrides: { divider_height: 0.15 } };
+const simCase = { caseId: "seed-1042", suite: "original" as const, seed: 1042, sceneOverrides: { dividerHeight: 0.15 } };
 const budget = { wallTimeMs: 60_000, maxExperimentsPerEnv: 1, maxCandidatesPerEnv: 1, maxFinalCandidates: 1 };
 
-async function seedInvestigation(t: ReturnType<typeof convexTest>, state: "awaiting_review" | "completed" = "awaiting_review") {
+async function seedInvestigation(t: ReturnType<typeof convexTest>, state: "awaiting_review" | "completed" | "capturing" = "awaiting_review") {
   const storageId = await t.run((ctx) => ctx.storage.store(new Blob(["baseline"])));
   const simulatorStorageId = await t.run((ctx) => ctx.storage.store(new Blob(["simulator"])));
   await t.run(async (ctx) => {
@@ -182,11 +182,19 @@ describe("learning loop", () => {
     expect(await t.run((ctx) => ctx.db.query("investigations").first())).toMatchObject({ state: "completed", captureStatus: "recorded" });
   });
 
+  it("completes the investigation when the recorded baseline did not fail", async () => {
+    const t = convexTest(schema, modules);
+    await seedInvestigation(t, "capturing");
+    await t.mutation(internal.investigations.setCapture, { investigationId, captureStatus: "recorded", promote: false });
+    expect(await t.run((ctx) => ctx.db.query("investigations").first())).toMatchObject({ state: "completed", captureStatus: "recorded" });
+  });
+
   it("gates retries and creates one idempotent retry without factory jobs", async () => {
     stubCaptureEnvironment();
     const t = convexTest(schema, modules);
     await seedInvestigation(t);
-    const gated = await t.mutation(api.learning.retry, { investigationId });
+    const caller = t.withIdentity({ subject: "tester|session" });
+    const gated = await caller.mutation(api.learning.retry, { investigationId });
     expect(gated).toMatchObject({ accepted: false, reason: "No fix has been approved for this task yet." });
     await t.run(async (ctx) => {
       await ctx.db.insert("controllerLineage", {
@@ -197,8 +205,8 @@ describe("learning loop", () => {
         spacetimeCommitted: false, createdAtMs: 2,
       });
     });
-    const first = await t.mutation(api.learning.retry, { investigationId });
-    const second = await t.mutation(api.learning.retry, { investigationId });
+    const first = await caller.mutation(api.learning.retry, { investigationId });
+    const second = await caller.mutation(api.learning.retry, { investigationId });
     expect(first).toMatchObject({ accepted: true });
     expect(second).toEqual(first);
     if (!first.accepted) return;
